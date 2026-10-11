@@ -3,7 +3,7 @@
 ## ⚠️ Base de conhecimento central: D:\Gestao2027\Infra-IA
 
 Antes de qualquer tarefa neste projeto, consulte `D:\Gestao2027\Infra-IA\INDICE_CENTRAL.md` e
-**`Infra-IA/nfe-api/INDEX.md`** (START HERE). Decisões vigentes: D-F1…D-F85 em
+**`Infra-IA/nfe-api/INDEX.md`** (START HERE). Decisões vigentes: D-F1…D-F93 em
 `Infra-IA/prompts/prompt_apis_fiscais_isoladas.md` §7 (plano §12) e D-E1…D-E25 em
 `Infra-IA/prompts/prompt_onda_nfe_sefaz.md` — **Rodada 0 da nfe-api no §11 desse prompt (2026-10-10, Q-NE1…Q-NE26)**.
 

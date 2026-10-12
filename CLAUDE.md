@@ -3,8 +3,10 @@
 ## ⚠️ Base de conhecimento central: D:\Gestao2027\Infra-IA
 
 Antes de qualquer tarefa neste projeto, consulte `D:\Gestao2027\Infra-IA\INDICE_CENTRAL.md` e
-**`Infra-IA/nfe-api/INDEX.md`** (START HERE). Decisões vigentes: D-F1…D-F104 em
-`Infra-IA/prompts/prompt_apis_fiscais_isoladas.md` §7 (plano §12) e D-E1…D-E25 em
+**`Infra-IA/nfe-api/INDEX.md`** (START HERE). Decisões vigentes: D-F1…D-F106 em
+`Infra-IA/prompts/prompt_apis_fiscais_isoladas.md` §7 (plano §12) — **D-F105: a NF-e PODE produzir a voz S, desde que dê a saída dela na
+mesma entrega (consulta pela NOSSA chave; o P sai pela consulta do recibo — D-NE33); a cerca da D-F102 é só da NFS-e. Antes da NE-1a:
+Rodada 23 (Q-F113/Q-F114 — onde mora a lista de escrita da família quando o escritor for para o núcleo) e a nota de implantação do §21.16** — e D-E1…D-E25 em
 `Infra-IA/prompts/prompt_onda_nfe_sefaz.md` — **Rodada 0 da nfe-api no §11 desse prompt (2026-10-10, Q-NE1…Q-NE26)**.
 
 ## Estado (2026-10-03) — pasta SEM código, por decisão (D-F20)

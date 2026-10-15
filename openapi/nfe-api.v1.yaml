@@ -1,0 +1,820 @@
+openapi: 3.0.3
+# Contrato DESIGN-FIRST da nfe-api — NE-0 (2026-10-15; `Infra-IA/prompts/prompt_onda_nfe_sefaz.md` §13, entregável E5).
+# NÃO é servido ainda: a pasta não tem código até a NE-2 (D-NE1 — esqueleto + DDL da família). Na NE-2 este arquivo vira a fonte de
+# verdade das rotas (servido em /docs; teste confere rota × path — molde da nfse-api).
+# Molde: `nfse-api/openapi/nfse-api.v1.yaml` (mesma casa: envelope {ok,data}, erros {error,code,ref,fields}, JWT RS256 do produto).
+# Decisões: D-F4 (o app é o cliente; setes-api passivo) · D-F8 (/v1) · D-F10 (a API lê o banco do produto: o app manda só a
+# REFERÊNCIA da nota) · D-F11 (o C LOCAL é do setes-api) · D-F13 (JWT RS256) · D-F14/D-F37/D-F46 (licença do ramo, inclusive admin) ·
+# D-F21/D-NE11 (série e número do 55 são do ERP) · D-NE7 (vida + tentativa; chave NOSSA por tentativa, nova só com a anterior resolvida) ·
+# D-NE9 (emitter do núcleo, montado pelas duas famílias) · D-NE10 (o 55 nasce virado — SEM cerca da virada) · D-NE14/D-NE56 (P e D
+# no vocabulário; registro fiscal = protocolo) · D-NE25 (1º release = venda finNFe 1 + devolução finNFe 4) · D-NE33 (1 NF-e por lote,
+# síncrono) · D-NE34 (Fault/500 = ambíguo) · D-NE35 (denegada guarda o procNFe) · D-NE36 (204/539) · D-NE37/D-NE96 (autorizador,
+# tpEmis e presença de IE gravados na tentativa) · D-NE39 (evento por identidade tpEvento+chave+nSeq; decide o retEvento) · D-NE40
+# (563 = prova da faixa) · D-NE41 (digVal) · D-NE43 (pré-validação em 3 camadas; violação = 422 com a lista INTEIRA) · D-NE53 (e-mail
+# com o XML da VOZ) · D-NE54 (operação: estado por autorizador) · D-NE93 (teto de 2 MB na resposta do fisco) · D-NE100 (DANFE no
+# leiaute da NT 2026.010).
+# Fatos oficiais: `Infra-IA/nfe-api/integracoes/nfe-sefaz/` (README, CONFERENCIAS, AUTORIZADORES).
+# Rodada 4 da nfe-api DECIDIDA em 2026-10-15 (prompt §13.10 — D-NE102…D-NE114); as marcas [D-NE…] apontam a decisão que fixou o ponto.
+info:
+  title: nfe-api — NF-e modelo 55 pela SEFAZ
+  version: 0.1.0-ne0
+  description: >-
+    Serviço da família NF-e do Gestão 2027 (porta 3003). Transmite, consulta, cancela no fisco e inutiliza faixas da NF-e (55) da nota
+    de mercadoria já FATURADA no ERP — a nfe-api lê a nota, o ramo de mercadoria congelado (snapshots de item), o emitente e o
+    destinatário no banco do produto (só leitura — D-F10/D-F15) e controla a conversa com a SEFAZ autorizadora (SOAP 1.2, mTLS com o A1
+    do estabelecimento). A chave de 44 posições é NOSSA (cunhada na reserva da tentativa — D-NE7). O cancelamento LOCAL da nota
+    (evento C, financeiro, pedido 'C' + cópia — D-E8) é do setes-api, que lê a voz C/D nas views do fiscal_api; o app orquestra (saga —
+    D-NE22): nfe-api `cancel` → setes-api `POST /api/billing/cancel`.
+
+    SEM CERCA DA VIRADA (D-NE10): o 55 nasce na nfe-api; não existe réplica do ERP para ele. A escrita do A1 (comum às famílias)
+    segue as regras do emitter do núcleo.
+
+    LICENÇA (D-F14/D-F37/D-F46): a interface do ramo (`orders` para a venda, `order-returns` para a devolução) tem de estar CONTRATADA
+    para TODOS — o admin passa só o privilégio.
+
+    Corpo: toda rota que recebe JSON responde 400 (malformado), 413 (grande demais) e 415 (charset/encoding não suportado) no envelope
+    de erro — antes da autenticação; nunca 500.
+servers:
+  - url: http://localhost:3003
+    description: dev
+security:
+  - BearerAuth: []
+tags:
+  - name: operação
+  - name: emitente
+  - name: nfe
+  - name: numeração
+paths:
+  /v1/health:
+    get:
+      tags: [operação]
+      summary: Saúde do serviço (sem autenticação) + estado por autorizador (D-NE54 c)
+      security: []
+      responses:
+        '200':
+          description: >-
+            banco, chave-mestra, storage e a CADEIA do servidor carregada (D-NE54 a — dado recarregável) respondem; `authorities` traz o
+            último `consStatServ` de cada autorizador consultado, com teto de frequência (≥ 3 min por autorizador — MOC; nunca mais que
+            isso — 656). "SEFAZ-PR fora" × "defeito nosso" se lê aqui.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Health' }
+        '503':
+          description: alguma dependência LOCAL falhou (o corpo diz qual) — autorizador fora não derruba o health
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Health' }
+
+  /v1/emitter:
+    get:
+      tags: [emitente]
+      summary: Situação do emitente do token (A1 + habilitações de TODAS as famílias) — módulo do núcleo (D-NE9)
+      description: >-
+        Admin da institution. Habilitado = linha do modelo + A1 vigente (D-E4). As transmissões VIVAS contam todas as famílias
+        instaladas (guarda do DELETE do A1 — D-NE9).
+      responses:
+        '200':
+          description: ok
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  ok: { type: boolean }
+                  data: { $ref: '#/components/schemas/EmitterStatus' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+
+  /v1/emitter/certificate:
+    put:
+      tags: [emitente]
+      summary: Envia o A1 (.pfx + senha) — write-only (MESMA rota e regra da nfse-api — peça do núcleo, D-NE9)
+      description: UM A1 por estabelecimento, serve H e P e todas as famílias (D-N31); CNPJ-base do certificado × emitente (rej. 213 confere só a base — D-NE30 segue não decidida).
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [pfxBase64, password]
+              properties:
+                pfxBase64: { type: string, maxLength: 64000 }
+                password:  { type: string, maxLength: 200 }
+      responses:
+        '200':
+          description: par gravado
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  ok: { type: boolean }
+                  data: { $ref: '#/components/schemas/CertificateStatus' }
+        '400': { $ref: '#/components/responses/Invalid' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '413': { $ref: '#/components/responses/PayloadTooLarge' }
+        '415': { $ref: '#/components/responses/UnsupportedMediaType' }
+        '422': { $ref: '#/components/responses/Unprocessable' }
+        '503': { $ref: '#/components/responses/MasterKeyUnavailable' }
+    delete:
+      tags: [emitente]
+      summary: Apaga o A1 — recusa com transmissão VIVA em qualquer família (409 FISCAL_ISSUER_HAS_LIVE_TRANSMISSIONS)
+      responses:
+        '200': { description: ok }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '409': { $ref: '#/components/responses/Conflict' }
+
+  /v1/emitter/issuers/{model}:
+    parameters:
+      - name: model
+        in: path
+        required: true
+        schema: { type: string, enum: ['55'] }
+        description: a nfe-api habilita só o 55 (o 65 é da F5 — D-NE2; o SE é da nfse-api)
+    put:
+      tags: [emitente]
+      summary: Cria/altera a habilitação do 55 — SÓ o ambiente (a série é do ERP — D-F21/D-NE11)
+      description: Não troca o ambiente com transmissão viva no ambiente atual (409 FISCAL_ISSUER_HAS_LIVE_TRANSMISSIONS — D-I27 espelhada).
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [environment]
+              additionalProperties: false
+              properties:
+                environment: { type: string, enum: [H, P] }
+      responses:
+        '200': { description: ok }
+        '400': { $ref: '#/components/responses/Invalid' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '415': { $ref: '#/components/responses/UnsupportedMediaType' }
+        '422': { $ref: '#/components/responses/Unprocessable' }   # FISCAL_MODEL_NOT_SUPPORTED (SE é da nfse-api; 65 da F5)
+    delete:
+      tags: [emitente]
+      summary: Exclui a habilitação do 55 (recusa com transmissão viva)
+      responses:
+        '200': { description: ok }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }        # FISCAL_ISSUER_MISSING
+        '409': { $ref: '#/components/responses/Conflict' }
+
+  /v1/nfe/invoices/pending:
+    get:
+      tags: [nfe]
+      summary: Notas de mercadoria faturadas sem NF-e viva, autorizada ou denegada — PAGINADO (o lote é do APP)
+      description: >-
+        Fora da lista: última voz da vida vigente S, P, A, D, K ou C. Só ramos CONTRATADOS (D-F14/D-F37 — nenhum = lista vazia).
+        Ordem estável (mais antiga primeiro, id).
+      parameters:
+        - { name: page,     in: query, schema: { type: integer, minimum: 1, maximum: 100000, default: 1 } }
+        - { name: pageSize, in: query, schema: { type: integer, minimum: 1, maximum: 100, default: 25 } }
+        - name: interfaceKey
+          in: query
+          description: 'só as notas DESTE ramo (filtro do servidor); sem o parâmetro, todos os ramos visíveis'
+          schema: { type: string, enum: [orders, order-returns] }
+      responses:
+        '200':
+          description: envelope paginado da casa
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  ok:       { type: boolean }
+                  page:     { type: integer }
+                  pageSize: { type: integer }
+                  total:    { type: integer }
+                  data:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        invoiceId:    { type: integer }
+                        number:       { type: string }
+                        serie:        { type: string }
+                        dtEmission:   { type: string, format: date }
+                        finality:     { type: string, enum: ['1', '4'], description: 'finNFe — D-NE25' }
+                        interfaceKey: { type: string, enum: [orders, order-returns] }
+        '400': { $ref: '#/components/responses/Invalid' }
+
+  /v1/nfe/invoices/{invoiceId}:
+    parameters: [ { $ref: '#/components/parameters/InvoiceId' } ]
+    get:
+      tags: [nfe]
+      summary: Situação fiscal da nota (tentativas, vozes e eventos da VIDA vigente)
+      description: Leitura exige a interface do ramo contratada. Instantes na zona do estabelecimento (Q-TZ1).
+      responses:
+        '200':
+          description: ok
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  ok: { type: boolean }
+                  data: { $ref: '#/components/schemas/FiscalView' }
+        '400': { $ref: '#/components/responses/Invalid' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  /v1/nfe/invoices/{invoiceId}/transmit:
+    parameters: [ { $ref: '#/components/parameters/InvoiceId' } ]
+    post:
+      tags: [nfe]
+      summary: Transmite a NF-e da nota (1 NF-e por lote, síncrono — D-NE33)
+      description: >-
+        A nfe-api lê a nota no ERP (viva, emitida por este estabelecimento, com ramo de mercadoria, número e série do ERP — D-F21) e monta
+        a NF-e 4.00 com o que está congelado no faturamento + emitente/destinatário lidos agora. Pré-validação camada 1 (D-NE43: o que a
+        API deriva — chave/cNF/cDV, dhEmi × relógio, coerência de totais com o vNF do ERP (D-NE27), textos de homologação, tamanhos — + XSD)
+        sobre o CANDIDATO montado em memória que a reserva grava IGUAL; violação = 422 com a lista inteira, sem tentativa. Reserva a
+        tentativa sob o FOR UPDATE da nota (D-F27); a chave, o cNF, o cDV, o autorizador, o tpEmis e a presença de IE nascem NA reserva e
+        são write-once (D-NE7/D-NE37/D-NE96 — emitente SEM IE vai à SVRS). Fisco FORA da transação. Privilégio TRANSMITIR na interface do
+        RAMO + ramo contratado. Resposta conferida contra a pergunta (chNFe do retorno = a enviada — D-NE42). Desfecho ambíguo (timeout,
+        Fault, HTTP 500, resposta ilegível — D-NE34) NÃO fecha: a tentativa fica em voo e o refresh reconcilia pela NOSSA chave.
+        204 (duplicidade, mesma chave) → pousa A pela consulta; 539/204 de outra chave → D-NE36 (consultar as chaves de TODAS as
+        tentativas; nunca chave nova automática).
+      responses:
+        '201':
+          description: autorizada (voz A — 100/150) e o procNFe guardado
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  ok: { type: boolean }
+                  data: { $ref: '#/components/schemas/TransmitResult' }
+        '202':
+          description: em processamento (voz P — 103/105, recibo em mãos; o refresh consulta o recibo após ≥ 15 s — MOC)
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  ok: { type: boolean }
+                  data: { $ref: '#/components/schemas/TransmitResult' }
+        '400': { $ref: '#/components/responses/Invalid' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409':
+          description: >-
+            FISCAL_ISSUER_MISSING · FISCAL_CERT_MISSING/EXPIRED/INVALID · FISCAL_TRANSMISSION_IN_PROGRESS · FISCAL_ALREADY_AUTHORIZED ·
+            FISCAL_DENIED (voz D gravada — 110/301/302/303: a nota EXISTE no fisco; não se retransmite nem se cancela no fisco — cancele a
+            nota no ERP, que a mantém e leva o pedido a 'C' + cópia — D-E7/D-E8) · FISCAL_CANCEL_IN_FLIGHT · FISCAL_EFFECT_PENDING ·
+            INVOICE_NOT_ISSUER (nota de terceiro) · INVOICE_LEGACY_NOT_TRANSMITTABLE (nota sincronizada do desktop) · FISCAL_NUMBER_VOIDED
+            (o número está numa faixa inutilizada) · FISCAL_AUTHORITY_CHAIN_UNTRUSTED (cadeia do SERVIDOR — D-NE57) · RESOURCE_BUSY
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+        '422':
+          description: >-
+            INVOICE_MERCHANDISE_BRANCH_MISSING · FISCAL_EMITTER_INCOMPLETE · FISCAL_RECIPIENT_INCOMPLETE · FISCAL_DOCUMENT_INVALID
+            (pré-validação camada 1 + XSD — fields[] com a lista INTEIRA; nada enviado) · FISCAL_TOTALS_MOTOR_DEFECT (vNF derivado ×
+            vNF do ERP fora da tolerância oficial — defeito do motor, alarme operacional — D-NE27) · FISCAL_DOCUMENT_REJECTED (voz R
+            gravada — cStat de rejeição em `authorityCode`, 3 ou 4 dígitos; a nova tentativa sai com chave nova — D-NE7) ·
+            FISCAL_RETURN_REFERENCE_MISSING (devolução cuja origem não tem NF-e AUTORIZADA nativa — o 1º release recusa a origem do legado, D-NE113) ·
+            FISCAL_RETURN_REFERENCE_MISMATCH (o `det[nItem]` DERIVADO não confere com o procNFe arquivado da origem — cProd/qCom/vUnCom —, nunca
+            chute; D-NE103: devolução referencia POR ITEM — `DFeReferenciado` chave + nItem, `refNFe` proibido, rej. 321) · FISCAL_RETURN_DUPLICATED_ITEM
+            (duas linhas do mesmo item de origem — rej. 1072; a camada 2 do ERP recusa antes, D-NE112)
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+        '502': { $ref: '#/components/responses/AuthorityAmbiguous' }
+        '503': { $ref: '#/components/responses/AuthorityUnavailable' }
+
+  /v1/nfe/invoices/{invoiceId}/refresh:
+    parameters: [ { $ref: '#/components/parameters/InvoiceId' } ]
+    post:
+      tags: [nfe]
+      summary: Consulta o fisco pela NOSSA chave (ou pelo recibo, se P) e grava a voz nova da tentativa vigente (idempotente)
+      description: >-
+        Privilégio TRANSMITIR do ramo. A pergunta vai ao autorizador GRAVADO na tentativa (D-NE37). Rodízio respeita o consumo indevido
+        (656: > 10 consultas da MESMA chave por hora bloqueiam o CNPJ — intervalo mínimo por chave; D-NE26) — consulta recusada pelo
+        intervalo = 429 sem ir ao fisco. 217 ("NF-e não consta") numa tentativa em voo = F conclusivo (envio que não chegou). C
+        descoberta aqui (cancelada em outro sistema com o mesmo A1) NÃO produz o C local — o setes-api a lê (D-F11). Reconciliação com
+        prova: `digVal` do protNFe × DigestValue do XML guardado (D-NE41 — o digVal é opcional no XSD; ausente ou divergente =
+        pendência crítica, nunca sobrescreve).
+      responses:
+        '200':
+          description: ok
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  ok: { type: boolean }
+                  data: { $ref: '#/components/schemas/RefreshResult' }
+        '400': { $ref: '#/components/responses/Invalid' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '429': { $ref: '#/components/responses/TooSoon' }
+        '502': { $ref: '#/components/responses/AuthorityAmbiguous' }
+        '503': { $ref: '#/components/responses/AuthorityUnavailable' }
+
+  /v1/nfe/invoices/{invoiceId}/cancel:
+    parameters: [ { $ref: '#/components/parameters/InvoiceId' } ]
+    post:
+      tags: [nfe]
+      summary: Pede ao fisco o cancelamento da NF-e autorizada (evento 110111, 1 evento por envio — D-NE39)
+      description: >-
+        Só a NF-e AUTORIZADA (A) vai ao fisco; denegada (D) NÃO se cancela no fisco (409 FISCAL_DENIED — o cancelamento é local, no
+        ERP); nota sem tentativa, rejeitada ou com falha → 409 FISCAL_NOT_AUTHORIZED (cancele direto no ERP). RESERVA: a voz K é
+        gravada antes da chamada, sob a trava da nota (2º pedido = 409 FISCAL_CANCEL_IN_FLIGHT). Decide o cStat do `retEvento` (135/155
+        = C; 136 não vinculado = ambíguo até a consulta), nunca o 128 do lote (D-NE39). Recusa do fisco (501 fora do prazo, 221
+        confirmação da operação pelo destinatário, 580…) → 409 FISCAL_CANCEL_REFUSED com o código, N libera a reserva. Prazo: DADO por UF
+        (`AUTORIZADORES.md` — 24 h nacional; PR 168 h) — vencido só AVISA (warnings FISCAL_CANCEL_DEADLINE); quem recusa é a SEFAZ.
+        Ambíguo → o K FICA e bloqueia até a consulta reconciliar. Nota mercadoria+serviço = dois documentos: o app pede aqui e na
+        nfse-api (saga — D-NE22). Privilégio CANCELAR do ramo.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [reason]
+              properties:
+                reason: { type: string, minLength: 15, maxLength: 255, description: 'xJust do evento (TJust 15–255 — CONFERENCIAS 6)' }
+      responses:
+        '200':
+          description: voz C gravada (o fisco cancelou) — ou já estava (atAuthority false, idempotente)
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  ok: { type: boolean }
+                  data: { $ref: '#/components/schemas/CancelResult' }
+        '400': { $ref: '#/components/responses/Invalid' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409':
+          description: >-
+            FISCAL_NOT_AUTHORIZED · FISCAL_DENIED · FISCAL_TRANSMISSION_IN_PROGRESS · FISCAL_CANCEL_IN_FLIGHT · FISCAL_CANCEL_REFUSED (N
+            gravado; `authorityCode` = cStat do retEvento) · FISCAL_CERT_* / FISCAL_ISSUER_MISSING (N gravado)
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+        '415': { $ref: '#/components/responses/UnsupportedMediaType' }
+        '422': { $ref: '#/components/responses/Unprocessable' }
+        '502': { $ref: '#/components/responses/AuthorityAmbiguous' }
+        '503': { $ref: '#/components/responses/AuthorityUnavailable' }
+
+  /v1/nfe/invoices/{invoiceId}/xml:
+    parameters: [ { $ref: '#/components/parameters/InvoiceId' } ]
+    get:
+      tags: [nfe]
+      summary: XML com protocolo (procNFe) da NF-e autorizada ou DENEGADA (D-NE35) — e o procEventoNFe do cancelamento, se houver
+      responses:
+        '200':
+          description: ok
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  ok: { type: boolean }
+                  data:
+                    type: object
+                    properties:
+                      accessKey: { type: string, pattern: '^[0-9]{6}[A-Z0-9]{12}[0-9]{26}$' }
+                      procNFe: { type: string, description: 'NFe + protNFe — o arquivo autorizado nunca é alterado (N10)' }
+                      cancelEvent: { type: string, nullable: true, description: 'procEventoNFe do 110111, quando houver' }
+        '400': { $ref: '#/components/responses/Invalid' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  /v1/nfe/invoices/{invoiceId}/danfe:
+    parameters: [ { $ref: '#/components/parameters/InvoiceId' } ]
+    get:
+      tags: [nfe]
+      summary: DANFE A4 (PDF nosso, leiaute da NT 2026.010 — D-NE100); carimbo CANCELADA pela voz C (D-NE52); "SEM VALOR FISCAL" em H
+      responses:
+        '200':
+          description: ok
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  ok: { type: boolean }
+                  data:
+                    type: object
+                    properties:
+                      accessKey: { type: string }
+                      pdfBase64: { type: string }
+        '400': { $ref: '#/components/responses/Invalid' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '422': { $ref: '#/components/responses/Unprocessable' }   # FISCAL_DANFE_XML_UNREADABLE (molde D-NE89) — o XML segue pela rota dele
+
+  /v1/nfe/invoices/{invoiceId}/email:
+    parameters: [ { $ref: '#/components/parameters/InvoiceId' } ]
+    post:
+      tags: [nfe]
+      summary: Envia ao destinatário o XML da VOZ (procNFe, e o procEventoNFe se cancelada) + o DANFE — ato explícito (D-E10/D-NE23/D-NE53)
+      description: Destinatário e cópias lidos do ERP (configs da interface billing); assunto/corpo = config com modelo padrão. Nunca automático (D-F5).
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                to: { type: array, maxItems: 5, items: { type: string, format: email }, description: 'opcional — sem ele, o e-mail do destinatário no cadastro' }
+      responses:
+        '200': { description: enviado }
+        '400': { $ref: '#/components/responses/Invalid' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }        # FISCAL_NOT_AUTHORIZED (não há procNFe)
+        '422': { $ref: '#/components/responses/Unprocessable' }   # FISCAL_RECIPIENT_EMAIL_MISSING
+
+  /v1/nfe/refresh:
+    post:
+      tags: [nfe]
+      summary: Uma passada da consulta ativa do estabelecimento — SÓ as vivas/ambíguas (autorizadas só sob demanda — D-NE26)
+      description: >-
+        Aluguel por estabelecimento (molde da nfse-api — quem não obtém recebe 200 skipped). Candidatas = tentativas S/P/K da vida
+        vigente; teto de idade = prazo de cancelamento da UF do emitente + margem (dado de `AUTORIZADORES.md` — D-NE26); intervalo
+        mínimo por chave (656). Disjuntor CNPJ × cStat (D-NE54 b): rejeições iguais repetidas viram recusa local antes do limite do
+        autorizador. Erro técnico numa nota vai ao relatório como "Erro interno (ref X)". Privilégio TRANSMITIR em algum ramo contratado.
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                limit: { type: integer, minimum: 1, maximum: 50 }
+      responses:
+        '200':
+          description: ok
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  ok: { type: boolean }
+                  data: { $ref: '#/components/schemas/RefreshRunReport' }
+        '400': { $ref: '#/components/responses/Invalid' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '415': { $ref: '#/components/responses/UnsupportedMediaType' }
+
+  /v1/nfe/numbering:
+    get:
+      tags: [numeração]
+      summary: Numeração do 55 por série — números usados pelo ERP, BURACOS derivados e faixas inutilizadas (D-NE8)
+      description: >-
+        Leitura DERIVADA, nunca tabela: buracos = números sem nota viva entre 1 e o maior número do ERP na série, descontadas as faixas
+        homologadas (102/563). Obrigação legal de inutilizar até o 10º dia do mês seguinte (Ajuste SINIEF 07/05 cl. 14ª) — a tela avisa.
+        Admin.
+      parameters:
+        - { name: serie, in: query, required: true, schema: { type: string, pattern: '^(0|[1-9][0-9]{0,2})$' }, description: 'série do 55 com CNPJ pelo aplicativo: 0–889 (CONFERENCIAS 38)' }
+        - { name: environment, in: query, schema: { type: string, enum: [H, P] } }
+      responses:
+        '200':
+          description: ok
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  ok: { type: boolean }
+                  data: { $ref: '#/components/schemas/Numbering' }
+        '400': { $ref: '#/components/responses/Invalid' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+
+  /v1/nfe/voids:
+    get:
+      tags: [numeração]
+      summary: Pedidos de inutilização do estabelecimento — PAGINADO
+      parameters:
+        - { name: page,     in: query, schema: { type: integer, minimum: 1, maximum: 100000, default: 1 } }
+        - { name: pageSize, in: query, schema: { type: integer, minimum: 1, maximum: 100, default: 25 } }
+      responses:
+        '200':
+          description: envelope paginado
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  ok:       { type: boolean }
+                  page:     { type: integer }
+                  pageSize: { type: integer }
+                  total:    { type: integer }
+                  data:     { type: array, items: { $ref: '#/components/schemas/NumberVoid' } }
+        '400': { $ref: '#/components/responses/Invalid' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+    post:
+      tags: [numeração]
+      summary: Inutiliza uma faixa de números do 55 (ato sobre a NUMERAÇÃO, nunca sobre uma nota — D-E/§3.6, D-NE8/D-NE40)
+      description: >-
+        Admin (D-E14). Guarda local: a faixa não pode conter nota VIVA do 55 nesta série no ERP (409 FISCAL_VOID_RANGE_IN_USE) e cabe
+        em 10.000 números (201). A resposta da SEFAZ é UMA e definitiva: 102 = homologada; **563 = a faixa já tinha pedido (o retorno
+        traz o nProt do pedido anterior) → pousa como inutilizada com o 563 como prova (D-NE40)**; 256 = faixa sobrepõe número já
+        inutilizado (rejeição, sem nProt); demais = rejeição legível. Não existe consulta de inutilização (CONFERENCIAS 32): ambíguo
+        (timeout/Fault) → reenviar a MESMA faixa é a reconciliação (o 563 fecha). Emitente sem IE: a NT 2026.007 não trata a
+        inutilização (CONFERENCIAS 19 — no PR, sem credenciamento = 203). AC, BA e SP deixam de usar o pedido a partir de 01/11/2026
+        (AUTORIZADORES §4 — a conferir).
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [serie, from, to, reason]
+              additionalProperties: false
+              properties:
+                serie:  { type: string, pattern: '^(0|[1-9][0-9]{0,2})$' }
+                year:   { type: integer, minimum: 2000, maximum: 2099, description: 'ano da inutilização (2 dígitos no Id de 43); padrão = o ano corrente na zona do estabelecimento' }
+                from:   { type: integer, minimum: 1, maximum: 999999999 }
+                to:     { type: integer, minimum: 1, maximum: 999999999 }
+                reason: { type: string, minLength: 15, maxLength: 255, description: 'xJust (TJust 15–255)' }
+      responses:
+        '201':
+          description: homologada (102) ou confirmada pelo 563
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  ok: { type: boolean }
+                  data: { $ref: '#/components/schemas/NumberVoid' }
+        '400': { $ref: '#/components/responses/Invalid' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '409':
+          description: FISCAL_VOID_RANGE_IN_USE · FISCAL_VOID_IN_FLIGHT (a mesma faixa já está em voo) · FISCAL_ISSUER_MISSING · FISCAL_CERT_*
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+        '415': { $ref: '#/components/responses/UnsupportedMediaType' }
+        '422':
+          description: FISCAL_VOID_REJECTED (256, 201, 203, 241… — `authorityCode`) · VALIDATION_FAILED (from > to, faixa > 10.000)
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+        '502': { $ref: '#/components/responses/AuthorityAmbiguous' }
+        '503': { $ref: '#/components/responses/AuthorityUnavailable' }
+
+components:
+  securitySchemes:
+    BearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+      description: O MESMO token do login do setes-api, assinado em RS256 (D-F13). A nfe-api só tem a chave pública.
+  parameters:
+    InvoiceId:
+      name: invoiceId
+      in: path
+      required: true
+      schema: { type: integer, minimum: 1 }
+      description: id da nota = id do pedido no ERP (terminal 0 até a F5 — D-NE12)
+  responses:
+    Unauthorized:
+      description: token ausente, inválido, expirado ou não-RS256
+      content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } }
+    Forbidden:
+      description: PRIVILEGE_REQUIRED (ramo) · INTERFACE_NOT_ALLOWED (licença — vale também para o admin) · admin exigido
+      content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } }
+    NotFound:
+      description: nota/NF-e não encontrada
+      content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } }
+    Invalid:
+      description: payload inválido
+      content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } }
+    Conflict:
+      description: estado não permite a ação (código em `code`)
+      content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } }
+    Unprocessable:
+      description: dado de cadastro/documento inválido (campo em fields[])
+      content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } }
+    TooSoon:
+      description: FISCAL_QUERY_TOO_SOON — a mesma chave foi consultada há pouco (consumo indevido 656 — D-NE26); `fields[0].expected` = instante a partir do qual pode
+      content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } }
+    AuthorityAmbiguous:
+      description: FISCAL_AUTHORITY_UNKNOWN_RESPONSE — resposta ilegível, trocada, SOAP Fault ou HTTP 500 (D-NE34); nada fechado
+      content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } }
+    AuthorityUnavailable:
+      description: FISCAL_AUTHORITY_UNAVAILABLE — rede/timeout/serviço paralisado (108/109); a tentativa fica EM VOO (retryable)
+      content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } }
+    PayloadTooLarge:
+      description: VALIDATION_FAILED — corpo da requisição grande demais (limite 128 kb)
+      content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } }
+    UnsupportedMediaType:
+      description: UNSUPPORTED_MEDIA_TYPE — corpo com charset ≠ UTF-8 ou Content-Encoding fora de gzip/deflate/identity
+      content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } }
+    MasterKeyUnavailable:
+      description: FISCAL_MASTER_KEY_UNAVAILABLE — chave-mestra do cofre ausente na instância
+      content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } }
+  schemas:
+    Error:
+      type: object
+      required: [error, code]
+      properties:
+        error: { type: string }
+        code:  { type: string }
+        ref:   { type: string, description: referência do registro de crash (erro inesperado) }
+        fields:
+          type: array
+          items:
+            type: object
+            properties:
+              field:    { type: string }
+              message:  { type: string }
+              expected: { description: valor esperado quando a recusa depende de dado que mudou fora da tela }
+    Health:
+      type: object
+      properties:
+        status:    { type: string, enum: [ok, degraded] }
+        db:        { type: boolean }
+        masterKey: { type: boolean }
+        storage:   { type: boolean }
+        serverChain:
+          type: object
+          description: 'D-NE54 a — cadeia ICP-Brasil do servidor (dado recarregável; fonte: pacote do ITI)'
+          properties:
+            loaded:   { type: boolean }
+            source:   { type: string, description: 'ex.: ITI ACcompactado.zip de 27/08/2026' }
+        authorities:
+          type: array
+          description: 'D-NE54 c — último consStatServ por autorizador consultado (teto de frequência ≥ 3 min)'
+          items:
+            type: object
+            properties:
+              authorizer:  { type: string, description: 'PR, SVRS, SVAN… (AUTORIZADORES.md)' }
+              environment: { type: string, enum: [H, P] }
+              cStat:       { type: string, pattern: '^[0-9]{3,4}$', description: '107 = em operação; 108/109 = paralisado' }
+              checkedAt:   { type: string, format: date-time }
+    CertificateInfo:
+      type: object
+      properties:
+        subject: { type: string }
+        issuer: { type: string }
+        notBefore: { type: string, format: date-time }
+        notAfter: { type: string, format: date-time }
+        daysToExpire: { type: integer }
+        expired: { type: boolean }
+        notYetValid: { type: boolean }
+        cnpj: { type: string, nullable: true }
+    CertificateStatus:
+      type: object
+      properties:
+        certificate: { type: boolean }
+        privateKey: { type: boolean }
+        certificateInfo: { allOf: [ { $ref: '#/components/schemas/CertificateInfo' } ], nullable: true }
+    EmitterStatus:
+      type: object
+      properties:
+        issuers:
+          type: array
+          items:
+            type: object
+            properties:
+              model: { type: string, enum: [SE, '55', '65'] }
+              environment: { type: string, enum: [H, P] }
+              serie: { type: string, nullable: true, description: 'null no 55 — a série é do ERP (D-NE11)' }
+              enabled: { type: boolean }
+              authority: { type: string, enum: [ADN, SEFAZ] }
+        stateRegistration:
+          type: object
+          description: 'D-NE96 — o emitente tem IE no ERP? sem IE = contribuinte exclusivo do IBS/CBS → SVRS (NT 2026.007, H 26/10 · P 16/11/2026)'
+          properties:
+            present: { type: boolean }
+            authorizer55: { type: string, nullable: true, description: 'autorizador derivado para o 55 neste ambiente (AUTORIZADORES.md)' }
+        certificate: { $ref: '#/components/schemas/CertificateStatus' }
+    Transmission:
+      type: object
+      description: 'uma TENTATIVA (D-NE7) — tudo o que nasce na reserva é write-once'
+      properties:
+        attempt: { type: integer }
+        environment: { type: string, enum: [H, P] }
+        accessKey: { type: string, pattern: '^[0-9]{6}[A-Z0-9]{12}[0-9]{26}$', description: 'NOSSA, cunhada na reserva (CNPJ alfanumérico aceito — NT 2026.004)' }
+        authorizer: { type: string, description: 'D-NE37 — a quem a tentativa foi; toda pergunta posterior vai a ele' }
+        emissionType: { type: string, enum: ['1', '6', '7'], description: 'tpEmis (6/7 = SVC — contingência fora da F4, D-NE6)' }
+        stateRegistrationAbsent: { type: boolean, description: 'D-NE96 — emitente sem IE no envio; lido do XML enviado (emit/IE), nunca coluna — a coluna é o autorizador [D-NE105]' }
+        dhEmi: { type: string, format: date-time }
+        receipt: { type: string, nullable: true, description: 'nRec (só se P — 103/105)' }
+        protocol: { type: string, nullable: true, pattern: '^([0-9]{15}|[0-9]{17})$', description: 'nProt — 15 ou 17 (NT 2025.002)' }
+        dhAuthorization: { type: string, nullable: true }
+        lastKind: { type: string, nullable: true, enum: [S, P, A, R, D, C, K, F, N, null] }
+        lastCode: { type: string, nullable: true, description: 'cStat cru (3 ou 4 dígitos)' }
+        lastMessage: { type: string, nullable: true }
+    Voice:
+      type: object
+      properties:
+        attempt: { type: integer }
+        event: { type: integer }
+        kind: { type: string, enum: [S, P, A, R, D, C, K, F, N] }
+        authorityCode: { type: string, nullable: true, pattern: '^[0-9]{3,4}$' }
+        message: { type: string, nullable: true }
+        dh: { type: string, nullable: true, description: 'instante da VOZ do fisco; NULL nos fatos nossos (K da reserva, N de liberação)' }
+        source: { type: string, enum: [P, Q] }
+    DocumentEvent:
+      type: object
+      description: 'evento do DOCUMENTO no fisco (D-NE39) — identidade (tpEvento, chave, nSeqEvento), Id de 54. Na F4 (só o 110111) é DERIVADO da voz C/K/N da tentativa, com o tpEvento em authority_code (molde D-F68) — sem tabela própria até a CC-e/eventos RTC [D-NE106]'
+      properties:
+        eventType: { type: string, description: 'tpEvento — 110111 cancelamento no 1º release' }
+        sequence: { type: integer, minimum: 1, maximum: 20 }
+        kind: { type: string, enum: [K, C, N, R, F] }
+        authorityCode: { type: string, nullable: true, pattern: '^[0-9]{3,4}$', description: '135/155 = registrado; 136 = sem vínculo; 573 = duplicidade' }
+        protocol: { type: string, nullable: true }
+        dh: { type: string, nullable: true }
+    FiscalView:
+      type: object
+      properties:
+        invoiceId: { type: integer }
+        state:
+          type: string
+          enum: [none, in_flight, processing, authorized, denied, rejected, failed, cancelled, cancel_in_flight]
+          description: 'processing = P (recibo); denied = D (nota registrada no fisco, não cancelável no fisco — D-E7)'
+        authorityRecorded: { type: boolean, description: 'D-NE56 — o fisco REGISTROU a nota (protocolo — A ou D): o número está queimado' }
+        currentAttempt: { type: integer, nullable: true }
+        transmissions: { type: array, items: { $ref: '#/components/schemas/Transmission' } }
+        voices: { type: array, items: { $ref: '#/components/schemas/Voice' } }
+        documentEvents: { type: array, items: { $ref: '#/components/schemas/DocumentEvent' } }
+        localCancelPending: { type: boolean, description: 'voz C (ou D) sem o C local aplicado pelo setes-api — DERIVADO (D-F28)' }
+        cancelDeadline: { type: string, nullable: true, format: date-time, description: 'fim do prazo da UF (aviso — a recusa é da SEFAZ)' }
+        xmlAvailable: { type: boolean }
+        danfeAvailable: { type: boolean }
+    TransmitResult:
+      type: object
+      properties:
+        invoiceId: { type: integer }
+        attempt: { type: integer }
+        accessKey: { type: string }
+        protocol: { type: string, nullable: true }
+        receipt: { type: string, nullable: true }
+        kind: { type: string, enum: [A, P] }
+    RefreshResult:
+      type: object
+      properties:
+        invoiceId: { type: integer }
+        attempt: { type: integer }
+        changed: { type: boolean }
+        kind: { type: string, nullable: true }
+        localCancelPending: { type: boolean }
+        digestCheck: { type: string, enum: [match, mismatch, absent, not_applicable], description: 'D-NE41 — digVal do protNFe × DigestValue do XML guardado' }
+    CancelResult:
+      type: object
+      properties:
+        invoiceId: { type: integer }
+        attempt: { type: integer }
+        atAuthority: { type: boolean, description: 'false = a voz C já existia (idempotente)' }
+        eventSequence: { type: integer }
+        protocol: { type: string, nullable: true }
+        warnings: { type: array, items: { type: string } }
+        nextStep: { type: string, enum: [apply-local-cancel] }
+    RefreshRunReport:
+      type: object
+      properties:
+        checked: { type: integer }
+        changed: { type: integer }
+        stoppedEarly: { type: boolean }
+        skipped: { type: boolean }
+        throttled: { type: integer, description: 'candidatas puladas pelo intervalo mínimo por chave (656)' }
+        circuitOpen: { type: boolean, description: 'D-NE54 b — o disjuntor CNPJ × cStat abriu nesta passada' }
+        errors:
+          type: array
+          items:
+            type: object
+            properties:
+              invoiceId: { type: integer }
+              code: { type: string, nullable: true }
+              message: { type: string }
+    Numbering:
+      type: object
+      properties:
+        serie: { type: string }
+        environment: { type: string, enum: [H, P] }
+        highestNumber: { type: integer, nullable: true, description: 'maior número do ERP na série (viva ou não)' }
+        gaps:
+          type: array
+          description: 'buracos DERIVADOS (sem nota viva e fora de faixa homologada)'
+          items:
+            type: object
+            properties:
+              from: { type: integer }
+              to: { type: integer }
+              oldestInvoiceMonth: { type: string, nullable: true, description: 'mês do buraco — prazo legal: 10º dia do mês seguinte' }
+        voids: { type: array, items: { $ref: '#/components/schemas/NumberVoid' } }
+    NumberVoid:
+      type: object
+      description: 'pedido de inutilização (D-NE8) — uma resposta, síncrona e definitiva; nova tentativa = novo pedido'
+      properties:
+        id: { type: integer }
+        environment: { type: string, enum: [H, P] }
+        serie: { type: string }
+        year: { type: integer }
+        from: { type: integer }
+        to: { type: integer }
+        reason: { type: string }
+        voidId: { type: string, description: 'Id de 43 do infInut' }
+        state: { type: string, enum: [in_flight, homologated, rejected, ambiguous] }
+        authorityCode: { type: string, nullable: true, pattern: '^[0-9]{3,4}$', description: '102 homologada · 563 confirmada (prova do pedido anterior) · 256/201/203… rejeitada' }
+        protocol: { type: string, nullable: true }
+        dh: { type: string, nullable: true }

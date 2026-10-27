@@ -3,7 +3,8 @@ dist/
 coverage/
 .env
 secrets/
-storage/
+/storage/
+/storage-*/
 *.log
 .DS_Store
 Thumbs.db

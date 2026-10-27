@@ -15,6 +15,11 @@ openapi: 3.0.3
 # leiaute da NT 2026.010).
 # Fatos oficiais: `Infra-IA/nfe-api/integracoes/nfe-sefaz/` (README, CONFERENCIAS, AUTORIZADORES).
 # Rodada 4 da nfe-api DECIDIDA em 2026-10-15 (prompt §13.10 — D-NE102…D-NE114); as marcas [D-NE…] apontam a decisão que fixou o ponto.
+# NE-2 (2026-10-20 — prompt §15.8/§15.9, D-NE158…D-NE168): este contrato passa a ser SERVIDO em /docs e /v1/openapi.yaml. D-NE166: a NE-2
+# serve só `GET /v1/health` (sem `authorities`/`serverChain` — NE-3) e o emitente (`GET /v1/emitter`, `PUT|DELETE /v1/emitter/certificate`,
+# `PUT|DELETE /v1/emitter/issuers/{model}`); toda operação ainda NÃO servida leva `x-onda: NE-3 | NE-5` (a onda que a traz) — sem stub 501.
+# A cerca rota × contrato (`src/__tests__/app.test.ts`) confere: servidas = contrato − marcadas; nada servido fora do contrato; nada marcado
+# servido. Ao entregar a rota, tira-se a marca (a cerca quebra enquanto as duas coisas não andarem juntas).
 info:
   title: nfe-api — NF-e modelo 55 pela SEFAZ
   version: 0.1.0-ne0
@@ -48,7 +53,7 @@ paths:
   /v1/health:
     get:
       tags: [operação]
-      summary: Saúde do serviço (sem autenticação) + estado por autorizador (D-NE54 c)
+      summary: Saúde do serviço (sem autenticação) + estado por autorizador (D-NE54 c — o bloco `authorities` entra na NE-3; na NE-2 responde banco, chave-mestra e storage)
       security: []
       responses:
         '200':
@@ -164,10 +169,12 @@ paths:
 
   /v1/nfe/invoices/pending:
     get:
+      x-onda: NE-5   # D-NE166: entra com a NE-5 — ciclo da NF-e (reserva, builder, consulta, cancelamento, inutilização, DANFE/e-mail, numeração); não servida na NE-2 (sem stub 501)
       tags: [nfe]
       summary: Notas de mercadoria faturadas sem NF-e viva, autorizada ou denegada — PAGINADO (o lote é do APP)
       description: >-
-        Fora da lista: última voz da vida vigente S, P, A, D, K ou C. Só ramos CONTRATADOS (D-F14/D-F37 — nenhum = lista vazia).
+        Fora da lista: última voz da vida vigente P, A, D, K ou C (a voz S não existe na família — D-NE107; a reserva sem voz é o "em
+        voo" e também fica fora). Só ramos CONTRATADOS (D-F14/D-F37 — nenhum = lista vazia).
         Ordem estável (mais antiga primeiro, id).
       parameters:
         - { name: page,     in: query, schema: { type: integer, minimum: 1, maximum: 100000, default: 1 } }
@@ -204,6 +211,7 @@ paths:
   /v1/nfe/invoices/{invoiceId}:
     parameters: [ { $ref: '#/components/parameters/InvoiceId' } ]
     get:
+      x-onda: NE-5   # D-NE166: entra com a NE-5 — ciclo da NF-e (reserva, builder, consulta, cancelamento, inutilização, DANFE/e-mail, numeração); não servida na NE-2 (sem stub 501)
       tags: [nfe]
       summary: Situação fiscal da nota (tentativas, vozes e eventos da VIDA vigente)
       description: Leitura exige a interface do ramo contratada. Instantes na zona do estabelecimento (Q-TZ1).
@@ -224,6 +232,7 @@ paths:
   /v1/nfe/invoices/{invoiceId}/transmit:
     parameters: [ { $ref: '#/components/parameters/InvoiceId' } ]
     post:
+      x-onda: NE-5   # D-NE166: entra com a NE-5 — ciclo da NF-e (reserva, builder, consulta, cancelamento, inutilização, DANFE/e-mail, numeração); não servida na NE-2 (sem stub 501)
       tags: [nfe]
       summary: Transmite a NF-e da nota (1 NF-e por lote, síncrono — D-NE33)
       description: >-
@@ -288,6 +297,7 @@ paths:
   /v1/nfe/invoices/{invoiceId}/refresh:
     parameters: [ { $ref: '#/components/parameters/InvoiceId' } ]
     post:
+      x-onda: NE-5   # D-NE166: entra com a NE-5 — ciclo da NF-e (reserva, builder, consulta, cancelamento, inutilização, DANFE/e-mail, numeração); não servida na NE-2 (sem stub 501)
       tags: [nfe]
       summary: Consulta o fisco pela NOSSA chave (ou pelo recibo, se P) e grava a voz nova da tentativa vigente (idempotente)
       description: >-
@@ -318,6 +328,7 @@ paths:
   /v1/nfe/invoices/{invoiceId}/cancel:
     parameters: [ { $ref: '#/components/parameters/InvoiceId' } ]
     post:
+      x-onda: NE-5   # D-NE166: entra com a NE-5 — ciclo da NF-e (reserva, builder, consulta, cancelamento, inutilização, DANFE/e-mail, numeração); não servida na NE-2 (sem stub 501)
       tags: [nfe]
       summary: Pede ao fisco o cancelamento da NF-e autorizada (evento 110111, 1 evento por envio — D-NE39)
       description: >-
@@ -366,6 +377,7 @@ paths:
   /v1/nfe/invoices/{invoiceId}/xml:
     parameters: [ { $ref: '#/components/parameters/InvoiceId' } ]
     get:
+      x-onda: NE-5   # D-NE166: entra com a NE-5 — ciclo da NF-e (reserva, builder, consulta, cancelamento, inutilização, DANFE/e-mail, numeração); não servida na NE-2 (sem stub 501)
       tags: [nfe]
       summary: XML com protocolo (procNFe) da NF-e autorizada ou DENEGADA (D-NE35) — e o procEventoNFe do cancelamento, se houver
       responses:
@@ -390,6 +402,7 @@ paths:
   /v1/nfe/invoices/{invoiceId}/danfe:
     parameters: [ { $ref: '#/components/parameters/InvoiceId' } ]
     get:
+      x-onda: NE-5   # D-NE166: entra com a NE-5 — ciclo da NF-e (reserva, builder, consulta, cancelamento, inutilização, DANFE/e-mail, numeração); não servida na NE-2 (sem stub 501)
       tags: [nfe]
       summary: DANFE A4 (PDF nosso, leiaute da NT 2026.010 — D-NE100); carimbo CANCELADA pela voz C (D-NE52); "SEM VALOR FISCAL" em H
       responses:
@@ -414,6 +427,7 @@ paths:
   /v1/nfe/invoices/{invoiceId}/email:
     parameters: [ { $ref: '#/components/parameters/InvoiceId' } ]
     post:
+      x-onda: NE-5   # D-NE166: entra com a NE-5 — ciclo da NF-e (reserva, builder, consulta, cancelamento, inutilização, DANFE/e-mail, numeração); não servida na NE-2 (sem stub 501)
       tags: [nfe]
       summary: Envia ao destinatário o XML da VOZ (procNFe, e o procEventoNFe se cancelada) + o DANFE — ato explícito (D-E10/D-NE23/D-NE53)
       description: Destinatário e cópias lidos do ERP (configs da interface billing); assunto/corpo = config com modelo padrão. Nunca automático (D-F5).
@@ -434,6 +448,7 @@ paths:
 
   /v1/nfe/refresh:
     post:
+      x-onda: NE-5   # D-NE166: entra com a NE-5 — ciclo da NF-e (reserva, builder, consulta, cancelamento, inutilização, DANFE/e-mail, numeração); não servida na NE-2 (sem stub 501)
       tags: [nfe]
       summary: Uma passada da consulta ativa do estabelecimento — SÓ as vivas/ambíguas (autorizadas só sob demanda — D-NE26)
       description: >-
@@ -465,6 +480,7 @@ paths:
 
   /v1/nfe/numbering:
     get:
+      x-onda: NE-5   # D-NE166: entra com a NE-5 — ciclo da NF-e (reserva, builder, consulta, cancelamento, inutilização, DANFE/e-mail, numeração); não servida na NE-2 (sem stub 501)
       tags: [numeração]
       summary: Numeração do 55 por série — números usados pelo ERP, BURACOS derivados e faixas inutilizadas (D-NE8)
       description: >-
@@ -489,6 +505,7 @@ paths:
 
   /v1/nfe/voids:
     get:
+      x-onda: NE-5   # D-NE166: entra com a NE-5 — ciclo da NF-e (reserva, builder, consulta, cancelamento, inutilização, DANFE/e-mail, numeração); não servida na NE-2 (sem stub 501)
       tags: [numeração]
       summary: Pedidos de inutilização do estabelecimento — PAGINADO
       parameters:
@@ -510,6 +527,7 @@ paths:
         '400': { $ref: '#/components/responses/Invalid' }
         '403': { $ref: '#/components/responses/Forbidden' }
     post:
+      x-onda: NE-5   # D-NE166: entra com a NE-5 — ciclo da NF-e (reserva, builder, consulta, cancelamento, inutilização, DANFE/e-mail, numeração); não servida na NE-2 (sem stub 501)
       tags: [numeração]
       summary: Inutiliza uma faixa de números do 55 (ato sobre a NUMERAÇÃO, nunca sobre uma nota — D-E/§3.6, D-NE8/D-NE40)
       description: >-
@@ -636,13 +654,15 @@ components:
         storage:   { type: boolean }
         serverChain:
           type: object
-          description: 'D-NE54 a — cadeia ICP-Brasil do servidor (dado recarregável; fonte: pacote do ITI)'
+          x-onda: NE-3
+          description: 'D-NE54 a — cadeia ICP-Brasil do servidor (dado recarregável; fonte: pacote do ITI); entra com o adaptador (NE-3 — D-NE166)'
           properties:
             loaded:   { type: boolean }
             source:   { type: string, description: 'ex.: ITI ACcompactado.zip de 27/08/2026' }
         authorities:
           type: array
-          description: 'D-NE54 c — último consStatServ por autorizador consultado (teto de frequência ≥ 3 min)'
+          x-onda: NE-3
+          description: 'D-NE54 c — último consStatServ por autorizador consultado (teto de frequência ≥ 3 min); entra com o adaptador (NE-3 — D-NE166)'
           items:
             type: object
             properties:
@@ -682,7 +702,8 @@ components:
               authority: { type: string, enum: [ADN, SEFAZ] }
         stateRegistration:
           type: object
-          description: 'D-NE96 — o emitente tem IE no ERP? sem IE = contribuinte exclusivo do IBS/CBS → SVRS (NT 2026.007, H 26/10 · P 16/11/2026)'
+          x-onda: NE-3
+          description: 'D-NE96 — o emitente tem IE no ERP? sem IE = contribuinte exclusivo do IBS/CBS → SVRS (NT 2026.007, H 26/10 · P 16/11/2026); deriva do autorizador (authorizers.ts — D-NE162, NE-3); na NE-2 o GET devolve só issuers + certificate'
           properties:
             present: { type: boolean }
             authorizer55: { type: string, nullable: true, description: 'autorizador derivado para o 55 neste ambiente (AUTORIZADORES.md)' }

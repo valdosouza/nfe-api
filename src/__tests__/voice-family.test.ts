@@ -174,6 +174,14 @@ describe('D-NE172 — a sonda do boot prova a sessão ESTRITA na chave de acesso
     expect(cut.slice(20, 22)).toBe('55')
     expect(cut.slice(34, 35)).toBe('1')
   })
+  it('cerca: nenhum código desta API cita sql_mode (o modo é do pool do núcleo — `SET sql_mode` aqui o desligaria sem o boot perceber)', () => {
+    const SRC = path.resolve(__dirname, '..')
+    const walk = (dir: string): string[] => fs.readdirSync(dir, { withFileTypes: true }).flatMap(e =>
+      e.isDirectory() ? (e.name === '__tests__' ? [] : walk(path.join(dir, e.name))) : /\.[cm]?ts$/.test(e.name) ? [path.join(dir, e.name)] : [])
+    const hits = [SRC, path.resolve(SRC, '..', 'scripts')].flatMap(walk)
+      .filter(f => /sql_mode/i.test(fs.readFileSync(f, 'utf8').replace(/\/\*[\s\S]*?\*\//g, '').replace(/\/\/[^\n]*/g, '')))
+    expect(hits).toEqual([])
+  })
   it('motor com a sessão estrita (1406): o boot passa', async () => {
     await expect(assertMerchandiseStrictSession(poolWith(engine()).pool)).resolves.toBeUndefined()
   })

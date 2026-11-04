@@ -1,0 +1,3 @@
+# Migrations SQL sempre em LF no checkout (Windows + autocrlf deixava CRLF e quebrava o teste que le o texto da 001 — mesmo
+# conserto do setes-api na F2a, 2026-10-15; achado na publicacao da NE-2, 2026-11-04)
+*.sql text eol=lf

@@ -6,7 +6,7 @@ import {
 import { contextFromEnv } from './context'
 import { createApp } from './app'
 import { MIGRATION_SETS } from './migrations'
-import { assertMerchandiseVoiceDomainsEnforced } from './nfe/voice-family'
+import { assertMerchandiseVoiceDomainsEnforced, assertMerchandiseStrictSession } from './nfe/voice-family'
 import { assertNumberVoidDomainsEnforced, assertNumberVoidUniqueKeys } from './nfe/number-void'
 import { assertCorsOrigins } from './cors-origins'
 
@@ -20,6 +20,7 @@ async function main(): Promise<void> {
   await assertIssuerModelDomainEnforced(ctx.pool)          // D-F45/D-NE84: CHECK BINÁRIO do domínio do modelo (migrations 004/005 do núcleo)
   await assertIssuerEnvironmentDomainEnforced(ctx.pool)    // D-F120: CHECK BINÁRIO do ambiente da habilitação (migration 005 do núcleo)
   await assertMerchandiseVoiceDomainsEnforced(ctx.pool)    // D-F107/D-F120 na NF-e: kind (lista da família), source, ambiente, chave, autorizador… (001 desta API)
+  await assertMerchandiseStrictSession(ctx.pool)           // D-NE172: a sessão é ESTRITA — a chave de 45 posições é RECUSADA (1406), nunca cortada calada
   await assertNumberVoidDomainsEnforced(ctx.pool)          // D-NE163: domínios da faixa inutilizada (001 desta API)
   await assertNumberVoidUniqueKeys(ctx.pool)               // D-NE163: as DUAS UNIQUE da faixa com as colunas decididas (CREATE IF NOT EXISTS não corrige tabela antiga)
   // D-NE158: a família está FORA do catálogo até a janela da NE-6 — a nfe-api confere a PRÓPRIA view passando a leitura (D-F113 por família)

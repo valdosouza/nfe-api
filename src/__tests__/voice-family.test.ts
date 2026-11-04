@@ -5,7 +5,10 @@
 import fs from 'fs'
 import path from 'path'
 import { MERCHANDISE_VOICE_READING, TransmissionEventKind } from 'fiscal-api'
-import { MERCHANDISE_VOICE_WRITE_KINDS, MERCHANDISE_VOICE_FAMILY, MERCHANDISE_TRANSMISSION_TABLE, assertMerchandiseVoiceDomainsEnforced } from '../nfe/voice-family'
+import {
+  MERCHANDISE_VOICE_WRITE_KINDS, MERCHANDISE_VOICE_FAMILY, MERCHANDISE_TRANSMISSION_TABLE, assertMerchandiseVoiceDomainsEnforced,
+  assertMerchandiseStrictSession, MERCHANDISE_KEY_LENGTH_PROBE_KEY,
+} from '../nfe/voice-family'
 import { NUMBER_VOID_TABLE, NUMBER_VOID_UNIQUE_KEYS, assertNumberVoidDomainsEnforced, assertNumberVoidUniqueKeys, voidId } from '../nfe/number-void'
 
 const checkErr = (name: string) => Object.assign(new Error(`CONSTRAINT \`${name}\` failed for \`fiscal_api\`.\`t\``), { errno: 4025 })
@@ -25,7 +28,7 @@ function statisticsRows(draft = false): { name: string; col: string; nonUnique: 
   if (draft) return [{ name: 'uk_invoice_number_void_withdrawn', col: 'withdrawn_void_id', nonUnique: 0 }]
   return Object.entries(NUMBER_VOID_UNIQUE_KEYS).flatMap(([name, cols]) => cols.map(col => ({ name, col, nonUnique: 0 })))
 }
-function engine(opts: { off?: string[]; ci?: boolean; draftKeys?: boolean } = {}) {
+function engine(opts: { off?: string[]; ci?: boolean; draftKeys?: boolean; strict?: boolean } = {}) {
   const bin = (v: unknown, allowed: string[]) => opts.ci ? allowed.map(a => a.toLowerCase()).includes(String(v).trim().toLowerCase()) : allowed.includes(String(v))
   const rx = (v: unknown, re: RegExp) => opts.ci ? new RegExp(re.source, 'i').test(String(v)) : re.test(String(v))
   const refuse = (name: string, ok: boolean) => { if (!ok && !opts.off?.includes(name)) throw checkErr(name) }
@@ -41,6 +44,12 @@ function engine(opts: { off?: string[]; ci?: boolean; draftKeys?: boolean } = {}
       return [{ affectedRows: 1 }]
     }
     if (sql.startsWith(`INSERT INTO ${MERCHANDISE_TRANSMISSION_TABLE} `)) {
+      // D-NE172: a sessão ESTRITA (padrão do motor simulado) recusa o texto maior que a coluna — 1406; sem ela o MariaDB CORTA calado nas 44
+      // posições do VARCHAR(44) ANTES do CHECK (o achado MEDIUM 1 do gate adversarial da NE-2)
+      if (String(r.access_key).length > 44) {
+        if (opts.strict !== false) throw Object.assign(new Error("Data too long for column 'access_key' at row 1"), { errno: 1406, code: 'ER_DATA_TOO_LONG' })
+        r.access_key = String(r.access_key).slice(0, 44)
+      }
       refuse('ck_invoice_merchandise_transmission_environment', bin(r.environment, ['H', 'P']))
       refuse('ck_invoice_merchandise_transmission_key', rx(r.access_key, /^[0-9]{6}[0-9A-Z]{12}[0-9]{26}$/) && bin(String(r.access_key).slice(20, 22), ['55', '65']) && bin(String(r.access_key).slice(34, 35), ['1', '6', '7']))
       refuse('ck_invoice_merchandise_transmission_authorizer', opts.ci ? AUTH.concat('SVC-AN', 'SVC-RS').map(a => a.toLowerCase()).includes(String(r.authorizer).trim().toLowerCase()) : AUTH.concat('SVC-AN', 'SVC-RS').includes(String(r.authorizer)))
@@ -145,10 +154,34 @@ describe('as sondas do boot — cada CHECK pelo NOME, PK própria, o resto váli
     const at = (s: string) => server.indexOf(s)
     expect(at('await runMigrations(')).toBeGreaterThan(0)
     for (const call of ['await assertIssuerModelDomainEnforced(ctx.pool)', 'await assertIssuerEnvironmentDomainEnforced(ctx.pool)',
-      'await assertMerchandiseVoiceDomainsEnforced(ctx.pool)', 'await assertNumberVoidDomainsEnforced(ctx.pool)', 'await assertNumberVoidUniqueKeys(ctx.pool)',
+      'await assertMerchandiseVoiceDomainsEnforced(ctx.pool)', 'await assertMerchandiseStrictSession(ctx.pool)',
+      'await assertNumberVoidDomainsEnforced(ctx.pool)', 'await assertNumberVoidUniqueKeys(ctx.pool)',
       'await assertFamilyViewsReadable(ctx.pool, ctx.fiscalDb, [MERCHANDISE_VOICE_READING])', 'await assertWithdrawnRangesViewReadable(ctx.pool, ctx.fiscalDb)']) {
       expect([call, at(call) > at('await runMigrations(')]).toEqual([call, true])
     }
     expect(server).not.toMatch(/assertFamilyViewsReadable\(ctx\.pool, ctx\.fiscalDb\)/)       // nunca o catálogo inteiro (a família não está nele)
+    // D-NE172: a prova da sessão estrita vem DEPOIS da conferência dos invariantes (que já exige o modo) — as duas, antes de ouvir
+    expect(at('await assertMerchandiseStrictSession(ctx.pool)')).toBeGreaterThan(at('await assertSessionInvariants(ctx.pool)'))
+    expect(at('await assertMerchandiseStrictSession(ctx.pool)')).toBeLessThan(at('.listen('))
+  })
+})
+
+describe('D-NE172 — a sonda do boot prova a sessão ESTRITA na chave de acesso da NF-e', () => {
+  it('a sonda é a chave VÁLIDA com 1 posição a mais: cortada nas 44, ela passa no CHECK da chave (só a sessão estrita a recusa)', () => {
+    expect(MERCHANDISE_KEY_LENGTH_PROBE_KEY).toHaveLength(45)
+    const cut = MERCHANDISE_KEY_LENGTH_PROBE_KEY.slice(0, 44)
+    expect(cut).toMatch(/^[0-9]{6}[0-9A-Z]{12}[0-9]{26}$/)
+    expect(cut.slice(20, 22)).toBe('55')
+    expect(cut.slice(34, 35)).toBe('1')
+  })
+  it('motor com a sessão estrita (1406): o boot passa', async () => {
+    await expect(assertMerchandiseStrictSession(poolWith(engine()).pool)).resolves.toBeUndefined()
+  })
+  it('motor SEM a sessão estrita (corta nas 44 e o CHECK aceita): o boot FALHA ALTO', async () => {
+    await expect(assertMerchandiseStrictSession(poolWith(engine({ strict: false })).pool))
+      .rejects.toThrow(/ACEITOU a chave de acesso da tentativa da NF-e maior que a coluna \(tb_invoice_merchandise_transmission\.access_key com 45 posições\) — a sessão NÃO é estrita/)
+  })
+  it('as sondas dos domínios seguem iguais com o motor SEM a sessão estrita (as chaves delas têm 44 — nada a cortar)', async () => {
+    await expect(assertMerchandiseVoiceDomainsEnforced(poolWith(engine({ strict: false })).pool)).resolves.toBeUndefined()
   })
 })

@@ -1,4 +1,4 @@
-import { TransmissionEventKind, VoiceEventInput, defineVoiceFamily, MERCHANDISE_VOICE_READING, assertCheckRefuses } from 'fiscal-api'
+import { TransmissionEventKind, VoiceEventInput, defineVoiceFamily, MERCHANDISE_VOICE_READING, assertCheckRefuses, assertLengthRefused } from 'fiscal-api'
 
 /**
  * A FAMÍLIA de MERCADORIA (NF-e 55 / NFC-e 65) declara a escrita da voz dela (D-F108; NE-2 — `prompt_onda_nfe_sefaz.md` §15.4 E3): a tabela
@@ -82,4 +82,21 @@ export async function assertMerchandiseVoiceDomainsEnforced(pool: Parameters<typ
   await assertCheckRefuses(pool, 'o DigestValue da tentativa da NF-e', [tx(8, { digest: 'x' }, 'x', `${T}digest`), tx(9, { digest: 'a'.repeat(28) }, 'sem o = final', `${T}digest`)])
   await assertCheckRefuses(pool, 'o recibo da tentativa da NF-e', [tx(10, { receipt: '12345' }, '12345', `${T}receipt`), tx(11, { receipt: '12345678901234A' }, '12345678901234A', `${T}receipt`)])
   await assertCheckRefuses(pool, 'o protocolo da tentativa da NF-e', [tx(12, { protocol: '1234567890123456' }, '16 dígitos', `${T}protocol`), tx(13, { protocol: '12345678901234a' }, 'com letra', `${T}protocol`)])
+}
+
+/**
+ * D-NE172 (Valdo 2026-10-31): a sessão do pool do núcleo é ESTRITA, e o boot desta API o PROVA na coluna onde o corte calado foi achado (gate
+ * adversarial da NE-2, MEDIUM 1): a chave de acesso VÁLIDA com 1 posição a mais (45). Cortada nas 44, ela é a chave válida da sonda — passaria
+ * no `ck_invoice_merchandise_transmission_key` —, então só a sessão estrita a recusa (1406). Transação SEMPRE desfeita, PK própria.
+ */
+export const MERCHANDISE_KEY_LENGTH_PROBE_KEY = probeKey(14) + '1'
+
+export async function assertMerchandiseStrictSession(pool: Parameters<typeof assertLengthRefused>[0]): Promise<void> {
+  await assertLengthRefused(pool, 'a chave de acesso da tentativa da NF-e', [{
+    value:  MERCHANDISE_KEY_LENGTH_PROBE_KEY,
+    column: `${MERCHANDISE_TRANSMISSION_TABLE}.access_key`,
+    params: [MERCHANDISE_KEY_LENGTH_PROBE_KEY, VALID_DIGEST],
+    sql:    `INSERT INTO ${MERCHANDISE_TRANSMISSION_TABLE} (tb_institution_id, tb_invoice_id, terminal, attempt, life_event, environment, authorizer, access_key, dh_emission, digest_value, deleted)`
+      + ` VALUES (0, 0, 0, 14, 1, 'H', 'PR', ?, NOW(), ?, 'N')`,
+  }])
 }

@@ -182,6 +182,14 @@ describe('D-NE172 — a sonda do boot prova a sessão ESTRITA na chave de acesso
       .filter(f => /sql_mode/i.test(fs.readFileSync(f, 'utf8').replace(/\/\*[\s\S]*?\*\//g, '').replace(/\/\/[^\n]*/g, '')))
     expect(hits).toEqual([])
   })
+  it('cerca dos .sql (gates do delta D-NE173/D-NE174): nenhuma migration desta API cita sql_mode nem usa INSERT IGNORE', () => {
+    const dir = path.resolve(__dirname, '..', 'migrations', 'sql')
+    const hits = fs.readdirSync(dir).filter(f => f.endsWith('.sql')).filter(f => {
+      const sql = fs.readFileSync(path.join(dir, f), 'utf8').replace(/--[^\n]*/g, '')
+      return /sql_mode/i.test(sql) || /INSERT\s+IGNORE/i.test(sql)
+    })
+    expect(hits).toEqual([])
+  })
   it('motor com a sessão estrita (1406): o boot passa', async () => {
     await expect(assertMerchandiseStrictSession(poolWith(engine()).pool)).resolves.toBeUndefined()
   })

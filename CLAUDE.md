@@ -9,6 +9,10 @@ mesma entrega (consulta pela NOSSA chave; o P sai pela consulta do recibo — D-
 escrita de cada família vai no DESCRITOR da família (`VoiceFamily<K>`) e o escritor comum do núcleo é genérico nela — nota de implantação
 no `prompt_onda_nfe_sefaz.md` §12.8** — e D-E1…D-E25 + **D-NE1…D-NE168** em `Infra-IA/prompts/prompt_onda_nfe_sefaz.md` (§11.7, §12.7,
 §12.9, §13.10, §14, **§15.8 = Rodada 15, as regras da NE-2**).
+O núcleo `fiscal-api` entra AQUI só pelo **pacote versionado** `vendor/fiscal-api-X.Y.Z.tgz` (D-F221…D-F225, 2026-11-05 —
+`prompt_apis_fiscais_isoladas.md` §23): sem `paths`/`moduleNameMapper` para a pasta irmã (cerca `src/__tests__/fiscal-api-package-fence.test.ts`
+— vendor = lock = instalado); mexeu no núcleo? gere o pacote (no núcleo: `node scripts/pack-release.mjs vX.Y.Z <saída>`), troque o arquivo em
+`vendor/` e rode `npm install`.
 Ao concluir tarefa que gere conhecimento novo, siga `Infra-IA/skills-genericas/atualizar-infra-ia.md`.
 
 ## Estado (2026-10-20) — NE-2 EXECUTADA em worktree (`D:\Gestao2027\ne2\{fiscal-api,nfe-api}`, branch `ne2`) — `prompt_onda_nfe_sefaz.md` §15.9

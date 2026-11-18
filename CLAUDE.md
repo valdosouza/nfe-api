@@ -13,6 +13,8 @@ O núcleo `fiscal-api` entra AQUI só pelo **pacote versionado** `vendor/fiscal-
 `prompt_apis_fiscais_isoladas.md` §23): sem `paths`/`moduleNameMapper` para a pasta irmã (cerca `src/__tests__/fiscal-api-package-fence.test.ts`
 — vendor = lock = instalado); mexeu no núcleo? gere o pacote (no núcleo: `node scripts/pack-release.mjs vX.Y.Z <saída>`), troque o arquivo em
 `vendor/` e rode `npm install`.
+**Núcleo em uso: 2.0.0** (DEPLOY.E1.P5, por acompanhamento da nfse-api — D-F237/D-F249): XML no layout D-F241 pelo `src/nfe/fiscal-file.ts`
+(55 = `nfe`, 65 = `nfce`), raiz por `fiscalStorageRootFromEnv`, CORS com o ambiente (D-F236).
 Ao concluir tarefa que gere conhecimento novo, siga `Infra-IA/skills-genericas/atualizar-infra-ia.md`.
 
 ## Estado (2026-10-20) — NE-2 EXECUTADA em worktree (`D:\Gestao2027\ne2\{fiscal-api,nfe-api}`, branch `ne2`) — `prompt_onda_nfe_sefaz.md` §15.9
@@ -46,7 +48,7 @@ cerca por AST sem `eval`/`Function`/nome montado/`erp` sombreado, sonda do boot 
 estrito, eco do modelo cortado, leitor das faixas pelo índice. Q-NE169 (UNIQUE da prova sem institution) aberta — rec. manter.
 
 **Scripts**: `npm run dev` (porta 3003; `.env` a partir do `.env.example` — o MESMO usuário `fiscal_api` e a MESMA `FISCAL_MASTER_KEYS` da
-nfse-api) · `npm test` (41) · `npm run typecheck` · `npm run db:migrate` (aplica núcleo 001–005 + nfe-api 001 — na publicação, no `fiscal_api`
+nfse-api) · `npm test` (68 — 2026-11-18) · `npm run typecheck` · `npm run db:migrate` (aplica núcleo 001–005 + nfe-api 001 — na publicação, no `fiscal_api`
 do dev; D-NE168) · `npm run prove:001` (SÓ em `FISCAL_DB_NAME=fiscal_api_adv*` — recusa o real) · `npm run explain:leituras` · `npm run token:dev`.
 ⚠️ A nfe-api **não fica no ar** (D-NE168 — sobe só para o passeio); nenhuma rota de NF-e é servida antes da NE-3/NE-5.
 

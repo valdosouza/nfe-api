@@ -1,6 +1,6 @@
-import path from 'path'
 import {
   Pool, createFiscalPool, dbConfigFromEnv, FiscalDbConfig, FiscalStorage, MasterKeyRing, ProductTokenVerifier, FsFiscalStorage,
+  fiscalStorageRootFromEnv,
 } from 'fiscal-api'
 
 /**
@@ -31,7 +31,8 @@ export function contextFromEnv(env: NodeJS.ProcessEnv = process.env, overrides: 
     db,
     pool,
     keyring:  overrides.keyring ?? MasterKeyRing.fromEnv(env),
-    storage:  overrides.storage ?? new FsFiscalStorage(path.resolve(env.STORAGE_PATH ?? path.join(process.cwd(), 'storage'))),
+    // D-F241/P-DEP-2: a raiz é a do núcleo — em produção `STORAGE_PATH` obrigatório e ABSOLUTO; fora dela, `STORAGE_PATH` ou <cwd>/storage
+    storage:  overrides.storage ?? new FsFiscalStorage(fiscalStorageRootFromEnv(env)),
     fiscalDb: db.database,
     verifier: overrides.verifier ?? ProductTokenVerifier.fromEnv(env),
     corsOrigins: overrides.corsOrigins ?? String(env.CORS_ORIGINS ?? '').split(',').map(s => s.trim()).filter(Boolean),

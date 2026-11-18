@@ -1,7 +1,7 @@
 import 'dotenv/config'
 import {
   logger, assertSessionInvariants, assertIssuerModelDomainEnforced, assertIssuerEnvironmentDomainEnforced, assertFamilyViewsReadable,
-  assertWithdrawnRangesViewReadable, MERCHANDISE_VOICE_READING, runMigrations,
+  assertWithdrawnRangesViewReadable, MERCHANDISE_VOICE_READING, runMigrations, fiscalStorageRootFromEnv,
 } from 'fiscal-api'
 import { contextFromEnv } from './context'
 import { createApp } from './app'
@@ -12,7 +12,10 @@ import { assertCorsOrigins } from './cors-origins'
 
 async function main(): Promise<void> {
   const ctx = contextFromEnv()
-  logger.info(`CORS (origens do app — D-F146): ${assertCorsOrigins(ctx.corsOrigins)}`)
+  // gates do DEPLOY.E1.P5: as duas travas de produção (P-DEP-2, D-F236) dependem do NODE_ENV — o boot diz em que ambiente subiu e onde o XML mora
+  logger.info(`Ambiente: NODE_ENV=${process.env.NODE_ENV ?? '(ausente — não-produção)'} · arquivo fiscal em ${fiscalStorageRootFromEnv(process.env)}`)
+  // D-F236: em produção o núcleo recusa origem que não seja https:// e recusa localhost — o ambiente vem do processo
+  logger.info(`CORS (origens do app — D-F146/D-F236): ${assertCorsOrigins(ctx.corsOrigins, process.env.NODE_ENV)}`)
   // migrations: núcleo primeiro, depois a família (trava nomeada — duas instâncias sobem juntas — D-F35)
   const applied = await runMigrations(ctx.db, MIGRATION_SETS)
   if (applied.length) logger.info('Migrations aplicadas no boot', { applied })

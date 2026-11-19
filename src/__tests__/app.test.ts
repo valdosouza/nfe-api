@@ -10,7 +10,9 @@ import jwt from 'jsonwebtoken'
 import request from 'supertest'
 import * as fiscal from 'fiscal-api'
 import { MasterKeyRing, ProductTokenVerifier, FsFiscalStorage } from 'fiscal-api'
+import type { StoredKeyCheck } from 'fiscal-api'
 import { createApp, loadOpenApi } from '../app'
+import { KeyProof } from '../key-proof'
 import type { AppContext } from '../context'
 import { emitterRoutes } from '../modules/emitter/emitter.routes'
 import { SERVED_MODELS } from '../modules/emitter/emitter.service'
@@ -153,15 +155,43 @@ describe('entrada — corpo, envelope, CORS e health', () => {
     expect((await request(app).options('/v1/emitter').set('Origin', 'https://app.setesgestao.com.br')).status).toBe(204)
     expect(() => createApp(ctx({ corsOrigins: ['*'] }))).toThrow(/D-F146/)
   })
-  it('health: banco + chave-mestra + storage → 200; sem chave-mestra → 503 dizendo qual; banco fora → 503 db false', async () => {
-    const ok = await request(createApp(ctx())).get('/v1/health')
-    expect([ok.status, ok.body]).toEqual([200, { status: 'ok', db: true, masterKey: true, storage: true }])
-    const noKey = await request(createApp(ctx({ keyring: MasterKeyRing.of({}) }))).get('/v1/health')
-    expect([noKey.status, noKey.body.masterKey, noKey.body.db]).toEqual([503, false, true])
+  // DEPLOY.E1.P6 (D-NE189 → D-F243/D-F244/D-F245): o sinal `masterKey` é o último resultado da prova (abre A1 guardado); o health só LÊ
+  const quiet = { info() {}, warn() {}, error() {} }
+  const proof = (check: StoredKeyCheck | Error) => {
+    const verify = jest.fn(async () => { if (check instanceof Error) throw check; return check })
+    return { verify, keyProof: new KeyProof({ pool, keyring: MasterKeyRing.of({ 1: randomBytes(32) }) }, { verify, log: quiet }) }
+  }
+
+  it('health: banco + chave-mestra provada + storage → 200 só com os 4 campos; a chamada ao health NÃO roda a prova', async () => {
+    const { verify, keyProof } = proof({ ok: true, degraded: false, versions: [{ version: 1, ok: true, unreadable: 0 }] })
+    await keyProof.run()
+    const before = verify.mock.calls.length
+    const app = createApp(ctx(), keyProof)
+    for (let i = 0; i < 3; i++) {
+      const r = await request(app).get('/v1/health')
+      expect([r.status, r.body]).toEqual([200, { status: 'ok', db: true, masterKey: true, storage: true }])   // `authorities`/`serverChain` são da NE-3
+    }
+    expect(verify.mock.calls.length).toBe(before)
+  })
+
+  it('health: chave que não abre os A1, prova que não rodou, nunca provou ou degraded → só o sinal (nada de versão/código); banco fora → db false', async () => {
+    const bad = proof({ ok: false, degraded: false, versions: [{ version: 1, ok: false, code: 'FISCAL_CERT_INVALID', unreadable: 3 }] })
+    await bad.keyProof.run()
+    const r = await request(createApp(ctx(), bad.keyProof)).get('/v1/health')
+    expect([r.status, r.body]).toEqual([503, { status: 'degraded', db: true, masterKey: false, storage: true }])
+    const notRun = proof(new Error('ECONNREFUSED'))
+    await notRun.keyProof.run()
+    const n = await request(createApp(ctx(), notRun.keyProof)).get('/v1/health')
+    expect([n.status, n.body]).toEqual([503, { status: 'degraded', db: true, masterKey: false, storage: true }])
+    const never = await request(createApp(ctx())).get('/v1/health')            // sem prova passada (nunca rodou) → masterKey false
+    expect([never.status, never.body.masterKey]).toEqual([503, false])
+    const deg = proof({ ok: true, degraded: true, versions: [{ version: 1, ok: true, unreadable: 2 }] })
+    await deg.keyProof.run()
+    const d = await request(createApp(ctx(), deg.keyProof)).get('/v1/health')   // degraded com a chave certa → 200 e o corpo NÃO diz
+    expect([d.status, d.body]).toEqual([200, { status: 'ok', db: true, masterKey: true, storage: true }])
     const down = { query: jest.fn(async () => { throw new Error('down') }), getConnection: jest.fn() } as any
-    const noDb = await request(createApp(ctx({ pool: down }))).get('/v1/health')
-    expect([noDb.status, noDb.body.db]).toEqual([503, false])
-    expect(Object.keys(ok.body).sort()).toEqual(['db', 'masterKey', 'status', 'storage'])   // `authorities`/`serverChain` são da NE-3
+    const noDb = await request(createApp(ctx({ pool: down }), deg.keyProof)).get('/v1/health')
+    expect([noDb.status, noDb.body.db, noDb.body.masterKey]).toEqual([503, false, true])
   })
   it('o contrato é servido: /v1/openapi.yaml e /docs', async () => {
     const app = createApp(ctx())

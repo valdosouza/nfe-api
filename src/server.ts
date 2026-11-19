@@ -5,6 +5,7 @@ import {
 } from 'fiscal-api'
 import { contextFromEnv } from './context'
 import { createApp } from './app'
+import { KeyProof } from './key-proof'
 import { MIGRATION_SETS } from './migrations'
 import { assertMerchandiseVoiceDomainsEnforced, assertMerchandiseStrictSession } from './nfe/voice-family'
 import { assertNumberVoidDomainsEnforced, assertNumberVoidUniqueKeys } from './nfe/number-void'
@@ -30,8 +31,14 @@ async function main(): Promise<void> {
   await assertFamilyViewsReadable(ctx.pool, ctx.fiscalDb, [MERCHANDISE_VOICE_READING])
   await assertWithdrawnRangesViewReadable(ctx.pool, ctx.fiscalDb)   // D-NE161: a view das faixas retiradas responde ao SELECT publicado
   if (ctx.keyring.currentVersion === null) logger.warn('FISCAL_MASTER_KEYS ausente — o A1 não abre (operações fiscais respondem 503) até configurar')
+  // D-NE189 → D-F250: a 1ª prova da chave (abre UM A1 guardado por versão — D-F243) roda ANTES de ouvir a porta: não há health "sem prova".
+  // Falhou = sobe assim mesmo com masterKey=false e o motivo no log. Depois, a cada 5 minutos (D-F245/D-F251). Banco que trava sem recusar
+  // segura o `listen` até o prazo da rodada (1 intervalo) — é o preço de não ter janela sem prova (igual à nfse-api).
+  const keyProof = new KeyProof(ctx)
+  logger.info(`Prova da chave-mestra na partida (D-F243): ${await keyProof.run() ? 'ok' : 'FALHOU — /v1/health com masterKey=false (ver o log)'}`)
+  keyProof.start()
   const port = Number(process.env.PORT ?? 3003)
-  createApp(ctx).listen(port, () => logger.info(`nfe-api ouvindo na porta ${port}`, { fiscalDb: ctx.fiscalDb }))
+  createApp(ctx, keyProof).listen(port, () => logger.info(`nfe-api ouvindo na porta ${port}`, { fiscalDb: ctx.fiscalDb }))
 }
 
 main().catch(err => {

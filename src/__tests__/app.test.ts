@@ -181,7 +181,7 @@ describe('entrada — corpo, envelope, CORS e health', () => {
     const app = createApp(ctx(), keyProof)
     for (let i = 0; i < 3; i++) {
       const r = await request(app).get('/v1/health')
-      expect([r.status, r.body]).toEqual([200, { status: 'ok', db: true, masterKey: true, storage: true }])   // `authorities`/`serverChain` são da NE-3
+      expect([r.status, r.body]).toEqual([200, { status: 'ok', db: true, masterKey: true, storage: true }])   // `serverChain` é da NFE.E4.P3.T3 (D-NE202); `authorities`, da NE-5 (§16.3-4)
     }
     expect(verify.mock.calls.length).toBe(before)
   })

@@ -16,7 +16,7 @@ openapi: 3.0.3
 # Fatos oficiais: `Infra-IA/nfe-api/integracoes/nfe-sefaz/` (README, CONFERENCIAS, AUTORIZADORES).
 # Rodada 4 da nfe-api DECIDIDA em 2026-10-15 (prompt §13.10 — D-NE102…D-NE114); as marcas [D-NE…] apontam a decisão que fixou o ponto.
 # NE-2 (2026-10-20 — prompt §15.8/§15.9, D-NE158…D-NE168): este contrato passa a ser SERVIDO em /docs e /v1/openapi.yaml. D-NE166: a NE-2
-# serve só `GET /v1/health` (sem `authorities`/`serverChain` — NE-3) e o emitente (`GET /v1/emitter`, `PUT|DELETE /v1/emitter/certificate`,
+# serve só `GET /v1/health` (sem `serverChain` — NFE.E4.P3.T3, D-NE202; sem `authorities` — NE-5, §16.3-4) e o emitente (`GET /v1/emitter`, `PUT|DELETE /v1/emitter/certificate`,
 # `PUT|DELETE /v1/emitter/issuers/{model}`); toda operação ainda NÃO servida leva `x-onda: NE-3 | NE-5` (a onda que a traz) — sem stub 501.
 # A cerca rota × contrato (`src/__tests__/app.test.ts`) confere: servidas = contrato − marcadas; nada servido fora do contrato; nada marcado
 # servido. Ao entregar a rota, tira-se a marca (a cerca quebra enquanto as duas coisas não andarem juntas).
@@ -53,7 +53,7 @@ paths:
   /v1/health:
     get:
       tags: [operação]
-      summary: Saúde do serviço (sem autenticação) + estado por autorizador (D-NE54 c — o bloco `authorities` entra na NE-3; na NE-2 responde banco, chave-mestra e storage)
+      summary: Saúde do serviço (sem autenticação) + estado por autorizador (D-NE54 c — o bloco `authorities` entra na NE-5, com o rodízio que o lê, §16.3-4; hoje responde banco, chave-mestra e storage)
       security: []
       responses:
         '200':
@@ -678,14 +678,14 @@ components:
         serverChain:
           type: object
           x-onda: NE-3
-          description: 'D-NE54 a — cadeia ICP-Brasil do servidor (dado recarregável; fonte: pacote do ITI); entra com o adaptador (NE-3 — D-NE166)'
+          description: 'D-NE54 a — cadeia ICP-Brasil do servidor (dado recarregável; fonte: pacote do ITI); entra na NE-3 com a carga das raízes (NFE.E4.P3.T3 — D-NE187, D-NE202)'
           properties:
             loaded:   { type: boolean }
             source:   { type: string, description: 'ex.: ITI ACcompactado.zip de 27/08/2026' }
         authorities:
           type: array
-          x-onda: NE-3
-          description: 'D-NE54 c — último consStatServ por autorizador consultado (teto de frequência ≥ 3 min); entra com o adaptador (NE-3 — D-NE166)'
+          x-onda: NE-5
+          description: 'D-NE54 c — último consStatServ por autorizador consultado (teto de frequência ≥ 3 min); entra na NE-5, com o rodízio e o disjuntor que o leem (prompt_onda_nfe_sefaz.md §16.3-4)'
           items:
             type: object
             properties:
@@ -725,8 +725,8 @@ components:
               authority: { type: string, enum: [ADN, SEFAZ] }
         stateRegistration:
           type: object
-          x-onda: NE-3
-          description: 'D-NE96 — o emitente tem IE no ERP? sem IE = contribuinte exclusivo do IBS/CBS → SVRS (NT 2026.007, H 26/10 · P 16/11/2026); deriva do autorizador (authorizers.ts — D-NE162, NE-3); na NE-2 o GET devolve só issuers + certificate'
+          x-onda: NE-4/NE-5
+          description: 'D-NE96 — o emitente tem IE no ERP? sem IE = contribuinte exclusivo do IBS/CBS → SVRS (NT 2026.007, H 26/10 · P 16/11/2026); o autorizador sai do authorizers.ts (D-NE162, NE-3) e a IE da fonte de fatos da NE-4 (prompt_onda_nfe_sefaz.md §16.3-4); hoje o GET devolve só issuers + certificate'
           properties:
             present: { type: boolean }
             authorizer55: { type: string, nullable: true, description: 'autorizador derivado para o 55 neste ambiente (AUTORIZADORES.md)' }

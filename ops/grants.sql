@@ -9,6 +9,11 @@
 --    do CONTADOR como 1º comando — 2º item da lista fechada da D-F31) exige, além de SELECT, um de DELETE / LOCK TABLES / UPDATE —
 --    conceder o MÍNIMO (`LOCK TABLES` nos schemas de cliente) se a instância da SaveInCloud for MySQL 8; conferir na F3.
 --
+-- 1a. ACESSO.E1.P1 (D-AU3/D-AU12/D-AU19, 2026-11-20): a nfe-api lê a SESSÃO viva em toda rota protegida (`access.liveIdentity` do núcleo)
+--     em `setes_central.vw_user_link` — coberta pela seção 1a do nfse-api/ops/grants.sql (o MESMO usuário; nada a repetir aqui). Cerca:
+--     `src/__tests__/acesso-e1-p1-sessao-viva.test.ts` (toda `setes_central.<nome>` lida pelo código da nfe-api e pelo núcleo INSTALADO tem
+--     o GRANT lá). O boot confere a view (`access.assertSessionViewReadable`) — sem ela ou sem o GRANT, a nfe-api não sobe.
+--
 -- 2. Usuário do setes-api lê a voz e a NUMERAÇÃO da NF-e SÓ pelas VIEWs publicadas (contrato — D-F15), nunca as tabelas internas. GRANT
 --    MÍNIMO (parecer do guardião da NE-2, §15.3-6.3 — "só a view de TENTATIVAS, e só com o leitor"; a view de VOZES não nasce — D-NE160):
 --      - `vw_invoice_merchandise_transmission` — o plano de cancelamento, a prova, a pendência do efeito e o selo (`readFamilyTransmissions`

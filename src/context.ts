@@ -20,7 +20,10 @@ export interface AppContext {
   fiscalDb:    string
   verifier:    ProductTokenVerifier
   corsOrigins: string[]
-  /** Confere no banco que o schema do token é o da institution (defesa em profundidade). */
+  /**
+   * Lê a SESSÃO viva e o PERFIL vivo em toda rota protegida (`access.liveIdentity` — ACESSO.E1.P1, D-AU3/D-AU19). SEMPRE true no
+   * `contextFromEnv` (nenhuma variável de ambiente o desliga — teste fixa); desligado (só por override em teste) NENHUMA sessão é conferida.
+   */
   checkIdentity: boolean
 }
 

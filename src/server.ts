@@ -1,7 +1,7 @@
 import 'dotenv/config'
 import {
   logger, assertSessionInvariants, assertIssuerModelDomainEnforced, assertIssuerEnvironmentDomainEnforced, assertFamilyViewsReadable,
-  assertWithdrawnRangesViewReadable, MERCHANDISE_VOICE_READING, runMigrations, fiscalStorageRootFromEnv,
+  assertWithdrawnRangesViewReadable, MERCHANDISE_VOICE_READING, runMigrations, fiscalStorageRootFromEnv, access,
 } from 'fiscal-api'
 import { contextFromEnv } from './context'
 import { createApp } from './app'
@@ -30,6 +30,9 @@ async function main(): Promise<void> {
   // D-NE158: a família está FORA do catálogo até a janela da NE-6 — a nfe-api confere a PRÓPRIA view passando a leitura (D-F113 por família)
   await assertFamilyViewsReadable(ctx.pool, ctx.fiscalDb, [MERCHANDISE_VOICE_READING])
   await assertWithdrawnRangesViewReadable(ctx.pool, ctx.fiscalDb)   // D-NE161: a view das faixas retiradas responde ao SELECT publicado
+  // ACESSO.E1.P1 (D-AU3/D-AU12): a sessão viva é lida em TODA rota protegida — sem a `vw_user_link` (script sql/70) ou sem o GRANT nela
+  // (seção 1a do nfse-api/ops/grants.sql — o MESMO usuário 'fiscal_api'), o serviço NÃO sobe
+  logger.info(`Sessão viva (setes_central.vw_user_link): ${await access.assertSessionViewReadable(ctx.pool)}`)
   if (ctx.keyring.currentVersion === null) logger.warn('FISCAL_MASTER_KEYS ausente — o A1 não abre (operações fiscais respondem 503) até configurar')
   // D-NE189 → D-F250: a 1ª prova da chave (abre UM A1 guardado por versão — D-F243) roda ANTES de ouvir a porta: não há health "sem prova".
   // Falhou = sobe assim mesmo com masterKey=false e o motivo no log. Depois, a cada 5 minutos (D-F245/D-F251). Banco que trava sem recusar

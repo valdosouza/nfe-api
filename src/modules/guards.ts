@@ -9,7 +9,11 @@ import { HttpError, ErrorCodes, InstitutionPayload, isAdmin } from 'fiscal-api'
  * 1ª instrução do próprio emitter do núcleo (`assertCertificateWritable`), não uma guarda da borda.
  */
 
-/** Emitente (A1 + habilitação) é ato do ADMIN do estabelecimento (adminGuard do produto). */
+/**
+ * Emitente (A1 + habilitação) é ato do ADMIN do estabelecimento (adminGuard do produto) — pelo PERFIL VIVO (ACESSO.E1.P1, D-AU3/D-AU19):
+ * o `role` que `isAdmin` lê é o que o [check] do `productAuth` (`access.liveIdentity`, em `app.ts`) pôs no payload; o do token nunca chega
+ * aqui (o verificador do núcleo 3.0.0 entrega `role: ''` — sem a sessão viva, ninguém é admin).
+ */
 export function requireAdmin(inst: InstitutionPayload): void {
   if (!isAdmin(inst)) throw new HttpError(403, 'Ação exclusiva do administrador do estabelecimento', undefined, ErrorCodes.ADMIN_REQUIRED)
 }

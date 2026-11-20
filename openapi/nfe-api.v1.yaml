@@ -95,6 +95,7 @@ paths:
                   data: { $ref: '#/components/schemas/EmitterStatus' }
         '401': { $ref: '#/components/responses/Unauthorized' }
         '403': { $ref: '#/components/responses/Forbidden' }
+        '503': { $ref: '#/components/responses/SessionUnavailable' }
 
   /v1/emitter/certificate:
     put:
@@ -122,6 +123,7 @@ paths:
                   ok: { type: boolean }
                   data: { $ref: '#/components/schemas/CertificateStatus' }
         '400': { $ref: '#/components/responses/Invalid' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
         '403': { $ref: '#/components/responses/Forbidden' }
         '409': { $ref: '#/components/responses/Conflict' }
         '413': { $ref: '#/components/responses/PayloadTooLarge' }
@@ -133,8 +135,10 @@ paths:
       summary: Apaga o A1 — recusa com transmissão VIVA em qualquer família (409 FISCAL_ISSUER_HAS_LIVE_TRANSMISSIONS)
       responses:
         '200': { description: ok }
+        '401': { $ref: '#/components/responses/Unauthorized' }
         '403': { $ref: '#/components/responses/Forbidden' }
         '409': { $ref: '#/components/responses/Conflict' }
+        '503': { $ref: '#/components/responses/SessionUnavailable' }
 
   /v1/emitter/issuers/{model}:
     parameters:
@@ -160,18 +164,22 @@ paths:
       responses:
         '200': { description: ok }
         '400': { $ref: '#/components/responses/Invalid' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
         '403': { $ref: '#/components/responses/Forbidden' }
         '409': { $ref: '#/components/responses/Conflict' }
         '415': { $ref: '#/components/responses/UnsupportedMediaType' }
         '422': { $ref: '#/components/responses/Unprocessable' }   # FISCAL_MODEL_NOT_SUPPORTED (SE é da nfse-api; 65 da F5)
+        '503': { $ref: '#/components/responses/SessionUnavailable' }
     delete:
       tags: [emitente]
       summary: Exclui a habilitação do 55 (recusa com transmissão viva)
       responses:
         '200': { description: ok }
+        '401': { $ref: '#/components/responses/Unauthorized' }
         '403': { $ref: '#/components/responses/Forbidden' }
         '404': { $ref: '#/components/responses/NotFound' }        # FISCAL_ISSUER_MISSING
         '409': { $ref: '#/components/responses/Conflict' }
+        '503': { $ref: '#/components/responses/SessionUnavailable' }
 
   /v1/nfe/invoices/pending:
     get:
@@ -590,7 +598,13 @@ components:
       type: http
       scheme: bearer
       bearerFormat: JWT
-      description: O MESMO token do login do setes-api, assinado em RS256 (D-F13). A nfe-api só tem a chave pública.
+      description: >-
+        O token do login do produto (setes-api ou auth-api), assinado em RS256 (D-F13); a nfe-api só tem as chaves públicas (lista
+        `JWT_PUBLIC_KEYS` — D-AU16). O token carrega só a identidade (institution, usuário, schema — D-AU3); um `role` no token, se vier,
+        é ignorado (D-AU19). Toda rota protegida lê a SESSÃO viva e o PERFIL vivo (ACESSO.E1.P1): sessão que não vale mais = 401
+        SESSION_REVOKED; a leitura da sessão não pôde ser feita = 503 SESSION_UNAVAILABLE. Limite conhecido até a auth-api:AUTH.E2.P5: a
+        troca de senha que derruba o token anterior (D-EA7) é a registrada no setes-api (`password_set_at` da view); a feita na auth-api só
+        derruba aqui quando a view ler o instante da credencial.
   parameters:
     InvoiceId:
       name: invoiceId
@@ -600,7 +614,10 @@ components:
       description: id da nota = id do pedido no ERP (terminal 0 até a F5 — D-NE12)
   responses:
     Unauthorized:
-      description: token ausente, inválido, expirado ou não-RS256
+      description: token ausente, inválido, expirado ou não-RS256 · SESSION_REVOKED (a sessão do usuário neste estabelecimento não vale mais — vínculo, credencial ou estabelecimento inativo, ou senha trocada no setes-api depois do token; a troca na auth-api, só depois da auth-api:AUTH.E2.P5)
+      content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } }
+    SessionUnavailable:
+      description: SESSION_UNAVAILABLE — a sessão viva não pôde ser lida (banco fora); tente de novo. A causa vai ao log, nunca à resposta
       content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } }
     Forbidden:
       description: PRIVILEGE_REQUIRED (ramo) · INTERFACE_NOT_ALLOWED (licença — vale também para o admin) · admin exigido
@@ -633,7 +650,7 @@ components:
       description: UNSUPPORTED_MEDIA_TYPE — corpo com charset ≠ UTF-8 ou Content-Encoding fora de gzip/deflate/identity
       content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } }
     MasterKeyUnavailable:
-      description: FISCAL_MASTER_KEY_UNAVAILABLE — chave-mestra do cofre ausente na instância
+      description: FISCAL_MASTER_KEY_UNAVAILABLE — chave-mestra do cofre ausente na instância · SESSION_UNAVAILABLE — a sessão viva não pôde ser lida (ACESSO.E1.P1; a causa vai ao log)
       content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } }
   schemas:
     Error:

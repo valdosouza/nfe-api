@@ -23,16 +23,20 @@ jest.mock('fiscal-api', () => {
     __esModule: true, ...actual,
     logger: { info: jest.fn(), warn: jest.fn(), error: jest.fn() },
     emitterView: jest.fn(), writeIssuer: jest.fn(), deleteIssuer: jest.fn(), uploadCertificate: jest.fn(), deleteCertificate: jest.fn(),
-    erp: { ...actual.erp, assertInstitutionSchema: jest.fn(), establishmentCnpj: jest.fn(), establishmentCnpjFact: jest.fn() },
+    erp: { ...actual.erp, establishmentCnpj: jest.fn(), establishmentCnpjFact: jest.fn() },
+    // ACESSO.E1.P1: a sessão viva é a do núcleo (provada com o `liveIdentity` REAL em `acesso-e1-p1-sessao-viva.test.ts`); aqui ela dá o
+    // PERFIL VIVO pelo usuário (7 = admin, 8 = user) — o `role` do token nunca decide
+    access: { ...actual.access, liveIdentity: jest.fn() },
   }
 })
 
 const core = fiscal as unknown as Record<string, jest.Mock>
 const erpM = fiscal.erp as unknown as Record<string, jest.Mock>
+const accessM = fiscal.access as unknown as Record<string, jest.Mock>
 const { privateKey, publicKey } = generateKeyPairSync('rsa', { modulusLength: 2048 })
 const privPem = privateKey.export({ type: 'pkcs8', format: 'pem' }) as string
 const pubPem = publicKey.export({ type: 'spki', format: 'pem' }) as string
-const token = (claims: any = {}) => jwt.sign({ institutionId: 1, userId: 7, role: 'admin', schemaName: 'setes_setes', ...claims }, privPem, { algorithm: 'RS256', keyid: 'k1', expiresIn: '1h' })
+const token = (claims: any = {}) => jwt.sign({ institutionId: 1, userId: 7, schemaName: 'setes_setes', ...claims }, privPem, { algorithm: 'RS256', keyid: 'k1', expiresIn: '1h' })
 const storageRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'nfe-api-app-'))
 afterAll(() => fs.rmSync(storageRoot, { recursive: true, force: true }))
 
@@ -41,7 +45,7 @@ const ctx = (over: Partial<AppContext> = {}): AppContext => ({
   db: { host: 'x', port: 0, user: 'x', password: 'x', database: 'fiscal_api' },
   pool, keyring: MasterKeyRing.of({ 1: randomBytes(32) }), storage: new FsFiscalStorage(storageRoot),
   fiscalDb: 'fiscal_api', verifier: ProductTokenVerifier.of({ k1: pubPem }), corsOrigins: ['https://app.setesgestao.com.br'],
-  checkIdentity: false, ...over,
+  checkIdentity: true, ...over,
 })
 const EMITTER = { issuers: [{ model: '55', environment: 'H', serie: null, enabled: false, authority: 'SEFAZ', cutoverAt: '2026-10-20 00:00:00' }], certificate: { certificate: false, privateKey: false, certificateInfo: null } }
 
@@ -53,6 +57,7 @@ beforeEach(() => {
   core.uploadCertificate.mockResolvedValue(EMITTER.certificate)
   core.deleteCertificate.mockResolvedValue(EMITTER.certificate)
   erpM.establishmentCnpj.mockResolvedValue('12345678000195')
+  accessM.liveIdentity.mockImplementation(async (_q: unknown, p: any) => ({ ...p, role: p.userId === 8 ? 'user' : 'admin' }))
 })
 
 describe('autenticação — JWT do produto (D-F13)', () => {
@@ -66,17 +71,24 @@ describe('autenticação — JWT do produto (D-F13)', () => {
     expect((await request(app).get('/v1/emitter').set('Authorization', `Bearer ${expired}`)).status).toBe(401)
     expect(core.emitterView).not.toHaveBeenCalled()
   })
-  it('identidade conferida no banco quando ligada (schema do token × institution)', async () => {
-    erpM.assertInstitutionSchema.mockRejectedValueOnce(new fiscal.HttpError(401, 'x', undefined, fiscal.ErrorCodes.INSTITUTION_MISMATCH))
-    const r = await request(createApp(ctx({ checkIdentity: true }))).get('/v1/emitter').set('Authorization', `Bearer ${token()}`)
-    expect([r.status, r.body.code]).toEqual([401, 'INSTITUTION_MISMATCH'])
+  it('ACESSO.E1.P1: a sessão viva decide — revogada → 401 SESSION_REVOKED; o [check] recebe o payload SEM `role` e o `iat` do token', async () => {
+    accessM.liveIdentity.mockRejectedValueOnce(new fiscal.HttpError(401, 'x', undefined, fiscal.ErrorCodes.SESSION_REVOKED))
+    const r = await request(createApp(ctx())).get('/v1/emitter').set('Authorization', `Bearer ${token({ role: 'admin' })}`)
+    expect([r.status, r.body.code]).toEqual([401, 'SESSION_REVOKED'])
+    expect(core.emitterView).not.toHaveBeenCalled()
+    expect(accessM.liveIdentity).toHaveBeenCalledWith(pool, { institutionId: 1, userId: 7, role: '', schemaName: 'setes_setes' }, expect.any(Number))
+  })
+  it('ACESSO.E1.P1: sem o [check] da sessão ninguém é admin — nem com `role: admin` no token (fecha, não abre)', async () => {
+    const r = await request(createApp(ctx({ checkIdentity: false }))).get('/v1/emitter').set('Authorization', `Bearer ${token({ role: 'admin' })}`)
+    expect([r.status, r.body.code]).toEqual([403, 'ADMIN_REQUIRED'])
+    expect(accessM.liveIdentity).not.toHaveBeenCalled()
   })
 })
 
 describe('emitente (D-NE9 — o emitter do núcleo montado para o ramo de mercadoria)', () => {
   it('é ato do ADMIN → usuário comum 403 ADMIN_REQUIRED em todas as rotas; admin lê a situação pelo ramo merchandise', async () => {
     const app = createApp(ctx())
-    const user = token({ role: 'user' })
+    const user = token({ userId: 8, role: 'admin' })   // o `role` do token é ignorado: o perfil VIVO do usuário 8 é `user`
     for (const [m, p] of [['get', '/v1/emitter'], ['put', '/v1/emitter/certificate'], ['delete', '/v1/emitter/certificate'], ['put', '/v1/emitter/issuers/55'], ['delete', '/v1/emitter/issuers/55']] as const) {
       const r = await (request(app) as any)[m](p).set('Authorization', `Bearer ${user}`).send({})
       expect([m, p, r.status, r.body.code]).toEqual([m, p, 403, 'ADMIN_REQUIRED'])

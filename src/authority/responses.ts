@@ -1,0 +1,248 @@
+import {
+  ELEMENT, XmlUnreadableError, elementsOf, nameIs, parseXml, textOf, type AmbiguousCause, type XmlNode, type XmlReadOptions,
+} from 'fiscal-api'
+import { NFE_NS } from './soap'
+
+/**
+ * LEITORES das respostas da SEFAZ, conferidas contra a PERGUNTA (NE-3, nfe-api:NFE.E4.P3.T2 — D-NE42, D-NE196, D-NE39/D-NE106/D-NE208,
+ * D-NE209, D-NE40/D-NE207, D-NE108, D-NE33, D-NE210, D-NE206; regras RF-NFE-20 a RF-NFE-26).
+ *
+ * - Entrada: o `xml` que o `callSoap` devolve em `answered` OU `rejected` (o `soap.ts` chama de `rejected` todo cStat fora da faixa 1xx — 217,
+ *   301, 563, 256 chegam assim; quem decide o que eles SÃO é o leitor do serviço).
+ * - Leitor estrito do núcleo, nome LOCAL no namespace da NF-e (D-NE86); o cStat do TOPO é filho direto do retorno (o `protNFe` traz outro).
+ * - Saída: `fact` (o que o fisco afirma sobre a NOSSA pergunta) · `rejection` (recusou; nada mudou) · `no-voice` (106 — D-NE108) ·
+ *   `ambiguous` (não dá para afirmar nada — a saída é consultar de novo).
+ * - O ELO: o eco que liga a resposta à pergunta TEM de vir e ser igual (D-NE42, D-NE210); chave diferente nunca vira autorizada. A exigência
+ *   vale para o que muda estado (autorizada, denegada, cancelada, inutilizada); uma rejeição sem eco segue rejeição (nada aconteceu).
+ * - Resposta ASSINADA no trecho que decide → ambígua (D-NE206 — a conferência do certificado do fisco é a F-NFE-8); o PR não assina.
+ * - Nada aqui grava voz nem banco (NE-5).
+ */
+
+export type ReadResult<F> =
+  | { readonly kind: 'fact'; readonly fact: F }
+  | { readonly kind: 'rejection'; readonly cStat: string; readonly xMotivo: string | null }
+  | { readonly kind: 'no-voice'; readonly cStat: string }
+  | { readonly kind: 'ambiguous'; readonly cause: AmbiguousCause }
+
+const NFE: XmlReadOptions = { match: 'local', namespaces: [NFE_NS] }
+const DSIG_NS = 'http://www.w3.org/2000/09/xmldsig#'
+
+const ambiguous = (cause: AmbiguousCause): ReadResult<never> => ({ kind: 'ambiguous', cause })
+const rejection = (cStat: string, xMotivo: string | null): ReadResult<never> => ({ kind: 'rejection', cStat, xMotivo })
+
+class Unreadable extends Error {}
+
+/** Filhos ELEMENTO diretos com o nome local [name] no namespace da NF-e. */
+function children(el: XmlNode, name: string): XmlNode[] {
+  const out: XmlNode[] = []
+  for (let i = 0; i < el.childNodes.length; i++) {
+    const c = el.childNodes[i]
+    if (c.nodeType === ELEMENT && nameIs(c, name, NFE)) out.push(c)
+  }
+  return out
+}
+function child(el: XmlNode, name: string): XmlNode | null {
+  const all = children(el, name)
+  if (all.length > 1) throw new Unreadable()
+  return all[0] ?? null
+}
+/** Texto do filho direto [name] (vazio = ausente — D-NE85). */
+function text(el: XmlNode | null, name: string): string | null {
+  const c = el ? child(el, name) : null
+  if (!c) return null
+  const v = textOf(c)
+  return v === '' ? null : v
+}
+/** O elemento de retorno (raiz ou dentro do envelope SOAP) — exatamente UM. */
+function retOf(xml: string, name: string): XmlNode {
+  const doc = parseXml(xml)
+  const found = elementsOf(doc, false).filter(e => nameIs(e, name, NFE))
+  if (found.length !== 1) throw new Unreadable()
+  return found[0]
+}
+/** Há `ds:Signature` (filho direto) no elemento? */
+function signed(el: XmlNode): boolean {
+  for (let i = 0; i < el.childNodes.length; i++) {
+    const c = el.childNodes[i]
+    if (c.nodeType === ELEMENT && (c.localName ?? c.nodeName) === 'Signature' && c.namespaceURI === DSIG_NS) return true
+  }
+  return false
+}
+const sameNumber = (a: string | null, b: string | number): boolean => a !== null && /^[0-9]+$/.test(a) && Number(a) === Number(b)
+
+/** Roda [fn] tratando XML ilegível e forma inesperada como ambíguo (falha fechada). */
+function guarded<F>(fn: () => ReadResult<F>): ReadResult<F> {
+  try { return fn() } catch (e) {
+    if (e instanceof XmlUnreadableError || e instanceof Unreadable) return ambiguous('envelope-ilegivel')
+    throw e
+  }
+}
+
+const DENIED = new Set(['110', '301', '302', '303'])
+const AUTHORIZED = new Set(['100', '150'])
+
+// ---------------------------------------------------------------------------------------------------------------------------------------
+
+export interface StatusQuestion { readonly tpAmb: '1' | '2'; readonly cUF: string }
+export interface StatusFact { readonly state: 'operating' | 'paused'; readonly cStat: string }
+
+/** Status do serviço (`retConsStatServ` — RF-NFE-20): 107 em operação; 108/109 paralisado. */
+export function readStatus(q: StatusQuestion, xml: string): ReadResult<StatusFact> {
+  return guarded<StatusFact>(() => {
+    const ret = retOf(xml, 'retConsStatServ')
+    const cStat = text(ret, 'cStat')
+    if (!cStat) return ambiguous('envelope-ilegivel')
+    if (cStat !== '107' && cStat !== '108' && cStat !== '109') return rejection(cStat, text(ret, 'xMotivo'))
+    if (text(ret, 'tpAmb') !== q.tpAmb || !sameNumber(text(ret, 'cUF'), q.cUF)) return ambiguous('nao-classificada')
+    return { kind: 'fact', fact: { state: cStat === '107' ? 'operating' : 'paused', cStat } }
+  })
+}
+
+// ---------------------------------------------------------------------------------------------------------------------------------------
+
+export interface ProtocolQuestion { readonly chNFe: string; readonly tpAmb: '1' | '2' }
+export type ProtocolFact =
+  | { readonly status: 'authorized'; readonly cStat: string; readonly nProt: string }
+  | { readonly status: 'denied'; readonly cStat: string; readonly nProt: string | null }
+  | { readonly status: 'cancelled'; readonly cStat: string }
+  | { readonly status: 'not-found'; readonly cStat: '217' }
+  | { readonly status: 'processing'; readonly cStat: '105' }
+
+/** O `protNFe` da NOSSA chave (sem assinatura) → autorizada/denegada; senão ambíguo. Usado na consulta e no recibo. */
+function readProt(parent: XmlNode, chNFe: string, tpAmb: string): ReadResult<ProtocolFact> {
+  const prots = children(parent, 'protNFe')
+  if (prots.length !== 1) return ambiguous('nao-classificada')
+  const prot = prots[0]
+  if (signed(prot)) return ambiguous('nao-classificada')                       // D-NE206 — F-NFE-8
+  const inf = child(prot, 'infProt')
+  if (!inf) return ambiguous('envelope-ilegivel')
+  if (text(inf, 'chNFe') !== chNFe || text(inf, 'tpAmb') !== tpAmb) return ambiguous('nao-classificada')   // D-NE42, D-NE210
+  const cStat = text(inf, 'cStat')
+  const nProt = text(inf, 'nProt')
+  if (cStat && protStatusOf(cStat) === 'authorized' && nProt) return { kind: 'fact', fact: { status: 'authorized', cStat, nProt } }
+  if (cStat && protStatusOf(cStat) === 'denied') return { kind: 'fact', fact: { status: 'denied', cStat, nProt } }
+  if (cStat) return rejection(cStat, text(inf, 'xMotivo'))
+  return ambiguous('envelope-ilegivel')
+}
+function protStatusOf(cStat: string): 'authorized' | 'denied' | null {
+  return AUTHORIZED.has(cStat) ? 'authorized' : DENIED.has(cStat) ? 'denied' : null
+}
+
+/** Consulta de protocolo (`retConsSitNFe` — RF-NFE-21; D-NE209: cancelada = 101/151 no topo; 155 só dentro do evento). */
+export function readProtocol(q: ProtocolQuestion, xml: string): ReadResult<ProtocolFact> {
+  return guarded<ProtocolFact>(() => {
+    const ret = retOf(xml, 'retConsSitNFe')
+    const cStat = text(ret, 'cStat')
+    if (!cStat) return ambiguous('situacao-ilegivel')
+    if (cStat === '217') return text(ret, 'chNFe') === q.chNFe ? { kind: 'fact', fact: { status: 'not-found', cStat: '217' } } : ambiguous('nao-classificada')
+    const located = AUTHORIZED.has(cStat) || DENIED.has(cStat) || cStat === '101' || cStat === '151'
+    if (!located) return cStat === '155' ? ambiguous('situacao-ilegivel') : rejection(cStat, text(ret, 'xMotivo'))
+    if (text(ret, 'chNFe') !== q.chNFe || text(ret, 'tpAmb') !== q.tpAmb) return ambiguous('nao-classificada')   // D-NE42, D-NE210
+    if (cStat === '101' || cStat === '151') return { kind: 'fact', fact: { status: 'cancelled', cStat } }
+    return readProt(ret, q.chNFe, q.tpAmb)
+  })
+}
+
+// ---------------------------------------------------------------------------------------------------------------------------------------
+
+export interface ReceiptQuestion { readonly nRec: string; readonly chNFe: string; readonly tpAmb: '1' | '2' }
+
+/** Consulta de recibo (`retConsReciNFe`): 106 não grava voz (D-NE108); 105 em processamento (D-NE33); 104 → o `protNFe` da nossa chave. */
+export function readReceipt(q: ReceiptQuestion, xml: string): ReadResult<ProtocolFact> {
+  return guarded<ProtocolFact>(() => {
+    const ret = retOf(xml, 'retConsReciNFe')
+    const cStat = text(ret, 'cStat')
+    if (!cStat) return ambiguous('envelope-ilegivel')
+    if (cStat === '106') return { kind: 'no-voice', cStat }
+    if (cStat !== '104' && cStat !== '105') return rejection(cStat, text(ret, 'xMotivo'))
+    if (text(ret, 'nRec') !== q.nRec || text(ret, 'tpAmb') !== q.tpAmb) return ambiguous('nao-classificada')
+    if (cStat === '105') return { kind: 'fact', fact: { status: 'processing', cStat: '105' } }
+    return readProt(ret, q.chNFe, q.tpAmb)
+  })
+}
+
+// ---------------------------------------------------------------------------------------------------------------------------------------
+
+export type RegistryQuestion = { readonly UF: string } & ({ readonly CNPJ: string } | { readonly IE: string } | { readonly CPF: string })
+export interface RegistryEntry { readonly IE: string | null; readonly CNPJ: string | null; readonly CPF: string | null; readonly UF: string | null; readonly cSit: string | null }
+export interface RegistryFact { readonly cStat: '111' | '112'; readonly entries: readonly RegistryEntry[] }
+
+/** Consulta cadastro (`retConsCad` 2.00 — RF-NFE-22): 111/112 com o eco da UF e do documento perguntado. */
+export function readRegistry(q: RegistryQuestion, xml: string): ReadResult<RegistryFact> {
+  return guarded<RegistryFact>(() => {
+    const ret = retOf(xml, 'retConsCad')
+    const inf = child(ret, 'infCons')
+    if (!inf) return ambiguous('envelope-ilegivel')
+    const cStat = text(inf, 'cStat')
+    if (!cStat) return ambiguous('envelope-ilegivel')
+    if (cStat !== '111' && cStat !== '112') return rejection(cStat, text(inf, 'xMotivo'))
+    const [field, value] = 'CNPJ' in q ? ['CNPJ', q.CNPJ] : 'IE' in q ? ['IE', q.IE] : ['CPF', q.CPF]
+    if (text(inf, 'UF') !== q.UF || text(inf, field) !== value) return ambiguous('nao-classificada')
+    const entries = children(inf, 'infCad').map(c => ({
+      IE: text(c, 'IE'), CNPJ: text(c, 'CNPJ'), CPF: text(c, 'CPF'), UF: text(c, 'UF'), cSit: text(c, 'cSit'),
+    }))
+    if (entries.length === 0) return ambiguous('nao-classificada')
+    return { kind: 'fact', fact: { cStat, entries } }
+  })
+}
+
+// ---------------------------------------------------------------------------------------------------------------------------------------
+
+export interface VoidQuestion {
+  readonly tpAmb: '1' | '2'; readonly cUF: string; readonly ano: string; readonly CNPJ: string; readonly mod: '55' | '65'
+  readonly serie: number; readonly nNFIni: number; readonly nNFFin: number
+}
+export interface VoidFact { readonly status: 'withdrawn'; readonly cStat: '102' | '563'; readonly nProt: string | null }
+
+/** Inutilização (`retInutNFe` — RF-NFE-23): 102 homologada; 563 = mesma faixa já pedida (prova, com o nProt se vier — D-NE40); 256/241 = rejeição (D-NE207). */
+export function readVoid(q: VoidQuestion, xml: string): ReadResult<VoidFact> {
+  return guarded<VoidFact>(() => {
+    const ret = retOf(xml, 'retInutNFe')
+    if (signed(ret)) return ambiguous('nao-classificada')                         // D-NE206 — F-NFE-8
+    const inf = child(ret, 'infInut')
+    if (!inf) return ambiguous('envelope-ilegivel')
+    const cStat = text(inf, 'cStat')
+    if (!cStat) return ambiguous('envelope-ilegivel')
+    if (cStat !== '102' && cStat !== '563') return rejection(cStat, text(inf, 'xMotivo'))
+    // D-NE210: TODAS as partes do eco presentes e iguais
+    const echoOk = text(inf, 'tpAmb') === q.tpAmb && sameNumber(text(inf, 'cUF'), q.cUF) && sameNumber(text(inf, 'ano'), q.ano)
+      && text(inf, 'CNPJ') === q.CNPJ && text(inf, 'mod') === q.mod && sameNumber(text(inf, 'serie'), q.serie)
+      && sameNumber(text(inf, 'nNFIni'), q.nNFIni) && sameNumber(text(inf, 'nNFFin'), q.nNFFin)
+    if (!echoOk) return ambiguous('nao-classificada')
+    const nProt = text(inf, 'nProt')
+    if (cStat === '102' && !nProt) return ambiguous('envelope-ilegivel')
+    return { kind: 'fact', fact: { status: 'withdrawn', cStat, nProt } }
+  })
+}
+
+// ---------------------------------------------------------------------------------------------------------------------------------------
+
+export interface CancelQuestion { readonly chNFe: string; readonly tpAmb: '1' | '2'; readonly nSeqEvento: 1 }
+export interface CancelFact { readonly status: 'cancelled'; readonly cStat: '135' | '155'; readonly nProt: string }
+
+/** Evento 110111 (`retEnvEvento` — RF-NFE-24): decide o `retEvento`, nunca o 128 do lote; 135/155 cancelam; 136/573/580 ambíguos (D-NE208). */
+export function readCancelEvent(q: CancelQuestion, xml: string): ReadResult<CancelFact> {
+  return guarded<CancelFact>(() => {
+    const ret = retOf(xml, 'retEnvEvento')
+    const evs = children(ret, 'retEvento')
+    if (evs.length === 0) {
+      const lote = text(ret, 'cStat')
+      return lote === '128' || !lote ? ambiguous('evento-sem-retorno') : rejection(lote, text(ret, 'xMotivo'))
+    }
+    if (evs.length !== 1) return ambiguous('nao-classificada')                    // D-NE39: 1 evento por lote
+    const ev = evs[0]
+    if (signed(ev)) return ambiguous('nao-classificada')                          // D-NE206 — F-NFE-8
+    const inf = child(ev, 'infEvento')
+    if (!inf) return ambiguous('envelope-ilegivel')
+    const cStat = text(inf, 'cStat')
+    if (!cStat) return ambiguous('envelope-ilegivel')
+    if (cStat === '136' || cStat === '573' || cStat === '580') return ambiguous('evento-nao-conferido')
+    if (cStat !== '135' && cStat !== '155') return rejection(cStat, text(inf, 'xMotivo'))
+    const echoOk = text(inf, 'chNFe') === q.chNFe && text(inf, 'tpEvento') === '110111'
+      && sameNumber(text(inf, 'nSeqEvento'), q.nSeqEvento) && text(inf, 'tpAmb') === q.tpAmb
+    if (!echoOk) return ambiguous('nao-classificada')                             // D-NE42, D-NE210
+    const nProt = text(inf, 'nProt')
+    if (!nProt) return ambiguous('envelope-ilegivel')
+    return { kind: 'fact', fact: { status: 'cancelled', cStat, nProt } }
+  })
+}

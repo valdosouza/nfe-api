@@ -5,6 +5,7 @@
 import fs from 'fs'
 import os from 'os'
 import path from 'path'
+import { loadServerCa } from '../authority/server-ca'
 import { generateKeyPairSync, randomBytes } from 'crypto'
 import { FsFiscalStorage, MasterKeyRing, ProductTokenVerifier } from 'fiscal-api'
 import { merchandiseDocumentKind, merchandiseFileKey } from '../nfe/fiscal-file'
@@ -106,6 +107,8 @@ describe('raiz — o arquivo fiscal pela regra do núcleo (fiscalStorageRootFrom
     pool: { query: jest.fn(), getConnection: jest.fn() } as any,
     keyring: MasterKeyRing.of({ 1: randomBytes(32) }),
     verifier: ProductTokenVerifier.of({ k1: PUB_PEM }),
+    // NFE.E4.P3.T3: as raízes entram por override — estes casos provam a ordem do STORAGE_PATH
+    serverCa: loadServerCa(path.resolve(__dirname, '..', '..', 'acervo', 'icp', 'raizes-icp-brasil.pem'), new Date('2026-11-21T12:00:00Z')),
   })
   const base = { DB_HOST: 'x', DB_USER: 'x', DB_PASSWORD: 'x', FISCAL_DB_NAME: 'fiscal_api' }
 

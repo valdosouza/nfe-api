@@ -5,6 +5,7 @@
 import fs from 'fs'
 import os from 'os'
 import path from 'path'
+import { loadServerCa } from '../authority/server-ca'
 import { generateKeyPairSync, randomBytes } from 'crypto'
 import jwt from 'jsonwebtoken'
 import request from 'supertest'
@@ -41,11 +42,14 @@ const storageRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'nfe-api-app-'))
 afterAll(() => fs.rmSync(storageRoot, { recursive: true, force: true }))
 
 const pool = { query: jest.fn(async () => [[{ x: 1 }]]), getConnection: jest.fn() } as any
+// NFE.E4.P3.T3: as raízes ICP do acervo, com a data fixa (a v5 vence em 2029)
+const SERVER_CA = loadServerCa(path.resolve(__dirname, '..', '..', 'acervo', 'icp', 'raizes-icp-brasil.pem'), new Date('2026-11-21T12:00:00Z'))
+const SERVER_CHAIN = { loaded: true, source: 'ITI ACcompactado.zip' }
 const ctx = (over: Partial<AppContext> = {}): AppContext => ({
   db: { host: 'x', port: 0, user: 'x', password: 'x', database: 'fiscal_api' },
   pool, keyring: MasterKeyRing.of({ 1: randomBytes(32) }), storage: new FsFiscalStorage(storageRoot),
   fiscalDb: 'fiscal_api', verifier: ProductTokenVerifier.of({ k1: pubPem }), corsOrigins: ['https://app.setesgestao.com.br'],
-  checkIdentity: true, ...over,
+  checkIdentity: true, serverCa: SERVER_CA, ...over,
 })
 const EMITTER = { issuers: [{ model: '55', environment: 'H', serie: null, enabled: false, authority: 'SEFAZ', cutoverAt: '2026-10-20 00:00:00' }], certificate: { certificate: false, privateKey: false, certificateInfo: null } }
 
@@ -181,7 +185,7 @@ describe('entrada — corpo, envelope, CORS e health', () => {
     const app = createApp(ctx(), keyProof)
     for (let i = 0; i < 3; i++) {
       const r = await request(app).get('/v1/health')
-      expect([r.status, r.body]).toEqual([200, { status: 'ok', db: true, masterKey: true, storage: true }])   // `serverChain` é da NFE.E4.P3.T3 (D-NE202); `authorities`, da NE-5 (§16.3-4)
+      expect([r.status, r.body]).toEqual([200, { status: 'ok', db: true, masterKey: true, storage: true, serverChain: SERVER_CHAIN }])   // `authorities` é da NE-5 (§16.3-4)
     }
     expect(verify.mock.calls.length).toBe(before)
   })
@@ -190,17 +194,17 @@ describe('entrada — corpo, envelope, CORS e health', () => {
     const bad = proof({ ok: false, degraded: false, versions: [{ version: 1, ok: false, code: 'FISCAL_CERT_INVALID', unreadable: 3 }] })
     await bad.keyProof.run()
     const r = await request(createApp(ctx(), bad.keyProof)).get('/v1/health')
-    expect([r.status, r.body]).toEqual([503, { status: 'degraded', db: true, masterKey: false, storage: true }])
+    expect([r.status, r.body]).toEqual([503, { status: 'degraded', db: true, masterKey: false, storage: true, serverChain: SERVER_CHAIN }])
     const notRun = proof(new Error('ECONNREFUSED'))
     await notRun.keyProof.run()
     const n = await request(createApp(ctx(), notRun.keyProof)).get('/v1/health')
-    expect([n.status, n.body]).toEqual([503, { status: 'degraded', db: true, masterKey: false, storage: true }])
+    expect([n.status, n.body]).toEqual([503, { status: 'degraded', db: true, masterKey: false, storage: true, serverChain: SERVER_CHAIN }])
     const never = await request(createApp(ctx())).get('/v1/health')            // sem prova passada (nunca rodou) → masterKey false
     expect([never.status, never.body.masterKey]).toEqual([503, false])
     const deg = proof({ ok: true, degraded: true, versions: [{ version: 1, ok: true, unreadable: 2 }] })
     await deg.keyProof.run()
     const d = await request(createApp(ctx(), deg.keyProof)).get('/v1/health')   // degraded com a chave certa → 200 e o corpo NÃO diz
-    expect([d.status, d.body]).toEqual([200, { status: 'ok', db: true, masterKey: true, storage: true }])
+    expect([d.status, d.body]).toEqual([200, { status: 'ok', db: true, masterKey: true, storage: true, serverChain: SERVER_CHAIN }])
     const down = { query: jest.fn(async () => { throw new Error('down') }), getConnection: jest.fn() } as any
     const noDb = await request(createApp(ctx({ pool: down }), deg.keyProof)).get('/v1/health')
     expect([noDb.status, noDb.body.db, noDb.body.masterKey]).toEqual([503, false, true])

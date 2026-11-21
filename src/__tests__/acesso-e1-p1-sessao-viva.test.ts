@@ -9,6 +9,7 @@
 import fs from 'fs'
 import os from 'os'
 import path from 'path'
+import { loadServerCa } from '../authority/server-ca'
 import { generateKeyPairSync, randomBytes } from 'crypto'
 import jwt from 'jsonwebtoken'
 import request from 'supertest'
@@ -78,11 +79,12 @@ const pool = {
 } as any
 
 const storageRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'nfe-api-acesso-st-'))
+const SERVER_CA = loadServerCa(path.resolve(__dirname, '..', '..', 'acervo', 'icp', 'raizes-icp-brasil.pem'), new Date('2026-11-21T12:00:00Z'))   // NFE.E4.P3.T3
 afterAll(() => fs.rmSync(storageRoot, { recursive: true, force: true }))
 const ctx = (over: Partial<AppContext> = {}): AppContext => ({
   db: { host: 'x', port: 0, user: 'x', password: 'x', database: 'fiscal_api' },
   pool, keyring: MasterKeyRing.of({ 1: randomBytes(32) }), storage: new FsFiscalStorage(storageRoot),
-  fiscalDb: 'fiscal_api', verifier, corsOrigins: [], checkIdentity: true, ...over,
+  fiscalDb: 'fiscal_api', verifier, corsOrigins: [], checkIdentity: true, serverCa: SERVER_CA, ...over,
 })
 const EMITTER = { issuers: [], certificate: { certificate: false, privateKey: false, certificateInfo: null } }
 const get = (app: ReturnType<typeof createApp>, token: string) => request(app).get('/v1/emitter').set('Authorization', `Bearer ${token}`)
@@ -156,7 +158,7 @@ describe('ACESSO.E1.P1.T1 — toda rota protegida lê a sessão viva; o admin é
   })
 
   it('(g) produção liga a sessão: `contextFromEnv` dá `checkIdentity: true`, e nenhuma variável de ambiente o desliga', () => {
-    const over = { pool, verifier, keyring: MasterKeyRing.of({ 1: randomBytes(32) }), storage: new FsFiscalStorage(storageRoot) }
+    const over = { pool, verifier, keyring: MasterKeyRing.of({ 1: randomBytes(32) }), storage: new FsFiscalStorage(storageRoot), serverCa: SERVER_CA }
     for (const env of [{}, { CHECK_IDENTITY: 'false', checkIdentity: 'false', NODE_ENV: 'production', FISCAL_CHECK_IDENTITY: '0' }]) {
       expect(contextFromEnv(env as NodeJS.ProcessEnv, over).checkIdentity).toBe(true)
     }

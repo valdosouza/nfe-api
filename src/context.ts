@@ -2,6 +2,7 @@ import {
   Pool, createFiscalPool, dbConfigFromEnv, FiscalDbConfig, FiscalStorage, MasterKeyRing, ProductTokenVerifier, FsFiscalStorage,
   fiscalStorageRootFromEnv,
 } from 'fiscal-api'
+import { loadServerCa, type ServerCa } from './authority/server-ca'
 
 /**
  * Dependências do serviço (montadas UMA vez no boot; os testes montam as suas). Nada de estado de CONTROLE aqui — só recursos (pool,
@@ -25,6 +26,11 @@ export interface AppContext {
    * `contextFromEnv` (nenhuma variável de ambiente o desliga — teste fixa); desligado (só por override em teste) NENHUMA sessão é conferida.
    */
   checkIdentity: boolean
+  /**
+   * Raízes ICP-Brasil do SERVIDOR da SEFAZ (D-NE187/D-NE202 — NFE.E4.P3.T3): `SEFAZ_SERVER_CA_PATH` obrigatório; sem elas o serviço não
+   * sobe. Vai no `ca` das chamadas ao fisco.
+   */
+  serverCa: ServerCa
 }
 
 export function contextFromEnv(env: NodeJS.ProcessEnv = process.env, overrides: Partial<AppContext> = {}): AppContext {
@@ -36,6 +42,8 @@ export function contextFromEnv(env: NodeJS.ProcessEnv = process.env, overrides: 
     keyring:  overrides.keyring ?? MasterKeyRing.fromEnv(env),
     // D-F241/P-DEP-2: a raiz é a do núcleo — em produção `STORAGE_PATH` obrigatório e ABSOLUTO; fora dela, `STORAGE_PATH` ou <cwd>/storage
     storage:  overrides.storage ?? new FsFiscalStorage(fiscalStorageRootFromEnv(env)),
+    // depois do STORAGE_PATH (a ordem do erro no boot é a de sempre); `now` = o relógio — os testes injetam `serverCa`
+    serverCa: overrides.serverCa ?? loadServerCa(env.SEFAZ_SERVER_CA_PATH, new Date()),
     fiscalDb: db.database,
     verifier: overrides.verifier ?? ProductTokenVerifier.fromEnv(env),
     corsOrigins: overrides.corsOrigins ?? String(env.CORS_ORIGINS ?? '').split(',').map(s => s.trim()).filter(Boolean),

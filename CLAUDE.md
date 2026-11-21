@@ -13,7 +13,7 @@ O núcleo `fiscal-api` entra AQUI só pelo **pacote versionado** `vendor/fiscal-
 `prompt_apis_fiscais_isoladas.md` §23): sem `paths`/`moduleNameMapper` para a pasta irmã (cerca `src/__tests__/fiscal-api-package-fence.test.ts`
 — vendor = lock = instalado); mexeu no núcleo? gere o pacote (no núcleo: `node scripts/pack-release.mjs vX.Y.Z <saída>`), troque o arquivo em
 `vendor/` e rode `npm install`.
-**Núcleo em uso: 3.0.0** (ACESSO.E1.P1 — token sem `role`, admin só do perfil vivo — D-AU3/D-AU19; o 2.0.0 veio no DEPLOY.E1.P5, por acompanhamento da nfse-api — D-F237/D-F249): XML no layout D-F241 pelo `src/nfe/fiscal-file.ts`
+**Núcleo em uso: 4.0.0** (DEPLOY.E1.P7 — teto de 2 MB no transporte = ambíguo `envelope-ilegivel` e `verifyXml` pelo elemento, D-NE193/D-NE194, por acompanhamento da nfse-api f6682a3 — D-F237; superfície fixada em `src/__tests__/deploy-e1-p7.test.ts`; a 3.0.0 — token sem `role`, admin só do perfil vivo, D-AU3/D-AU19 — veio no ACESSO.E1.P1; o 2.0.0 no DEPLOY.E1.P5): XML no layout D-F241 pelo `src/nfe/fiscal-file.ts`
 (55 = `nfe`, 65 = `nfce`), raiz por `fiscalStorageRootFromEnv`, CORS com o ambiente (D-F236).
 **Health com prova da chave-mestra** (DEPLOY.E1.P6, D-NE189 — gêmea da nfse-api b3f192e): `src/key-proof.ts` abre UM A1 guardado por versão
 (`verifyStoredKeys` do núcleo) no boot ANTES do `listen` e a cada `KEY_PROOF_INTERVAL_MINUTES = 5` (D-F243/D-F245/D-F250/D-F251); o
@@ -55,12 +55,12 @@ cerca por AST sem `eval`/`Function`/nome montado/`erp` sombreado, sonda do boot 
 estrito, eco do modelo cortado, leitor das faixas pelo índice. Q-NE169 (UNIQUE da prova sem institution) aberta — rec. manter.
 
 **Scripts**: `npm run dev` (porta 3003; `.env` a partir do `.env.example` — o MESMO usuário `fiscal_api` e a MESMA `FISCAL_MASTER_KEYS` da
-nfse-api) · `npm test` (99 — 2026-11-20) · `npm run typecheck` · `npm run db:migrate` (aplica núcleo 001–005 + nfe-api 001 — na publicação, no `fiscal_api`
+nfse-api) · `npm test` (12 suítes / 139 — 2026-11-21) · `npm run typecheck` · `npm run db:migrate` (aplica núcleo 001–005 + nfe-api 001 — na publicação, no `fiscal_api`
 do dev; D-NE168) · `npm run prove:001` (SÓ em `FISCAL_DB_NAME=fiscal_api_adv*` — recusa o real) · `npm run explain:leituras` · `npm run token:dev`.
 ⚠️ A nfe-api **não fica no ar** (D-NE168 — sobe só para o passeio); nenhuma rota de NF-e é servida antes da NE-3/NE-5.
 
 **Fora da NE-2, registrado (§15.9)**: autorizadores (`src/authority/authorizers.ts`, constante DATADA — D-NE162, NE-3); teto de 2 MB do corpo do
-fisco no `httpsRequest` comum (D-NE164, NE-3 — vale para as duas famílias); prova no MySQL 8 do `fiscal_api` inteiro (D-NE165, pré-condição da F3).
+fisco no `httpsRequest` comum (D-NE164 — ENTREGUE no núcleo 4.0.0, DEPLOY.E1.P7: acima de 2 MB = ambíguo `envelope-ilegivel`; o envelope SOAP — NFE.E4.P2.T1 — só o trata); prova no MySQL 8 do `fiscal_api` inteiro (D-NE165, pré-condição da F3).
 
 **Anterior**: NE-0 FECHADA 2026-10-15 (acervo oficial em `Infra-IA/nfe-api/integracoes/nfe-sefaz/`, 65 conferências, OpenAPI design-first);
 NE-1a (núcleo genérico por família) e NE-1b (`fiscal-api/pdf`) publicadas; Rodadas 1–15 decididas (D-NE1…D-NE168).

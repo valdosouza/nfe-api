@@ -17,7 +17,7 @@
   "dependencies": {
     "dotenv": "16.6.1",
     "express": "4.22.3",
-    "fiscal-api": "file:vendor/fiscal-api-3.0.0.tgz",
+    "fiscal-api": "file:vendor/fiscal-api-4.0.0.tgz",
     "swagger-ui-express": "5.0.1",
     "yaml": "2.9.1",
     "zod": "3.25.76"

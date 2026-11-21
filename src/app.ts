@@ -38,7 +38,7 @@ export function createApp(ctx: AppContext, keyProof: KeyProof = new KeyProof(ctx
   // ACESSO.E1.P1 (D-AU3/D-AU19, molde nfse-api): a SESSÃO viva em toda rota protegida — vínculo, credencial e estabelecimento ativos na
   // `setes_central.vw_user_link`, pelo institution, usuário e schema do token (substitui o antigo schema × institution pela premissa de que a
   // view amarra o schema à institution — molde nfse-api; o sql/70 do setes-api não foi relido nesta entrega); devolve o payload com o PERFIL
-  // VIVO no `role` (o verificador do núcleo 3.0.0 o entrega vazio — o do token é ignorado). Revogada = 401 SESSION_REVOKED; banco fora = 503
+  // VIVO no `role` (o verificador entrega o `role` vazio desde o núcleo 3.0.0 — o do token é ignorado). Revogada = 401 SESSION_REVOKED; banco fora = 503
   // SESSION_UNAVAILABLE. D-EA7: o `iat` derruba o token anterior à troca de senha REGISTRADA NO SETES-API (`password_set_at` da view) — a
   // troca feita na auth-api só derruba aqui quando a view ler o instante da credencial (auth-api:AUTH.E2.P5). Desligado (`checkIdentity`
   // false — só testes), nenhuma sessão é conferida e ninguém é admin.

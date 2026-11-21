@@ -3,6 +3,7 @@ import {
   parseXml, transport, type AmbiguousCause, type HttpsCall, type HttpsResult, type XmlNode, type XmlReadOptions,
 } from 'fiscal-api'
 import type { NfeService } from './authorizers'
+import { validateMessage, type MessageKind } from './xsd'
 
 /**
  * ENVELOPE SOAP 1.2 da NF-e (NE-3, nfe-api:NFE.E4.P2.T1 — D-NE5/D-NE184: o envelope, o Fault/500 e o cStat moram na FAMÍLIA, sobre o
@@ -12,6 +13,8 @@ import type { NfeService } from './authorizers'
  * - Pedido: `soap12:Envelope` + `soap12:Body` + `nfeDadosMsg` no namespace do serviço, SEM `Header` (a 4.00 eliminou o `nfeCabecMsg`);
  *   `Content-Type: application/soap+xml; charset=utf-8; action="<ação>"` e NUNCA o header `SOAPAction` (D-NE182). Ação, namespace e
  *   elemento de retorno chegam como PARÂMETRO até o WSDL do PR e da SVRS ser arquivado (NFE.E4.P4.T1 — D-NE199): nenhum valor não oficial.
+ * - A mensagem é validada no XSD ANTES de ir à SEFAZ (D-NE211, NFE.E4.P3.T1): recusa = `XsdRefusedError` com a lista inteira (D-NE43);
+ *   nada é enviado.
  * - Timeout CONSTANTE por serviço (D-NE203; o MOC não fixa timeout HTTP — RF-NFE-17): 60 s na autorização síncrona, 30 s nos demais.
  * - Classificação, na MESMA ordem do `authorityJson` do núcleo 4.0.0 (Q-ADV1a: só o que acontece DEPOIS do aperto de mão TLS pode ter
  *   chegado ao fisco):
@@ -54,8 +57,10 @@ export interface SoapCall {
   readonly namespace:     string
   /** Elemento de retorno esperado no namespace da NF-e (ex.: `retConsStatServ`). */
   readonly resultElement: string
-  /** A mensagem do serviço, já montada (e validada no XSD — NFE.E4.P3.T1). Sem declaração `<?xml`. */
+  /** A mensagem do serviço, já montada. Sem declaração `<?xml`. */
   readonly body:          string
+  /** O tipo da mensagem — escolhe o conjunto de XSD da validação antes do envio (D-NE211). */
+  readonly message:       MessageKind
   readonly cert?:         Buffer
   readonly key?:          Buffer
   /** Raízes ICP do servidor (D-NE57/D-NE187 — NFE.E4.P3.T3). */
@@ -72,9 +77,17 @@ export type SoapOutcome =
   | { readonly kind: 'credential' }
   | { readonly kind: 'chain' }
 
-const XML_DECL = /^﻿?\s*<\?xml[^?]*\?>\s*/
+const XML_DECL = /^\uFEFF?\s*<\?xml[^?]*\?>\s*/
 /** Valor que vai dentro de aspas no Content-Type ou num atributo: nada de aspas, `<`, `&` nem quebra (falha de programação, não do fisco). */
 const SAFE_TOKEN = /^[^"'<>&\s]+$/
+
+/** A mensagem não passou no XSD: nada foi enviado ao fisco. `errors` = a lista inteira do validador (D-NE43). */
+export class XsdRefusedError extends Error {
+  constructor(public readonly kind: MessageKind, public readonly errors: readonly string[]) {
+    super(`Mensagem ${kind} recusada no XSD local: ${errors.length} erro(s)`)
+    this.name = 'XsdRefusedError'
+  }
+}
 
 /** O envelope SOAP 1.2 do pedido (exportado para o teste). */
 export function soapEnvelope(namespace: string, body: string): string {
@@ -132,6 +145,8 @@ function classifyResponse(res: HttpsResult, resultElement: string): SoapOutcome 
 export async function callSoap(call: SoapCall, request: (c: HttpsCall) => Promise<HttpsResult> = c => transport.request(c)): Promise<SoapOutcome> {
   if (!SAFE_TOKEN.test(call.action)) throw new Error('SOAP: ação inválida')
   const envelope = soapEnvelope(call.namespace, call.body)
+  const xsd = await validateMessage(call.message, call.body.replace(XML_DECL, ''))
+  if (!xsd.ok) throw new XsdRefusedError(call.message, xsd.errors)
   let res: HttpsResult
   try {
     res = await request({

@@ -3,7 +3,7 @@
 // Ficha `projetos/nfe-api/SUBJECT/NFE_SEFAZ/ficha-nfe-e4-p2-soap-e-autorizadores.md`, mudança 4 (D-NE34, D-NE38, D-NE182, D-NE184,
 // D-NE199, D-NE203, D-NE204). Namespace, ação e elemento de retorno abaixo são dado de TESTE (os oficiais chegam com o WSDL — D-NE199).
 import type { HttpsCall, HttpsResult } from 'fiscal-api'
-import { SERVICE_TIMEOUT_MS, SOAP12_NS, callSoap, soapEnvelope, type SoapCall } from '../authority/soap'
+import { SERVICE_TIMEOUT_MS, SOAP12_NS, XsdRefusedError, callSoap, soapEnvelope, type SoapCall } from '../authority/soap'
 
 const NS = 'http://www.portalfiscal.inf.br/nfe/wsdl/NFeStatusServico4'
 const ACTION = 'http://www.portalfiscal.inf.br/nfe/wsdl/NFeStatusServico4/nfeStatusServicoNF'
@@ -11,8 +11,10 @@ const BODY = '<consStatServ xmlns="http://www.portalfiscal.inf.br/nfe" versao="4
 
 const CALL: SoapCall = {
   url: 'https://homologacao.nfe.sefa.pr.gov.br/nfe/NFeStatusServico4', service: 'NfeStatusServico', action: ACTION, namespace: NS,
-  resultElement: 'retConsStatServ', body: BODY,
+  resultElement: 'retConsStatServ', body: BODY, message: 'consStatServ',
 }
+
+jest.setTimeout(60_000)
 
 const envelope = (inner: string) =>
   `<?xml version="1.0" encoding="utf-8"?><soap:Envelope xmlns:soap="${SOAP12_NS}"><soap:Body>`
@@ -65,6 +67,22 @@ describe('pedido — envelope SOAP 1.2 sem Header e ação no Content-Type (D-NE
     await expect(callSoap({ ...CALL, namespace: 'a b' }, t.request)).rejects.toThrow(/namespace inválido/)
     await expect(callSoap({ ...CALL, body: 'texto' }, t.request)).rejects.toThrow(/não é XML/)
     expect(t.calls).toHaveLength(0)
+  })
+})
+
+describe('validação XSD antes de enviar (D-NE211, NFE.E4.P3.T1)', () => {
+  it('mensagem inválida → XsdRefusedError com a lista, e NADA vai ao transporte', async () => {
+    const t = fake({ text: ret('107') })
+    const bad = BODY.replace('<tpAmb>2</tpAmb>', '<tpAmb>3</tpAmb>')
+    const err = await callSoap({ ...CALL, body: bad }, t.request).catch(e => e)
+    expect(err).toBeInstanceOf(XsdRefusedError)
+    expect((err as XsdRefusedError).errors.join(' | ')).toMatch(/tpAmb/)
+    expect(t.calls).toHaveLength(0)
+  })
+  it('mensagem com a declaração <?xml é validada sem ela e enviada', async () => {
+    const t = fake({ text: ret('107') })
+    expect(await callSoap({ ...CALL, body: `<?xml version="1.0" encoding="UTF-8"?>${BODY}` }, t.request)).toMatchObject({ kind: 'answered' })
+    expect(t.calls).toHaveLength(1)
   })
 })
 

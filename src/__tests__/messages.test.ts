@@ -46,6 +46,12 @@ describe('consSitNFe confere a chave antes de montar', () => {
     expect(() => consSitNFe(wrong, '2')).toThrow(/DV/)
   })
   it('cUF da chave ≠ UF pedida → recusa', () => { expect(() => consSitNFe(CHAVE, '2', 'SC')).toThrow(/cUF/) })
+  it('série 970 a 999 → recusa (MOC J02e, rej. 617 — a SEFAZ-PR respondeu 617 à série 999 no smoke de 2026-11-22)', () => {
+    const b999 = `412611${CNPJ}55999000000001112345678`
+    expect(() => consSitNFe(b999 + String(mod11Ascii48(b999)), '2')).toThrow(/série 999/)
+    const b969 = `412611${CNPJ}55969000000001112345678`
+    expect(() => consSitNFe(b969 + String(mod11Ascii48(b969)), '2')).not.toThrow()
+  })
   it('tpAmb fora de 1/2 → recusa', () => { expect(() => consSitNFe(CHAVE, '3' as any)).toThrow(/tpAmb/) })
   it('assertAccessKey aceita a chave certa', () => { expect(() => assertAccessKey(CHAVE, 'PR')).not.toThrow() })
 })

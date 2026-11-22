@@ -50,12 +50,14 @@ export function consStatServ(tpAmb: TpAmb, uf: Uf): string {
 }
 
 /**
- * A chave de 44 posições bem formada: 43 + DV pelo módulo 11 (`mod11Ascii48` do núcleo); a UF da chave tem de ser a pedida (a consulta vai ao
- * autorizador da UF). CNPJ alfanumérico nas 12 primeiras posições do emitente (posições 7-18).
+ * A chave de 44 posições bem formada: 43 + DV pelo módulo 11 (`mod11Ascii48` do núcleo), série 0 a 969 (J02e); a UF da chave tem de ser a
+ * pedida (a consulta vai ao autorizador da UF). CNPJ alfanumérico nas 12 primeiras posições do emitente (posições 7-18).
  */
 export function assertAccessKey(chNFe: string, uf?: Uf): void {
   if (!/^[0-9]{6}[0-9A-Z]{12}[0-9]{26}$/.test(chNFe)) throw new Error('chNFe: 44 posições na forma da chave')
   if (mod11Ascii48(chNFe.slice(0, 43)) !== Number(chNFe[43])) throw new Error('chNFe: DV não confere')
+  // MOC 7.00, regra J02e (rej. 617): série 0–909 (CNPJ) ou 910–969 (CPF); fora disso a SEFAZ recusa a chave (fato do smoke de 2026-11-22, série 999)
+  if (Number(chNFe.slice(22, 25)) > 969) throw new Error(`chNFe: série ${chNFe.slice(22, 25)} fora de 0 a 969 (MOC J02e, rej. 617)`)
   if (uf !== undefined && chNFe.slice(0, 2) !== cufOf(uf)) throw new Error(`chNFe: cUF ${chNFe.slice(0, 2)} ≠ ${cufOf(uf)} (${uf})`)
 }
 

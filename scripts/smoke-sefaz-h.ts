@@ -106,7 +106,7 @@ async function buildMessages(a: SmokeArgs, a1: { cert: Buffer; key: Buffer }, no
     { kind: 'consStatServ', xml: consStatServ('2', a.uf) },
     { kind: 'consSitNFe', xml: consSitNFe(a.chave, '2', a.uf) },
     { kind: 'consCad', xml: consCad(a.uf, { CNPJ: a.cnpj }) },
-    { kind: 'inutNFe', xml: signInutNFe(inutNFe({ tpAmb: '2', uf: a.uf, yy, cnpj: a.cnpj, serie: 999, from: 1, to: 1, xJust: DRY_VOID_JUSTIFICATION }), a1.cert, a1.key) },
+    { kind: 'inutNFe', xml: signInutNFe(inutNFe({ tpAmb: '2', uf: a.uf, yy, cnpj: a.cnpj, serie: 1, from: 1, to: 1, xJust: DRY_VOID_JUSTIFICATION }), a1.cert, a1.key) },
   ]
   for (const m of msgs) {
     const r = await validateMessage(m.kind, m.xml)

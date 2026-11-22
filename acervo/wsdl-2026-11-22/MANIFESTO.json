@@ -1,0 +1,21 @@
+{
+  "lidoEm": "2026-11-22",
+  "ambiente": "H",
+  "origem": "fase 1 do smoke (scripts/smoke-sefaz-h.ts --wsdl --vai), A1 do André Piai, mTLS com as raízes ICP de acervo/icp",
+  "files": {
+    "PR-NFeAutorizacao.wsdl": "f5c9fc386690a2b83fe15f5ab347549a266925c59762b6f849c8dd32ca85191e",
+    "PR-NFeRetAutorizacao.wsdl": "39bb0b423a19dc8a6f9170ded67871e5df6d6cf83a4cd218fbf29f03fd6e4f5f",
+    "PR-NfeConsultaCadastro.wsdl": "28b15682782c0ff17ecc2131400e797b717914b87b036cc26275077cf80c0dde",
+    "PR-NfeConsultaProtocolo.wsdl": "0dcd0a13e0d5b185b676db16e85b06745ac0d983f2f3fde8e8c96244c4eb4d3a",
+    "PR-NfeInutilizacao.wsdl": "8d03e0fa41afadf1d39d1c576b910b31d16f825e62e09f4dfb7abe2be7dab4cb",
+    "PR-NfeStatusServico.wsdl": "bd88cce9bc6042e6fe53cca388bc8057688d2dbfd03a58531c5abf63a92eb7ee",
+    "PR-RecepcaoEvento.wsdl": "8f23c7fcdfdae3c630de6047ef3500cbdeed5dffc94affbb1c8bbce3bf369815",
+    "SVRS-NFeAutorizacao.wsdl": "5e9e3af463ac215c0b2e881ade516e5cce1d87143b83c0d73dc86b11d7c7adc9",
+    "SVRS-NFeRetAutorizacao.wsdl": "7e810f82e832ef8ab2335aaa30fe74b9336adf8d54b06c192665de460d01b67a",
+    "SVRS-NfeConsultaCadastro.wsdl": "10abc03646a164a288c7bb20e8beab579993ea0937149ad2c5fe6938a80112d6",
+    "SVRS-NfeConsultaProtocolo.wsdl": "0f467d73fa61a790dc4e46ec2781c036b8d76c7867434713a3f0bfb1fba862fa",
+    "SVRS-NfeInutilizacao.wsdl": "5daf88658ab71d118ebe173f8a91d71396a4891b42aa4d4a3dd091989a8d6d54",
+    "SVRS-NfeStatusServico.wsdl": "7ba2d3974ff5897346bdb27bdf235fe7634ac8d7bec4939ab368848e8cc19224",
+    "SVRS-RecepcaoEvento.wsdl": "f493cb4aba9d40b90f081eb29c895ca4c84d6cd11007d6b4f794b19bf54243bb"
+  }
+}

@@ -10,8 +10,8 @@
  * Dois grãos (§16.2-1 do prompt da NF-e; D-NE205):
  *  (i)  UF × ambiente (o modelo é entrada: só o 55 tem linhas — D-NE2): autorizador normal, SVC da UF, autorizador da consulta cadastro e
  *       a oferta DATADA da inutilização. A IE do emitente é ENTRADA da derivação, nunca dado (D-NE96).
- *  (ii) autorizador × ambiente × serviço: URL e versão. A ação SOAP, o namespace do `nfeDadosMsg` e o elemento de retorno entram AQUI quando
- *       o WSDL do PR e da SVRS for arquivado com o A1 (NFE.E4.P4.T1 — D-NE182, D-NE199); nenhum valor não oficial antes disso.
+ *  (ii) autorizador × ambiente × serviço: URL e versão; e a parte SOAP (operação, ação, namespace do `nfeDadosMsg`, elemento de saída) lida
+ *       dos WSDL do PR e da SVRS arquivados com o A1 (NFE.E4.P4.T1 — D-NE182, D-NE199; `SOAP_BINDINGS`, só H por ora).
  *  Fora, com quem os lê (D-NE205): prazo do 110111 e parâmetros do 656 (rodízio da NE-5), CSRT por UF (builder da NE-4).
  *
  * A tentativa congela o CÓDIGO do autorizador (D-NE162); a URL se resolve na chamada. Recusa = valor tipado, nunca exceção.
@@ -405,6 +405,54 @@ const ENDPOINTS: Readonly<Record<Environment, Readonly<Record<Endpoint, ServiceU
       NFeDistribuicaoDFe: { url: 'https://www1.nfe.fazenda.gov.br/NFeDistribuicaoDFe/NFeDistribuicaoDFe.asmx', version: '1.00' },
     },
   },
+}
+
+/**
+ * Grão (ii), parte SOAP (D-NE182/D-NE199 — nfe-api:NFE.E4.P4, mudança 5 da ficha do smoke): operação, ação SOAP 1.2, namespace do `nfeDadosMsg`
+ * e elemento de saída de cada serviço, LIDOS dos WSDL baixados com o A1 do André Piai na fase 1 do smoke (2026-11-22, `--wsdl --vai`) e
+ * arquivados byte a byte em `acervo/wsdl-2026-11-22/` (o teste confere o SHA-256 de cada arquivo e re-extrai cada valor com o `wsdl.ts`).
+ * Só HOMOLOGAÇÃO, só PR e SVRS (os do smoke — D-NE192): produção e os demais autorizadores entram com a leitura deles (nenhum valor não oficial).
+ * Fato do PR: a operação do evento é `nfeRecepcaoEventoNF` (na SVRS, `nfeRecepcaoEvento`); a ação do retorno da autorização do PR começa com
+ * maiúscula (`…/NFeRetAutorizacaoLote`). CONHECIMENTO NEGATIVO (§16.2-10): nunca ler WSDL em tempo de execução para chamar.
+ */
+export interface SoapBinding { readonly operation: string; readonly action: string; readonly namespace: string; readonly outputElement: string }
+export const SOAP_BINDINGS_SOURCE = { readAt: '2026-11-22', dir: 'wsdl-2026-11-22' } as const
+const WSDL_NS_BASE = 'http://www.portalfiscal.inf.br/nfe/wsdl/'
+const sb = (wsdl: string, operation: string, actionOp: string = operation): SoapBinding =>
+  ({ operation, action: `${WSDL_NS_BASE}${wsdl}/${actionOp}`, namespace: `${WSDL_NS_BASE}${wsdl}`, outputElement: 'nfeResultMsg' })
+const SOAP_BINDINGS: Readonly<Partial<Record<Environment, Readonly<Partial<Record<Endpoint, Readonly<Partial<Record<NfeService, SoapBinding>>>>>>>>> = {
+  H: {
+    PR: {
+      NfeStatusServico:     sb('NFeStatusServico4', 'nfeStatusServicoNF'),
+      NFeAutorizacao:       sb('NFeAutorizacao4', 'nfeAutorizacaoLote'),
+      NFeRetAutorizacao:    sb('NFeRetAutorizacao4', 'nfeRetAutorizacaoLote', 'NFeRetAutorizacaoLote'),
+      NfeConsultaProtocolo: sb('NFeConsultaProtocolo4', 'nfeConsultaNF'),
+      NfeConsultaCadastro:  sb('CadConsultaCadastro4', 'consultaCadastro'),
+      NfeInutilizacao:      sb('NFeInutilizacao4', 'nfeInutilizacaoNF'),
+      RecepcaoEvento:       sb('NFeRecepcaoEvento4', 'nfeRecepcaoEventoNF'),
+    },
+    SVRS: {
+      NfeStatusServico:     sb('NFeStatusServico4', 'nfeStatusServicoNF'),
+      NFeAutorizacao:       sb('NFeAutorizacao4', 'nfeAutorizacaoLote'),
+      NFeRetAutorizacao:    sb('NFeRetAutorizacao4', 'nfeRetAutorizacaoLote'),
+      NfeConsultaProtocolo: sb('NFeConsultaProtocolo4', 'nfeConsultaNF'),
+      NfeConsultaCadastro:  sb('CadConsultaCadastro4', 'consultaCadastro'),
+      NfeInutilizacao:      sb('NFeInutilizacao4', 'nfeInutilizacaoNF'),
+      RecepcaoEvento:       sb('NFeRecepcaoEvento4', 'nfeRecepcaoEvento'),
+    },
+  },
+}
+
+/** A parte SOAP de um serviço num autorizador × ambiente; null = ainda não lida de WSDL arquivado (quem chama recusa — nada é enviado). */
+export function soapBindingOf(endpoint: Endpoint, environment: Environment, service: NfeService): SoapBinding | null {
+  return SOAP_BINDINGS[environment]?.[endpoint]?.[service] ?? null
+}
+
+/** Os pares autorizador × serviço com parte SOAP registrada (leitura do teste). */
+export function soapBindingEntries(environment: Environment): readonly { endpoint: Endpoint; service: NfeService; binding: SoapBinding }[] {
+  const env = SOAP_BINDINGS[environment] ?? {}
+  return (Object.entries(env) as [Endpoint, Partial<Record<NfeService, SoapBinding>>][])
+    .flatMap(([endpoint, svcs]) => (Object.entries(svcs) as [NfeService, SoapBinding][]).map(([service, binding]) => ({ endpoint, service, binding })))
 }
 
 /** Exceções nomeadas do grão (ii) em relação à relação de 15/10 (o teste as lê daqui). */

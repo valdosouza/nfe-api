@@ -23,7 +23,7 @@ import path from 'path'
 import {
   HttpError, MasterKeyRing, createFiscalPool, dbConfigFromEnv, openIssuer, transport, type HttpsCall, type HttpsResult,
 } from 'fiscal-api'
-import { endpointOf, ufRoute, UFS, type Endpoint, type NfeService, type Uf } from '../src/authority/authorizers'
+import { endpointOf, soapBindingOf, ufRoute, UFS, type Endpoint, type NfeService, type Uf } from '../src/authority/authorizers'
 import { consCad, consSitNFe, consStatServ, inutNFe, signInutNFe, CUF, RESULT_ELEMENT } from '../src/authority/messages'
 import { callSoap, type SoapOutcome } from '../src/authority/soap'
 import { readProtocol, readRegistry, readStatus } from '../src/authority/responses'
@@ -31,8 +31,8 @@ import { loadServerCa } from '../src/authority/server-ca'
 import { validateMessage, type MessageKind } from '../src/authority/xsd'
 import { readWsdlOperation, type WsdlResult } from '../src/authority/wsdl'
 
-/** Serviços cujo WSDL a fase 1 arquiva (D-NE182) e a operação de cada um. SUPOSIÇÃO: nomes do leiaute 4.00 — o WSDL real confere (o JSON
- *  registra a recusa `operacao-ausente` se o nome não bater, e o WSDL fica arquivado para a correção). */
+/** Serviços cujo WSDL a fase 1 arquiva (D-NE182) e a operação de cada um (nomes do 4.00, conferidos na fase 1 de 2026-11-22: o PR chama
+ *  o evento de `nfeRecepcaoEventoNF` — `WSDL_OPERATION_BY_ENDPOINT`). Nome que não bater = recusa `operacao-ausente` no JSON; o WSDL fica arquivado. */
 export const WSDL_OPERATIONS: Readonly<Partial<Record<NfeService, string>>> = Object.freeze({
   NfeStatusServico:     'nfeStatusServicoNF',
   NFeAutorizacao:       'nfeAutorizacaoLote',
@@ -41,6 +41,10 @@ export const WSDL_OPERATIONS: Readonly<Partial<Record<NfeService, string>>> = Ob
   NfeConsultaCadastro:  'consultaCadastro',
   NfeInutilizacao:      'nfeInutilizacaoNF',
   RecepcaoEvento:       'nfeRecepcaoEvento',
+})
+/** Operação com nome próprio num autorizador (fato da fase 1 de 2026-11-22). */
+export const WSDL_OPERATION_BY_ENDPOINT: Readonly<Partial<Record<Endpoint, Partial<Record<NfeService, string>>>>> = Object.freeze({
+  PR: { RecepcaoEvento: 'nfeRecepcaoEventoNF' },
 })
 /** D-NE192 + D-NE197: os autorizadores do smoke. */
 export const WSDL_ENDPOINTS: readonly Endpoint[] = ['PR', 'SVRS']
@@ -160,7 +164,7 @@ export async function runSmoke(a: SmokeArgs, deps: SmokeDeps): Promise<SmokeRepo
         }
         const hash = sha256(res.text)
         deps.write(`wsdl/${endpoint}-${service}.wsdl`, res.text)
-        const read = res.status === 200 ? readWsdlOperation(res.text, operation) : { ok: false as const, reason: `HTTP ${res.status}` }
+        const read = res.status === 200 ? readWsdlOperation(res.text, WSDL_OPERATION_BY_ENDPOINT[endpoint]?.[service] ?? operation) : { ok: false as const, reason: `HTTP ${res.status}` }
         out.push({ endpoint, service, url, status: res.status, sha256: hash, read })
       }
     }
@@ -210,7 +214,7 @@ async function main(): Promise<void> {
       },
       ca:        () => loadServerCa(process.env.SEFAZ_SERVER_CA_PATH, new Date()).pem,
       request:   c => transport.request(c),
-      bindingOf: () => null,          // mudança 5 da ficha liga a constante dos autorizadores (D-NE199)
+      bindingOf: (endpoint, service) => soapBindingOf(endpoint, 'H', service),   // a constante dos autorizadores (D-NE199)
       write:     (file, content) => {
         const abs = path.join(saida, file)
         fs.mkdirSync(path.dirname(abs), { recursive: true })

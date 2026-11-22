@@ -3,7 +3,7 @@
 // `projetos/nfe-api/SUBJECT/NFE_SEFAZ/ficha-nfe-e4-p4-smoke-sefaz-h.md`, mudança 3. Transporte e A1 FALSOS: nada vai à rede.
 import { mod11Ascii48, type HttpsCall, type HttpsResult } from 'fiscal-api'
 import {
-  runSmoke, parseArgs, wsdlUrlOf, SmokeRefused, WSDL_OPERATIONS, WSDL_ENDPOINTS, type SmokeArgs, type SmokeDeps,
+  runSmoke, parseArgs, wsdlUrlOf, SmokeRefused, WSDL_OPERATIONS, WSDL_OPERATION_BY_ENDPOINT, WSDL_ENDPOINTS, type SmokeArgs, type SmokeDeps,
 } from '../../scripts/smoke-sefaz-h'
 import { testA1 } from './test-a1'
 
@@ -18,7 +18,7 @@ const ARGS: SmokeArgs = { inst: 98, cnpj: CNPJ, uf: 'PR', ie: '9012345678', chav
 /** Um WSDL falso com TODAS as operações do smoke (a ação de cada uma = `<tns>/<operação>`). */
 function fakeWsdl(): string {
   const tns = 'http://www.portalfiscal.inf.br/nfe/wsdl/Falso'
-  const ops = Object.values(WSDL_OPERATIONS) as string[]
+  const ops = [...Object.values(WSDL_OPERATIONS), ...Object.values(WSDL_OPERATION_BY_ENDPOINT).flatMap(o => Object.values(o ?? {}))] as string[]
   return `<wsdl:definitions xmlns:wsdl="http://schemas.xmlsoap.org/wsdl/" xmlns:soap12="http://schemas.xmlsoap.org/wsdl/soap12/" xmlns:tns="${tns}" targetNamespace="${tns}">`
     + ops.map(op => `<wsdl:message name="${op}In"><wsdl:part name="nfeDadosMsg" element="tns:nfeDadosMsg"/></wsdl:message>`
       + `<wsdl:message name="${op}Out"><wsdl:part name="nfeResultMsg" element="tns:nfeResultMsg"/></wsdl:message>`).join('')

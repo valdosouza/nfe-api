@@ -6,9 +6,10 @@ import fs from 'fs'
 import path from 'path'
 import {
   AUTHORIZERS_SOURCE, ENDPOINT_CODES, EXCLUDED_FROM_SOURCE, UFS, assertDatedEntries, endpointOf, registryEndpoint, resolveAuthorizer,
-  ufRoute, voidEndpoint,
+  ufRoute, voidEndpoint, SOAP_BINDINGS_SOURCE, soapBindingEntries, soapBindingOf,
   type Endpoint, type Environment, type NfeService, type ResolveInput, type Uf,
 } from '../authority/authorizers'
+import { readWsdlOperation } from '../authority/wsdl'
 
 const ROOT = path.resolve(__dirname, '..', '..')
 const RAW = fs.readFileSync(path.join(ROOT, 'acervo', AUTHORIZERS_SOURCE.file))
@@ -152,5 +153,37 @@ describe('(f) cerca das entradas datadas', () => {
     const e = { key: 'x', environment: 'P', validFrom: '2026-11-11T03:00:00Z' } as const
     expect(() => assertDatedEntries([e, e])).toThrow(/repetida/)
     expect(() => assertDatedEntries([e, { ...e, environment: 'H' }])).not.toThrow()
+  })
+})
+
+describe('(g) parte SOAP do grão (ii) = os WSDL arquivados (D-NE182/D-NE199; NFE.E4.P4, mudança 5)', () => {
+  const DIR = path.join(ROOT, 'acervo', SOAP_BINDINGS_SOURCE.dir)
+  const MANIFEST = JSON.parse(fs.readFileSync(path.join(DIR, 'MANIFESTO.json'), 'utf8')) as { ambiente: string; files: Record<string, string> }
+  it('o manifesto confere com o disco, arquivo a arquivo (SHA-256)', () => {
+    const onDisk = fs.readdirSync(DIR).filter(f => f.endsWith('.wsdl')).sort()
+    expect(onDisk).toEqual(Object.keys(MANIFEST.files).sort())
+    for (const [f, hash] of Object.entries(MANIFEST.files)) {
+      expect([f, crypto.createHash('sha256').update(fs.readFileSync(path.join(DIR, f))).digest('hex')]).toEqual([f, hash])
+    }
+    expect(MANIFEST.ambiente).toBe('H')
+  })
+  it('cada entrada da constante é a re-extração do WSDL arquivado (operação, ação, namespace, saída)', () => {
+    const entries = soapBindingEntries('H')
+    expect(entries).toHaveLength(14)
+    for (const { endpoint, service, binding } of entries) {
+      const file = `${endpoint}-${service}.wsdl`
+      expect(MANIFEST.files[file]).toBeDefined()
+      const r = readWsdlOperation(fs.readFileSync(path.join(DIR, file), 'utf8'), binding.operation)
+      expect([file, r]).toEqual([file, { ok: true, op: { operation: binding.operation, action: binding.action, namespace: binding.namespace, inputElement: 'nfeDadosMsg', outputElement: binding.outputElement } }])
+    }
+  })
+  it('todo serviço do PR e da SVRS em H com URL tem parte SOAP; produção ainda não (null = nada enviado)', () => {
+    for (const e of ['PR', 'SVRS'] as Endpoint[]) {
+      for (const s of ['NfeStatusServico', 'NFeAutorizacao', 'NFeRetAutorizacao', 'NfeConsultaProtocolo', 'NfeConsultaCadastro', 'NfeInutilizacao', 'RecepcaoEvento'] as NfeService[]) {
+        expect([e, s, endpointOf(e, 'H', s).ok, soapBindingOf(e, 'H', s) !== null]).toEqual([e, s, true, true])
+      }
+    }
+    expect(soapBindingOf('PR', 'P', 'NfeStatusServico')).toBeNull()
+    expect(soapBindingOf('SP', 'H', 'NfeStatusServico')).toBeNull()
   })
 })

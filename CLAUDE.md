@@ -22,6 +22,10 @@ O núcleo `fiscal-api` entra AQUI só pelo **pacote versionado** `vendor/fiscal-
 `setes_central.vw_user_link` pelo institution, usuário e schema do token + o `iat` — D-EA7): revogada = 401 `SESSION_REVOKED`, banco fora = 503
 `SESSION_UNAVAILABLE`; `isAdmin` lê o perfil VIVO (o `role` do token é ignorado); o boot confere a view (`assertSessionViewReadable`) antes do `listen`.
 Prova: `src/__tests__/acesso-e1-p1-sessao-viva.test.ts` (lê o vetor da auth-api em `AUTH_API_DIR` e o GRANT em `NFSE_API_DIR/ops/grants.sql`).
+**GRANT da janela da NE-6** (DEPLOY.E1.P10, PM-9): o `ops/grants.sql` §2 concede ao `setes_api` SÓ o SELECT das três views publicadas —
+`vw_invoice_merchandise_transmission`, `vw_invoice_number_void` e `vw_establishment_issuer` (esta é do núcleo, mas a linha fica aqui: quem a lê é
+o leitor da NF-e); cerca `src/__tests__/deploy-e1-p10.test.ts` (os comandos vivos do arquivo são exatamente os três; linha nova = decisão). O
+script é rodado por um administrador na implantação, depois das migrations e antes de reiniciar o setes-api com o núcleo 5.0.0.
 Ao concluir tarefa que gere conhecimento novo, siga `Infra-IA/skills-genericas/atualizar-infra-ia.md`.
 
 ## Estado (2026-10-20) — NE-2 EXECUTADA em worktree (`D:\Gestao2027\ne2\{fiscal-api,nfe-api}`, branch `ne2`) — `prompt_onda_nfe_sefaz.md` §15.9
@@ -55,7 +59,7 @@ cerca por AST sem `eval`/`Function`/nome montado/`erp` sombreado, sonda do boot 
 estrito, eco do modelo cortado, leitor das faixas pelo índice. Q-NE169 (UNIQUE da prova sem institution) aberta — rec. manter.
 
 **Scripts**: `npm run dev` (porta 3003; `.env` a partir do `.env.example` — o MESMO usuário `fiscal_api` e a MESMA `FISCAL_MASTER_KEYS` da
-nfse-api) · `npm test` (20 suítes / 314 — 2026-11-22) · `npm run typecheck` · `npm run db:migrate` (aplica núcleo 001–007 + nfe-api 001 — na publicação, no `fiscal_api`
+nfse-api) · `npm test` (22 suítes / 328 — 2026-11-22) · `npm run typecheck` · `npm run db:migrate` (aplica núcleo 001–007 + nfe-api 001 — na publicação, no `fiscal_api`
 do dev; D-NE168) · `npm run prove:001` (SÓ em `FISCAL_DB_NAME=fiscal_api_adv*` — recusa o real) · `npm run explain:leituras` · `npm run token:dev`.
 ⚠️ A nfe-api **não fica no ar** (D-NE168 — sobe só para o passeio); nenhuma rota de NF-e é servida antes da NE-3/NE-5.
 

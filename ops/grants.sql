@@ -19,17 +19,25 @@
 --     'fiscal_api' já tem controle total — nada a conceder. O boot da nfe-api a sonda (`assertFiscalCodeDomainsEnforced`) e recusa sem o
 --     CSRT exigido (`assertRequiredProviderCodesPresent`).
 --
--- 2. Usuário do setes-api lê a voz e a NUMERAÇÃO da NF-e SÓ pelas VIEWs publicadas (contrato — D-F15), nunca as tabelas internas. GRANT
---    MÍNIMO (parecer do guardião da NE-2, §15.3-6.3 — "só a view de TENTATIVAS, e só com o leitor"; a view de VOZES não nasce — D-NE160):
+-- 2. Usuário do setes-api lê a voz, a NUMERAÇÃO e a HABILITAÇÃO da NF-e SÓ pelas VIEWs publicadas (contrato — D-F15), nunca as tabelas
+--    internas. GRANT MÍNIMO (parecer do guardião da NE-2, §15.3-6.3 — "só a view de TENTATIVAS, e só com o leitor"; a view de VOZES não
+--    nasce — D-NE160). JANELA DA NE-6 ABERTA (DEPLOY.E1.P10 — núcleo 5.0.0, fiscal-api:FAMILIA.E5.P3; PM-9): as três linhas estão VIVAS.
 --      - `vw_invoice_merchandise_transmission` — o plano de cancelamento, a prova, a pendência do efeito e o selo (`readFamilyTransmissions`
---        do núcleo) leem dela; entra na JANELA da NE-6, junto da entrada da família no catálogo `VOICE_READINGS` (D-NE158) — ANTES de
---        reiniciar o setes-api com o núcleo que a lista (o boot dele confere cada view do catálogo — D-F113);
---      - `vw_invoice_number_void` — o setes-api lê ao CUNHAR número do 55 (D-NE8/D-NE110 — pula pendente e homologada); entra na mesma
---        janela, junto da exposição da peça `numbering/` em `fiscal-api/reading` (D-NE161).
+--        do núcleo) leem dela; a família está no catálogo `VOICE_READINGS` desde o núcleo 5.0.0 (D-NE158) e o boot do setes-api confere
+--        cada view do catálogo (D-F113);
+--      - `vw_invoice_number_void` — o setes-api lê ao CUNHAR número do 55 (D-NE8/D-NE110 — pula pendente e homologada), pela peça
+--        `numbering/` de `fiscal-api/reading` (D-NE161);
+--      - `vw_establishment_issuer` — a habilitação por modelo (`environment`, `cutover_at`), lida JUNTO das faixas ao cunhar (D-NE170). A
+--        view é do NÚCLEO (migration 007 dele); a linha fica AQUI porque quem a lê é o leitor da NF-e — a seção 2 do nfse-api/ops/grants.sql
+--        fica só com a view de tentativas da NFS-e e aponta para cá (combinado nfe-api × nfse-api, 2026-11-22).
 --    As views são SQL SECURITY DEFINER (definidor = quem rodou a migration, o 'fiscal_api'): o SELECT na view basta.
---    NÃO aplicar na NE-2 (não há leitor — D-NE158/D-NE161): descomentar na janela da NE-6.
--- GRANT SELECT ON `fiscal_api`.`vw_invoice_merchandise_transmission` TO 'setes_api'@'%';
--- GRANT SELECT ON `fiscal_api`.`vw_invoice_number_void` TO 'setes_api'@'%';
+--    QUANDO aplicar: DEPOIS das migrations (núcleo 001–007 + nfe-api 001 — as três views têm de existir) e ANTES de reiniciar o setes-api
+--    com o núcleo 5.0.0. O usuário 'setes_api'@'%' tem de existir na instância (a mesma condição da seção 2 do nfse-api/ops/grants.sql) —
+--    onde ele não existe (o dev de hoje), o GRANT falha e nada é concedido.
+--    Cerca: `src/__tests__/deploy-e1-p10.test.ts` — os comandos vivos deste arquivo são EXATAMENTE estes três; linha nova = decisão.
+GRANT SELECT ON `fiscal_api`.`vw_invoice_merchandise_transmission` TO 'setes_api'@'%';
+GRANT SELECT ON `fiscal_api`.`vw_invoice_number_void` TO 'setes_api'@'%';
+GRANT SELECT ON `fiscal_api`.`vw_establishment_issuer` TO 'setes_api'@'%';
 
 -- 3. Conferência (critério §12.8-2) — pela conexão do 'fiscal_api': um INSERT em setes_<cliente>.tb_invoice_event tem que dar
 --    ER_TABLEACCESS_DENIED_ERROR; um SELECT … FOR UPDATE em setes_<cliente>.tb_invoice tem que passar; `npm run db:migrate` da nfe-api
@@ -39,5 +47,5 @@
 --    D-F53: as PROVAS da NE-2 rodaram num banco DESCARTÁVEL `fiscal_api_adv_ne2` (GRANT `fiscal\_api\_adv%` da seção 1b do nfse-api/ops/grants.sql),
 --    apagado ao final — o `fiscal_api` real recebe a 001 só na publicação (D-NE168, `db:migrate` da nfe-api).
 --
--- Ordem na implantação: o grants.sql da nfse-api ANTES do 1º boot de qualquer API fiscal; este arquivo só documenta e guarda os GRANTs
--- da janela da NE-6. É idempotente (GRANT repetido não duplica).
+-- Ordem na implantação: o grants.sql da nfse-api ANTES do 1º boot de qualquer API fiscal; este arquivo DEPOIS das migrations da nfe-api
+-- (as views da seção 2 têm de existir) e antes de reiniciar o setes-api com o núcleo 5.0.0. É idempotente (GRANT repetido não duplica).

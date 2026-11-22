@@ -1,7 +1,7 @@
 import 'dotenv/config'
 import {
   logger, assertSessionInvariants, assertIssuerModelDomainEnforced, assertIssuerEnvironmentDomainEnforced, assertFamilyViewsReadable,
-  assertWithdrawnRangesViewReadable, MERCHANDISE_VOICE_READING, runMigrations, fiscalStorageRootFromEnv, access,
+  assertWithdrawnRangesViewReadable, assertIssuerViewReadable, MERCHANDISE_VOICE_READING, runMigrations, fiscalStorageRootFromEnv, access,
   assertFiscalCodeDomainsEnforced, assertRequiredProviderCodesPresent,
 } from 'fiscal-api'
 import { contextFromEnv } from './context'
@@ -35,6 +35,9 @@ async function main(): Promise<void> {
   // das migrations de outra família (D-NE76)
   await assertFamilyViewsReadable(ctx.pool, ctx.fiscalDb, [MERCHANDISE_VOICE_READING])
   await assertWithdrawnRangesViewReadable(ctx.pool, ctx.fiscalDb)   // D-NE161: a view das faixas retiradas responde ao SELECT publicado
+  // D-NE170 (migration 007 do núcleo 5.0.0): a habilitação por modelo publicada ao ERP — a TERCEIRA view que o `ops/grants.sql` daqui
+  // concede ao setes-api; o boot confere as três (gate da DEPLOY.E1.P9: `_migrations` marcada e view ausente não passa calada)
+  await assertIssuerViewReadable(ctx.pool, ctx.fiscalDb)
   // DEPLOY.E1.P8 — configuração fiscal por UF (migration 006 do núcleo 4.1.0, D-NE221/D-NE223): os domínios pelo CHECK binário de nome
   // certo, e o boot RECUSA se faltar a credencial do fornecedor (o CSRT) exigida para algum (modelo × ambiente) com habilitação viva — o
   // erro diz UF, tipo, modelo e ambiente. Cadastro: `scripts/fiscal-credential.mjs` do núcleo, só pelo Valdo (D-NE226), até a tela.

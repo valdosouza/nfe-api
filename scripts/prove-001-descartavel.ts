@@ -1,7 +1,7 @@
 /**
  * PROVA da migration 001 da família NF-e num banco DESCARTÁVEL (NE-2 — `prompt_onda_nfe_sefaz.md` §15.4 E2; D-F53: só `fiscal_api_adv*`,
  * NUNCA o `fiscal_api` real — o script recusa outro nome). O que prova, na ordem:
- *   1. o runner aplica núcleo 001–005 + nfe-api 001 (idempotente: a 2ª passada não aplica nada) e o arquivo 001 inteiro RE-EXECUTA sem erro
+ *   1. o runner aplica o núcleo inteiro (001–007 no pacote 5.0.0) + nfe-api 001 (idempotente: a 2ª passada não aplica nada) e o arquivo 001 inteiro RE-EXECUTA sem erro
  *      com dado dentro (CREATE TABLE IF NOT EXISTS / CREATE OR REPLACE VIEW — D-F123);
  *   2. as SONDAS do boot (cada CHECK pelo NOME — PADROES §11 regras 11/16): `assertMerchandiseVoiceDomainsEnforced` + `assertNumberVoidDomainsEnforced`;
  *   3. D-NE163: colunas GERADAS STORED do Id (model/serie/number_from/number_to/withdrawn → withdrawn_void_id encadeada) + UNIQUE da faixa
@@ -11,7 +11,7 @@
  *   4. D-NE56/D-NE61: a view publica `authority_recorded` pelo PROTOCOLO (P sem protocolo = 'N'; A com protocolo = 'S') e o mapa do núcleo
  *      recusa a D sem registro (falha ALTO — D-NE61) e aceita a linha mapeada; a leitura das faixas (`readWithdrawnRanges`) lê o que entrou;
  *   5. EXPLAIN das leituras REAIS (SQL capturado das funções do núcleo — nada copiado): por nota, em lote, a contagem de vivas do emitter
- *      (na forma que ele roda quando a família entrar no catálogo — a mesma WHERE) e as faixas retiradas — nenhuma subconsulta DEPENDENTE
+ *      (na forma que ele roda desde que a família entrou no catálogo, no núcleo 5.0.0 — a mesma WHERE, ainda escrita aqui) e as faixas retiradas — nenhuma subconsulta DEPENDENTE
  *      por varredura, nenhuma MATERIALIZED varrendo (molde do `explain-leituras` da nfse-api / cerca M5);
  *   6. `SET NAMES utf8mb4 COLLATE <x>` em três colações lendo as duas views (regra 3 do PADROES §11 — erro 1267 só no leitor de outra colação).
  * Ao final deixa o banco como achou (apaga o que inseriu) — o DROP DATABASE é do condutor.

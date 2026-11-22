@@ -24,7 +24,7 @@
 --    nasce — D-NE160). JANELA DA NE-6 ABERTA (DEPLOY.E1.P10 — núcleo 5.0.0, fiscal-api:FAMILIA.E5.P3; PM-9): as três linhas estão VIVAS.
 --      - `vw_invoice_merchandise_transmission` — o plano de cancelamento, a prova, a pendência do efeito e o selo (`readFamilyTransmissions`
 --        do núcleo) leem dela; a família está no catálogo `VOICE_READINGS` desde o núcleo 5.0.0 (D-NE158) e o boot do setes-api confere
---        cada view do catálogo (D-F113);
+--        cada view da LISTA que ele passar (D-F113 — no 5.0.0 a conferência não tem lista padrão);
 --      - `vw_invoice_number_void` — o setes-api lê ao CUNHAR número do 55 (D-NE8/D-NE110 — pula pendente e homologada), pela peça
 --        `numbering/` de `fiscal-api/reading` (D-NE161);
 --      - `vw_establishment_issuer` — a habilitação por modelo (`environment`, `cutover_at`), lida JUNTO das faixas ao cunhar (D-NE170). A
@@ -32,9 +32,19 @@
 --        fica só com a view de tentativas da NFS-e e aponta para cá (combinado nfe-api × nfse-api, 2026-11-22).
 --    As views são SQL SECURITY DEFINER (definidor = quem rodou a migration, o 'fiscal_api'): o SELECT na view basta.
 --    QUANDO aplicar: DEPOIS das migrations (núcleo 001–007 + nfe-api 001 — as três views têm de existir) e ANTES de reiniciar o setes-api
---    com o núcleo 5.0.0. O usuário 'setes_api'@'%' tem de existir na instância (a mesma condição da seção 2 do nfse-api/ops/grants.sql) —
---    onde ele não existe (o dev de hoje), o GRANT falha e nada é concedido.
+--    com o núcleo 5.0.0. Os três comandos NÃO são atômicos: sem a 007 do núcleo, dois aplicam e o terceiro falha.
+--    PRÉ-CONDIÇÃO, conferida ANTES de rodar: o usuário 'setes_api'@'%' JÁ EXISTE na instância —
+--        SELECT 1 FROM mysql.user WHERE user = 'setes_api' AND host = '%'      (tem de devolver uma linha).
+--    Sem a linha, NÃO rodar esta seção (o dev de hoje não tem o usuário — lá o setes-api conecta com outro): em MariaDB e no MySQL 5.7,
+--    com a sessão do administrador sem NO_AUTO_CREATE_USER no sql_mode, um GRANT a usuário inexistente CRIA a conta SEM SENHA em '%', já
+--    com o SELECT das três views (no MySQL 8 o GRANT falha). O usuário nasce na seção 2 do nfse-api/ops/grants.sql (com a senha dele).
+--    O nome do banco é FIXO aqui (`fiscal_api`); instância com outro `FISCAL_DB_NAME` troca o nome nas três linhas (com o nome errado o
+--    GRANT falha alto — objeto inexistente —, nunca concede outra coisa).
+--    O setes-api que conferir o catálogo INTEIRO precisa também da view de tentativas da NFS-e (seção 2 do nfse-api/ops/grants.sql).
+--    Conferência depois de rodar: `SHOW GRANTS FOR 'setes_api'@'%'` lista os três SELECT; pela conexão dele, `SELECT 1 FROM
+--    fiscal_api.vw_establishment_issuer LIMIT 1` passa e `SELECT 1 FROM fiscal_api.tb_establishment_issuer LIMIT 1` é recusado (1142).
 --    Cerca: `src/__tests__/deploy-e1-p10.test.ts` — os comandos vivos deste arquivo são EXATAMENTE estes três; linha nova = decisão.
+--    Toda linha de comentário começa por dois hifens E UM ESPAÇO (sem o espaço o MySQL não a trata como comentário — a cerca recusa).
 GRANT SELECT ON `fiscal_api`.`vw_invoice_merchandise_transmission` TO 'setes_api'@'%';
 GRANT SELECT ON `fiscal_api`.`vw_invoice_number_void` TO 'setes_api'@'%';
 GRANT SELECT ON `fiscal_api`.`vw_establishment_issuer` TO 'setes_api'@'%';

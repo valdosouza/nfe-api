@@ -128,17 +128,50 @@ async function validateWith(set: LoadedSet, xml: string): Promise<XsdResult> {
   return r.valid ? { ok: true } : { ok: false, errors: r.errors.map(e => e.message) }
 }
 
-/** O ÚNICO `detEvento` do envelope (D-NE39: 1 evento por lote), recortado como documento próprio no namespace da NF-e. */
-function detEventoOf(xml: string): string | null {
+const TEXT = 3
+const XMLNS_NS = 'http://www.w3.org/2000/xmlns/'
+const ESCAPES: Readonly<Record<string, string>> = { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', '\r': '&#13;', '\t': '&#9;', '\n': '&#10;' }
+const escText = (s: string) => s.replace(/[&<>\r]/g, c => ESCAPES[c])
+const escAttr = (s: string) => s.replace(/[&<>"\r\t\n]/g, c => ESCAPES[c])
+
+/**
+ * ESCREVE o elemento como documento próprio a partir do nó que o leitor estrito do núcleo devolveu (N17 — D-NE72, D-NE85…D-NE90: nada
+ * de recorte do texto): elementos só no namespace da NF-e (sem prefixo; `xmlns` da NF-e na raiz), atributos sem namespace e texto.
+ * Qualquer outro nó (outro namespace ou sem namespace, atributo qualificado, CDATA, comentário, PI) = `null`. Conhecimento negativo: o
+ * `e110111` aceitaria comentário, PI e CDATA, mas o nosso montador não os produz e a recusa é fechada (D-NE87); e o leitor do núcleo
+ * normaliza U+0085/U+2028 crus para `\n` (regra do XML 1.1 do @xmldom), o que só pode RECUSAR um xJust que o fisco aceitaria, nunca aceitar
+ * um inválido (achado do gate adversarial da NFE.E4.P3.T4, para o núcleo).
+ */
+function writeNfeElement(el: XmlNode, root: boolean): string | null {
+  if (el.namespaceURI !== NFE_NS) return null
+  const name = el.localName ?? el.nodeName
+  let out = `<${name}${root ? ` xmlns="${NFE_NS}"` : ''}`
+  const attrs = el.attributes
+  for (let i = 0; attrs && i < attrs.length; i++) {
+    const a = attrs[i] as { name: string; value: string; namespaceURI?: string | null }
+    if (a.namespaceURI === XMLNS_NS) continue                              // declaração de namespace: a raiz já declara a da NF-e
+    if (a.namespaceURI || a.name.includes(':')) return null
+    out += ` ${a.name}="${escAttr(a.value)}"`
+  }
+  out += '>'
+  for (let i = 0; i < el.childNodes.length; i++) {
+    const c = el.childNodes[i]
+    if (c.nodeType === TEXT) out += escText(c.nodeValue ?? '')
+    else if (c.nodeType === ELEMENT) { const w = writeNfeElement(c, false); if (w === null) return null; out += w }
+    else return null
+  }
+  return `${out}</${name}>`
+}
+
+/** O ÚNICO `detEvento` do envelope (D-NE39: 1 evento por lote), lido pelo leitor estrito e escrito como documento próprio; ou o erro. */
+function detEventoOf(xml: string): { readonly xml: string } | { readonly error: string } {
   let doc: XmlNode
-  try { doc = parseXml(xml) } catch { return null }
+  try { doc = parseXml(xml) } catch { return { error: 'envEvento: ilegível pelo leitor estrito (N17)' } }
   const found = elementsOf(doc, false).filter(e => e.nodeType === ELEMENT
     && (e.localName ?? e.nodeName) === 'detEvento' && e.namespaceURI === NFE_NS)
-  if (found.length !== 1) return null
-  const m = /<detEvento\b[\s\S]*?<\/detEvento>/.exec(xml)
-  if (!m || xml.indexOf('<detEvento', m.index + 1) !== -1) return null
-  const frag = m[0]
-  return /^<detEvento\b[^>]*\bxmlns="/.test(frag) ? frag : frag.replace(/^<detEvento\b/, `<detEvento xmlns="${NFE_NS}"`)
+  if (found.length !== 1) return { error: 'envEvento: deve haver exatamente um detEvento (D-NE39)' }
+  const det = writeNfeElement(found[0], true)
+  return det === null ? { error: 'envEvento: detEvento com nó fora do e110111 (outro namespace ou sem namespace, atributo qualificado, CDATA, comentário ou PI)' } : { xml: det }
 }
 
 /** Valida a mensagem contra o seu conjunto de XSD; a lista INTEIRA de erros volta (D-NE43). */
@@ -147,6 +180,5 @@ export async function validateMessage(kind: MessageKind, xml: string): Promise<X
   const env = await validateWith(s[kind], xml)
   if (!env.ok || kind !== 'envEvento110111') return env
   const det = detEventoOf(xml)
-  if (!det) return { ok: false, errors: ['envEvento: deve haver exatamente um detEvento (D-NE39)'] }
-  return validateWith(s.detEvento110111, det)
+  return 'error' in det ? { ok: false, errors: [det.error] } : validateWith(s.detEvento110111, det.xml)
 }

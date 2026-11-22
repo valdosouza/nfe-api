@@ -48,6 +48,60 @@ describe('um campo fora do padrão em cada uma → recusa com a lista de erros (
   })
 })
 
+// nfe-api:NFE.E4.P3.T4 — o `detEvento` sai pelo leitor estrito e é ESCRITO a partir do nó (N17 — D-NE72, D-NE85…D-NE90), sem recorte
+describe('detEvento pelo leitor estrito (NFE.E4.P3.T4)', () => {
+  const DET = '<detEvento versao="1.00"><descEvento>Cancelamento</descEvento><nProt>141260000000001</nProt><xJust>Cancelamento de teste em homologacao</xJust></detEvento>'
+  const withDet = (det: string) => {
+    const env = fx.envEvento110111()
+    expect(env).toContain(DET)
+    return env.replace(DET, det)
+  }
+  it('entidades no xJust voltam escapadas no documento próprio e passam no e110111', async () => {
+    expect(await validateMessage('envEvento110111', fx.envEvento110111(undefined, 'Cancelado &amp; refeito &lt;teste&gt; "H"'))).toEqual({ ok: true })
+  })
+  it('detEvento com prefixo (ou com o xmlns da NF-e repetido) passa — o documento próprio é escrito sem prefixo', async () => {
+    const NS = 'http://www.portalfiscal.inf.br/nfe'
+    const prefixed = `<n:detEvento xmlns:n="${NS}" versao="1.00"><n:descEvento>Cancelamento</n:descEvento><n:nProt>141260000000001</n:nProt>`
+      + '<n:xJust>Cancelamento de teste em homologacao</n:xJust></n:detEvento>'
+    expect(await validateMessage('envEvento110111', withDet(prefixed))).toEqual({ ok: true })
+    expect(await validateMessage('envEvento110111', withDet(DET.replace('<detEvento ', `<detEvento xmlns="${NS}" `)))).toEqual({ ok: true })
+  })
+  it('um detEvento dentro do outro (o conteúdo é `xs:any skip` no envelope) → recusa nossa pela D-NE39', async () => {
+    expect(await validateMessage('envEvento110111', withDet(DET.replace('</xJust>', '</xJust><detEvento versao="1.00"/>')))).toEqual({
+      ok: false, errors: ['envEvento: deve haver exatamente um detEvento (D-NE39)'],
+    })
+  })
+  it('xmlns de outro namespace declarado e não usado num filho é só declaração: passa', async () => {
+    expect(await validateMessage('envEvento110111', withDet(DET.replace('<nProt>', '<nProt xmlns:o="urn:outro">')))).toEqual({ ok: true })
+  })
+  it.each([['aspas', '1.00&quot;'], ['tab', '1.00&#9;']])('atributo com %s volta escapado e o e110111 recusa pelo versao (não por XML quebrado)', async (_l, v) => {
+    const r = await validateMessage('envEvento110111', withDet(DET.replace('versao="1.00"', `versao="${v}"`)))
+    expect(r.ok).toBe(false)
+    if (!r.ok) expect(r.errors).toEqual([expect.stringMatching(/attribute 'versao': \[facet 'enumeration'\]/)])
+  })
+  it('envelope que o libxml aceita e o leitor estrito recusa (DOCTYPE) → recusa nossa pelo N17', async () => {
+    const env = fx.envEvento110111()
+    const r = await validateMessage('envEvento110111', `<!DOCTYPE envEvento>${env}`)
+    expect(r).toEqual({ ok: false, errors: ['envEvento: ilegível pelo leitor estrito (N17)'] })
+  })
+  it('o documento próprio é o detEvento INTEIRO: um campo errado no fim continua recusado pelo e110111', async () => {
+    const r = await validateMessage('envEvento110111', withDet(DET.replace('</xJust>', '</xJust><extra>1</extra>')))
+    expect(r.ok).toBe(false)
+    if (!r.ok) expect(r.errors.join(' | ')).toMatch(/extra/)
+  })
+  it.each([
+    ['comentário', DET.replace('<nProt>', '<!-- x --><nProt>')],
+    ['PI', DET.replace('<nProt>', '<?pi x?><nProt>')],
+    ['CDATA', DET.replace('Cancelamento de teste em homologacao', '<![CDATA[Cancelamento de teste em homologacao]]>')],
+    ['filho de outro namespace', DET.replace('</xJust>', '</xJust><o:x xmlns:o="urn:outro">1</o:x>')],
+    ['atributo qualificado', DET.replace('versao="1.00"', 'versao="1.00" xmlns:o="urn:outro" o:a="1"')],
+  ])('nó fora do e110111 no detEvento (%s) → recusa nossa, antes do libxml', async (_label, det) => {
+    expect(await validateMessage('envEvento110111', withDet(det))).toEqual({
+      ok: false, errors: ['envEvento: detEvento com nó fora do e110111 (outro namespace ou sem namespace, atributo qualificado, CDATA, comentário ou PI)'],
+    })
+  })
+})
+
 describe('os XSD são dado conferido (D-NE181)', () => {
   it('o manifesto cobre todos os arquivos dos conjuntos e confere com o disco', () => {
     const manifest = JSON.parse(fs.readFileSync(path.join(DEFAULT_XSD_DIR, 'MANIFESTO.json'), 'utf8')).files as Record<string, string>

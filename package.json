@@ -12,7 +12,8 @@
     "db:migrate": "tsx --require tsconfig-paths/register scripts/migrate.ts",
     "token:dev": "tsx --require tsconfig-paths/register scripts/mint-dev-token.ts",
     "explain:leituras": "tsx --require tsconfig-paths/register scripts/explain-leituras.ts",
-    "prove:001": "tsx --require tsconfig-paths/register scripts/prove-001-descartavel.ts"
+    "prove:001": "tsx --require tsconfig-paths/register scripts/prove-001-descartavel.ts",
+    "smoke:sefaz-h": "tsx --require tsconfig-paths/register scripts/smoke-sefaz-h.ts"
   },
   "dependencies": {
     "dotenv": "16.6.1",

@@ -3,17 +3,20 @@
  * D-NE185 com a D-NE191, D-NE186/D-NE197, D-NE182/D-NE192, D-NE199, D-NE187; §16.2-6 e §16.2-10 do prompt da NF-e). Script no nível do
  * ADAPTADOR (a API não sobe); o emitente é o André Piai (institution do dev com o A1 no cofre); IE, UF e CNPJ entram como PARÂMETROS.
  *
- * ⚠️ Fala com o fisco (homologação) SÓ com `--vai`, e todo `--vai` é ato do Valdo. Três modos:
+ * ⚠️ Fala com o fisco (homologação) SÓ com `--vai`, e todo `--vai` é ato do Valdo. A FASE é explícita (`--fase 1|2`, obrigatória com `--vai`) e
+ * argumento desconhecido é RECUSA (gate adversarial 2026-11-22: `--wsdI --vai` digitado errado não pode cair na fase 2). Três modos:
  *   (sem --vai)      só CONFERE: A1 aberto e vigente, habilitação do 55 em H, CNPJ do certificado = --cnpj, as quatro mensagens válidas no XSD
  *                    (o inutNFe assinado de verdade) e as URLs do PR em H. NENHUMA conexão.
- *   --wsdl --vai     FASE 1: baixa o WSDL de cada serviço usado no PR e na SVRS (mTLS), grava cada um com SHA-256 e a extração (ação SOAP
+ *   --fase 1 --vai   FASE 1: baixa o WSDL de cada serviço usado no PR e na SVRS (mTLS), grava cada um com SHA-256 e a extração (ação SOAP
  *                    1.2, namespace, elemento de saída) num JSON. NÃO chama serviço. A extração vai à constante dos autorizadores DEPOIS de
  *                    conferida (mudança 5 da ficha) — nunca se lê WSDL para chamar (§16.2-10).
- *   --vai            FASE 2: status, consulta de protocolo da --chave e consulta de cadastro do --cnpj, pela ação da CONSTANTE (recusa se ela
+ *   --fase 2 --vai   FASE 2: status, consulta de protocolo da --chave e consulta de cadastro do --cnpj, pela ação da CONSTANTE (recusa se ela
  *                    ainda não tem o serviço); respostas lidas pelo `responses.ts`; XML enviado e recebido gravados com SHA-256.
  * O inutNFe NUNCA é enviado (D-NE191). Nada é gravado no banco. O A1 só em memória.
  *
- * Uso: npm run smoke:sefaz-h -- --inst 98 --cnpj <14> --uf PR --ie <IE> --chave <44 de H> [--saida <pasta>] [--wsdl] [--vai]
+ * Uso: npm run smoke:sefaz-h -- --inst 98 --cnpj <14> --uf PR --ie <IE> --chave <44 de H> [--fase 1|2 --vai] [--saida storage-…]
+ *   A evidência vai SEMPRE para uma pasta `storage-…` (fora do git — a resposta do cadastro traz dado do cliente). A IE informada é
+ *   conferida contra a do cadastro na fase 2 (registrada no resumo; não recusa).
  *   .env: DB_* / FISCAL_DB_NAME (o `fiscal_api` do dev), FISCAL_MASTER_KEYS, SEFAZ_SERVER_CA_PATH.
  */
 import 'dotenv/config'
@@ -23,7 +26,7 @@ import path from 'path'
 import {
   HttpError, MasterKeyRing, createFiscalPool, dbConfigFromEnv, openIssuer, transport, type HttpsCall, type HttpsResult,
 } from 'fiscal-api'
-import { endpointOf, soapBindingOf, ufRoute, UFS, type Endpoint, type NfeService, type Uf } from '../src/authority/authorizers'
+import { endpointOf, soapBindingOf, ufRoute, UFS, type Endpoint, type NfeService, type SoapBinding, type Uf } from '../src/authority/authorizers'
 import { consCad, consSitNFe, consStatServ, inutNFe, signInutNFe, CUF, RESULT_ELEMENT } from '../src/authority/messages'
 import { callSoap, type SoapOutcome } from '../src/authority/soap'
 import { readProtocol, readRegistry, readStatus } from '../src/authority/responses'
@@ -62,7 +65,8 @@ export interface SmokeArgs {
   readonly vai:   boolean
 }
 
-export interface SoapBinding { readonly action: string; readonly namespace: string }
+/** O que a fase 2 usa da parte SOAP da constante (D-NE199). */
+export type SmokeBinding = Pick<SoapBinding, 'action' | 'namespace'>
 
 export interface SmokeDeps {
   /** O emitente aberto (`openIssuer(…, '55')`): ambiente da habilitação, par PEM, CNPJ do titular do certificado. */
@@ -70,7 +74,7 @@ export interface SmokeDeps {
   readonly ca:        () => string
   readonly request:   (c: HttpsCall) => Promise<HttpsResult>
   /** Ação e namespace da CONSTANTE dos autorizadores (D-NE199); null = ainda não registrado (mudança 5). */
-  readonly bindingOf: (endpoint: Endpoint, service: NfeService) => SoapBinding | null
+  readonly bindingOf: (endpoint: Endpoint, service: NfeService) => SmokeBinding | null
   readonly write:     (file: string, content: string) => void
   readonly now:       () => Date
   readonly log:       (line: string) => void
@@ -84,19 +88,50 @@ const sha256 = (s: string) => crypto.createHash('sha256').update(s, 'utf8').dige
 /** URL do WSDL: as do PR em H já trazem `?wsdl`; as outras ganham (nunca `?wsdl?wsdl`). */
 export const wsdlUrlOf = (url: string): string => (/\?wsdl$/i.test(url) ? url : `${url}?wsdl`)
 
+/** Pasta de evidência: relativa, começa por `storage-` (ignorada pelo `.gitignore`), segmentos simples, nunca `.` ou `..`. */
+export function isEvidenceDir(dir: string): boolean {
+  const parts = dir.split('/')
+  return /^storage-[A-Za-z0-9._-]+$/.test(parts[0]) && parts.every(s => /^[A-Za-z0-9._-]+$/.test(s) && s !== '.' && s !== '..')
+}
+
+const VALUE_FLAGS = ['--inst', '--cnpj', '--uf', '--ie', '--chave', '--saida', '--fase'] as const
+const BOOL_FLAGS = ['--vai'] as const
+
+/** Argumentos ESTRITOS (sem o `node` e o script): flag desconhecida, valor ausente ou repetida = recusa. */
 export function parseArgs(argv: readonly string[]): SmokeArgs {
-  const after = (flag: string) => { const i = argv.indexOf(flag); return i >= 0 ? argv[i + 1] : undefined }
-  const inst = Number(after('--inst'))
-  const cnpj = String(after('--cnpj') ?? '')
-  const uf = String(after('--uf') ?? '') as Uf
-  const ie = String(after('--ie') ?? '')
-  const chave = String(after('--chave') ?? '')
+  const values = new Map<string, string>()
+  const bools = new Set<string>()
+  for (let i = 0; i < argv.length; i++) {
+    const a = argv[i]
+    if ((VALUE_FLAGS as readonly string[]).includes(a)) {
+      const v = argv[i + 1]
+      if (v === undefined || v.startsWith('--')) throw new SmokeRefused(`${a} sem valor`)
+      if (values.has(a)) throw new SmokeRefused(`${a} repetido`)
+      values.set(a, v); i++
+    } else if ((BOOL_FLAGS as readonly string[]).includes(a)) {
+      bools.add(a)
+    } else {
+      throw new SmokeRefused(`argumento desconhecido: ${String(a).slice(0, 20)}`)
+    }
+  }
+  const inst = Number(values.get('--inst'))
+  const cnpj = values.get('--cnpj') ?? ''
+  const uf = (values.get('--uf') ?? '') as Uf
+  const ie = values.get('--ie') ?? ''
+  const chave = values.get('--chave') ?? ''
+  const fase = values.get('--fase')
+  const vai = bools.has('--vai')
+  const saida = values.get('--saida') ?? ''
   if (!Number.isInteger(inst) || inst < 1) throw new SmokeRefused('--inst <institution do dev> obrigatório')
   if (!/^[0-9A-Z]{12}[0-9]{2}$/.test(cnpj)) throw new SmokeRefused('--cnpj com 14 posições obrigatório')
   if (!UFS.includes(uf)) throw new SmokeRefused('--uf obrigatório (sigla)')
   if (!/^[0-9]{2,14}$/.test(ie)) throw new SmokeRefused('--ie só com dígitos obrigatório')
   if (!chave) throw new SmokeRefused('--chave <44 de H> obrigatório')
-  return { inst, cnpj, uf, ie, chave, saida: after('--saida') ?? '', wsdl: argv.includes('--wsdl'), vai: argv.includes('--vai') }
+  if (fase !== undefined && fase !== '1' && fase !== '2') throw new SmokeRefused('--fase 1 ou 2')
+  if (vai && fase === undefined) throw new SmokeRefused('--vai exige --fase 1 (WSDL) ou --fase 2 (serviços)')
+  if (!vai && fase !== undefined) throw new SmokeRefused('--fase só com --vai (sem --vai o script só confere)')
+  if (saida && !isEvidenceDir(saida)) throw new SmokeRefused('--saida tem de ser uma pasta storage-… relativa (fora do git), sem `..`')
+  return { inst, cnpj, uf, ie, chave, saida, wsdl: fase === '1', vai }
 }
 
 /** As quatro mensagens do smoke, montadas e validadas no XSD; erro de montagem ou de XSD = recusa (nada sai). */
@@ -120,6 +155,8 @@ export interface SmokeReport {
   readonly urls:      Readonly<Record<string, string>>
   readonly messages:  readonly MessageKind[]
   readonly wsdl?:     readonly { endpoint: Endpoint; service: NfeService; url: string; status: number | null; sha256: string | null; read: WsdlResult | { ok: false; reason: string } }[]
+  /** Fase 2: a IE informada está no cadastro devolvido (null = cadastro sem fato legível). */
+  readonly ieMatches?: boolean | null
   readonly services?: readonly { service: NfeService; outcome: SoapOutcome['kind']; cStat: string | null; read: unknown; sentSha256: string; receivedSha256: string | null }[]
 }
 
@@ -197,13 +234,17 @@ export async function runSmoke(a: SmokeArgs, deps: SmokeDeps): Promise<SmokeRepo
       read: xml !== null ? p.read(xml) : null, sentSha256: sha256(p.xml), receivedSha256: xml !== null ? sha256(xml) : null,
     })
   }
-  deps.write('servicos/resumo.json', JSON.stringify({ em: deps.now().toISOString(), ambiente: 'H', resultados: results }, null, 2))
+  // §16.2-6: a IE é PARÂMETRO; aqui só se CONFERE contra a do cadastro (registrado, nunca recusa nem substitui)
+  const registry = results.find(r => r.service === 'NfeConsultaCadastro')?.read as { kind?: string; fact?: { entries?: { IE: string | null }[] } } | null
+  const ieMatches = registry?.kind === 'fact' ? (registry.fact?.entries ?? []).some(e => e.IE === a.ie) : null
+  if (ieMatches === false) deps.log(`  atenção: a IE informada (--ie) não é a do cadastro da SEFAZ`)
+  deps.write('servicos/resumo.json', JSON.stringify({ em: deps.now().toISOString(), ambiente: 'H', ieConfere: ieMatches, resultados: results }, null, 2))
   for (const r of results) deps.log(`  ${r.service}: ${r.outcome}${r.cStat ? ` (cStat ${r.cStat})` : ''}`)
-  return { mode: 'servicos', urls, messages: msgs.map(m => m.kind), services: results }
+  return { mode: 'servicos', urls, messages: msgs.map(m => m.kind), services: results, ieMatches }
 }
 
 async function main(): Promise<void> {
-  const args = parseArgs(process.argv)
+  const args = parseArgs(process.argv.slice(2))
   const saida = args.vai ? (args.saida || path.join('storage-smoke-nfe', new Date().toISOString().replace(/[:.]/g, '-'))) : ''
   const pool = createFiscalPool(dbConfigFromEnv())
   try {

@@ -21,7 +21,8 @@ export type WsdlRefusal =
   | 'operacao-ausente'       // a operação pedida não está no binding 1.2 ou no portType
   | 'operacao-repetida'      // a operação aparece mais de uma vez no mesmo binding 1.2 ou no portType
   | 'acao-ausente'           // a operação do binding 1.2 sem `soap12:operation/@soapAction`
-  | 'acoes-divergentes'      // bindings 1.2 diferentes dão ações diferentes para a mesma operação
+  | 'acoes-divergentes'      // bindings 1.2 diferentes dão ações diferentes (ou portTypes diferentes) para a mesma operação
+  | 'acao-insegura'          // a ação não é URI absoluta sem aspas, `<`, `&` nem espaço (vai dentro do `Content-Type` — gate adversarial)
   | 'mensagem-ausente'       // a entrada ou a saída do portType não resolve até um `element` com namespace
 
 export interface WsdlOperation {
@@ -35,6 +36,8 @@ export interface WsdlOperation {
 export type WsdlResult = { readonly ok: true; readonly op: WsdlOperation } | { readonly ok: false; readonly reason: WsdlRefusal }
 
 const refuse = (reason: WsdlRefusal): WsdlResult => ({ ok: false, reason })
+/** Ação SOAP aceitável: URI absoluta (esquema:…) sem aspas, `<`, `>`, `&` nem espaço. */
+const SAFE_ACTION = /^[a-z][a-z0-9+.-]*:[^"'<>&\s]+$/i
 const childrenNamed = (el: XmlNode, name: string, opts: XmlReadOptions): XmlNode[] =>
   elementsOf(el).filter(c => c.parentNode === el && nameIs(c, name, opts))
 
@@ -77,7 +80,7 @@ export function readWsdlOperation(wsdl: string, operation: string): WsdlResult {
   const bindings12 = childrenNamed(defs, 'binding', W).filter(b => childrenNamed(b, 'binding', S12).length > 0)
   if (bindings12.length === 0) return refuse('sem-binding-soap12')
   const actions = new Set<string>()
-  let portTypeName: string | null = null
+  const portTypeKeys = new Set<string>()
   for (const b of bindings12) {
     const ops = childrenNamed(b, 'operation', W).filter(o => attrOf(o, 'name') === operation)
     if (ops.length === 0) continue
@@ -85,13 +88,18 @@ export function readWsdlOperation(wsdl: string, operation: string): WsdlResult {
     const s12 = childrenNamed(ops[0], 'operation', S12)
     const action = s12.length === 1 ? attrOf(s12[0], 'soapAction') : null
     if (!action) return refuse('acao-ausente')
+    if (!SAFE_ACTION.test(action)) return refuse('acao-insegura')
     actions.add(action)
-    portTypeName = qname(b, attrOf(b, 'type'))?.local ?? null
+    const pt = qname(b, attrOf(b, 'type'))
+    portTypeKeys.add(pt ? `${pt.ns} ${pt.local}` : '')
   }
   if (actions.size === 0) return refuse('operacao-ausente')
-  if (actions.size > 1) return refuse('acoes-divergentes')
+  if (actions.size > 1 || portTypeKeys.size > 1) return refuse('acoes-divergentes')
 
-  const portTypes = childrenNamed(defs, 'portType', W).filter(p => attrOf(p, 'name') === portTypeName)
+  // o portType do binding pelo QName COMPLETO: namespace do `type` = `targetNamespace` do documento (gate adversarial — `type="evil:P"`)
+  const [ptNs, ptLocal] = [...portTypeKeys][0].split(' ')
+  if (!ptLocal || ptNs !== attrOf(defs, 'targetNamespace')) return refuse('operacao-ausente')
+  const portTypes = childrenNamed(defs, 'portType', W).filter(p => attrOf(p, 'name') === ptLocal)
   if (portTypes.length !== 1) return refuse('operacao-ausente')
   const pops = childrenNamed(portTypes[0], 'operation', W).filter(o => attrOf(o, 'name') === operation)
   if (pops.length === 0) return refuse('operacao-ausente')

@@ -6,6 +6,7 @@ import {
   runSmoke, parseArgs, wsdlUrlOf, SmokeRefused, WSDL_OPERATIONS, WSDL_OPERATION_BY_ENDPOINT, WSDL_ENDPOINTS, type SmokeArgs, type SmokeDeps,
 } from '../../scripts/smoke-sefaz-h'
 import { testA1 } from './test-a1'
+import { soapBindingOf, type NfeService } from '../authority/authorizers'
 
 jest.setTimeout(60_000)
 
@@ -13,7 +14,7 @@ const CNPJ = '12519458000130'
 const BASE43 = `412611${CNPJ}55001000000001112345678`
 const CHAVE = BASE43 + String(mod11Ascii48(BASE43))
 const NS = 'http://www.portalfiscal.inf.br/nfe'
-const ARGS: SmokeArgs = { inst: 98, cnpj: CNPJ, uf: 'PR', ie: '9012345678', chave: CHAVE, saida: 'evid', wsdl: false, vai: false }
+const ARGS: SmokeArgs = { inst: 98, cnpj: CNPJ, uf: 'PR', ie: '9012345678', chave: CHAVE, saida: 'storage-evid', wsdl: false, vai: false }
 
 /** Um WSDL falso com TODAS as operações do smoke (a ação de cada uma = `<tns>/<operação>`). */
 function fakeWsdl(): string {
@@ -96,10 +97,31 @@ describe('(b)(c) recusas antes de qualquer conexão', () => {
     const { d } = deps()
     await expect(runSmoke({ ...ARGS, chave: other + String(mod11Ascii48(other)) }, d)).rejects.toThrow(/cUF/)
   })
+  const BASE_ARGV = ['--inst', '98', '--cnpj', CNPJ, '--uf', 'PR', '--ie', '1234', '--chave', CHAVE]
   it('parseArgs exige os parâmetros (IE e UF são parâmetro — §16.2-6)', () => {
     expect(() => parseArgs(['--inst', '98', '--cnpj', CNPJ, '--uf', 'PR', '--chave', CHAVE])).toThrow(/--ie/)
-    expect(parseArgs(['--inst', '98', '--cnpj', CNPJ, '--uf', 'PR', '--ie', '1234', '--chave', CHAVE, '--wsdl', '--vai']))
-      .toMatchObject({ inst: 98, wsdl: true, vai: true })
+    expect(parseArgs([...BASE_ARGV, '--fase', '1', '--vai'])).toMatchObject({ inst: 98, wsdl: true, vai: true })
+    expect(parseArgs([...BASE_ARGV, '--fase', '2', '--vai'])).toMatchObject({ wsdl: false, vai: true })
+    expect(parseArgs(BASE_ARGV)).toMatchObject({ wsdl: false, vai: false })
+  })
+  it.each([
+    ['flag desconhecida (wsdI digitado errado)', ['--wsdI', '--vai'], /desconhecido/],
+    ['--vai sem --fase', ['--vai'], /--fase/],
+    ['--fase sem --vai', ['--fase', '1'], /só com --vai/],
+    ['--fase 3', ['--fase', '3', '--vai'], /1 ou 2/],
+    ['--saida sem valor (engoliria o --vai)', ['--fase', '1', '--saida', '--vai'], /sem valor/],
+    ['--saida fora de storage-', ['--saida', 'evid'], /storage-/],
+    ['--saida com ..', ['--saida', 'storage-x/../../etc'], /storage-/],
+    ['flag repetida', ['--uf', 'SC'], /repetido/],
+  ])('parseArgs recusa: %s (gate adversarial)', (_l, extra, msg) => {
+    expect(() => parseArgs([...BASE_ARGV, ...(extra as string[])])).toThrow(msg as RegExp)
+  })
+  it('os nomes de operação do script são os da constante (uma fonte — gate socrático)', () => {
+    for (const e of WSDL_ENDPOINTS) {
+      for (const [s, op] of Object.entries(WSDL_OPERATIONS) as [NfeService, string][]) {
+        expect([e, s, WSDL_OPERATION_BY_ENDPOINT[e]?.[s] ?? op]).toEqual([e, s, soapBindingOf(e, 'H', s)!.operation])
+      }
+    }
   })
 })
 
@@ -151,5 +173,6 @@ describe('(e) fase 2 — --vai: serviços pela CONSTANTE', () => {
     expect(r.services![1].read).toEqual({ kind: 'fact', fact: { status: 'not-found', cStat: '217' } })
     expect(files['servicos/NfeStatusServico-enviado.xml']).toContain('<consStatServ')
     expect(JSON.parse(files['servicos/resumo.json']).resultados).toHaveLength(3)
+    expect(r.ieMatches).toBe(true)                    // a IE do cadastro falso é a do --ie (§16.2-6: só confere)
   })
 })

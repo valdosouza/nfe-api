@@ -1,4 +1,4 @@
-import { mod11Ascii48, signXml } from 'fiscal-api'
+import { isValidCnpj, mod11Ascii48, signXml } from 'fiscal-api'
 import type { NfeService, Uf } from './authorizers'
 import { voidId } from '../nfe/number-void'
 
@@ -20,8 +20,9 @@ export const CUF: Readonly<Record<Uf, string>> = Object.freeze({
 })
 
 /**
- * SUPOSIÇÃO (ficha §3): o elemento que o `callSoap` procura é o `ret*` do MOC, dentro do invólucro de saída do WSDL (`nfeResultMsg`). O WSDL
- * arquivado (fase 1 do smoke) confere a forma; a constante dos autorizadores guarda o invólucro do WSDL (D-NE199).
+ * O elemento que o `callSoap` procura é o `ret*` do MOC, dentro do invólucro de saída do WSDL (`nfeResultMsg`, que a constante dos autorizadores
+ * guarda — D-NE199). PROVADO na fase 2 do smoke (SEFAZ-PR em H, 2026-11-22) para `retConsStatServ`, `retConsSitNFe` e `retConsCad`; para
+ * `retInutNFe`, `retConsReciNFe` e `retEnvEvento` segue SUPOSIÇÃO até a 1ª chamada real (NE-5).
  */
 export const RESULT_ELEMENT: Readonly<Partial<Record<NfeService, string>>> = Object.freeze({
   NfeStatusServico:     'retConsStatServ',
@@ -37,9 +38,9 @@ export type TpAmb = '1' | '2'
 
 const assertTpAmb = (tpAmb: string): void => { if (tpAmb !== '1' && tpAmb !== '2') throw new Error('tpAmb: 1 ou 2') }
 const cufOf = (uf: Uf): string => {
-  const c = CUF[uf]
-  if (!c) throw new Error(`UF desconhecida: ${uf}`)
-  return c
+  // own property: `CUF['constructor']` não é UF (gate adversarial 2026-11-22)
+  if (!Object.prototype.hasOwnProperty.call(CUF, uf)) throw new Error(`UF desconhecida: ${String(uf).slice(0, 4)}`)
+  return CUF[uf]
 }
 const CNPJ_FORM = /^[0-9A-Z]{12}[0-9]{2}$/
 
@@ -49,15 +50,28 @@ export function consStatServ(tpAmb: TpAmb, uf: Uf): string {
   return `<consStatServ xmlns="${NS}" versao="4.00"><tpAmb>${tpAmb}</tpAmb><cUF>${cufOf(uf)}</cUF><xServ>STATUS</xServ></consStatServ>`
 }
 
+/** tpEmis do leiaute (B22): 1 a 7 e 9. */
+const EMISSION_TYPES = ['1', '2', '3', '4', '5', '6', '7', '9']
+
 /**
- * A chave de 44 posições bem formada: 43 + DV pelo módulo 11 (`mod11Ascii48` do núcleo), série 0 a 969 (J02e); a UF da chave tem de ser a
- * pedida (a consulta vai ao autorizador da UF). CNPJ alfanumérico nas 12 primeiras posições do emitente (posições 7-18).
+ * A chave de 44 posições conferida pelas regras de forma da consulta (MOC 7.00, J02a–J02g — RF-NFE-34) ANTES de ir à SEFAZ: DV pelo módulo 11
+ * (`mod11Ascii48` do núcleo); mês 01–12 (616); modelo 55 — o único desta API (618; D-NE2); número > 0 (619); tpEmis do leiaute; série 0–909 com
+ * CNPJ válido (617; `isValidCnpj` do núcleo, alfanumérico incluso). Série 910–969 (emitente pessoa física, CPF) é RECUSADA aqui: o emitente PF
+ * é futuro (F-NFE-5); acima de 969, a SEFAZ recusa (617 — fato do smoke de 2026-11-22, série 999). A UF da chave tem de ser a pedida.
+ * SUPOSIÇÃO marcada: o ano (615 — menor que 06 ou maior que o corrente) não é conferido aqui (precisaria do relógio); a SEFAZ responde.
  */
 export function assertAccessKey(chNFe: string, uf?: Uf): void {
   if (!/^[0-9]{6}[0-9A-Z]{12}[0-9]{26}$/.test(chNFe)) throw new Error('chNFe: 44 posições na forma da chave')
   if (mod11Ascii48(chNFe.slice(0, 43)) !== Number(chNFe[43])) throw new Error('chNFe: DV não confere')
-  // MOC 7.00, regra J02e (rej. 617): série 0–909 (CNPJ) ou 910–969 (CPF); fora disso a SEFAZ recusa a chave (fato do smoke de 2026-11-22, série 999)
-  if (Number(chNFe.slice(22, 25)) > 969) throw new Error(`chNFe: série ${chNFe.slice(22, 25)} fora de 0 a 969 (MOC J02e, rej. 617)`)
+  const month = Number(chNFe.slice(4, 6))
+  if (month < 1 || month > 12) throw new Error(`chNFe: mês ${chNFe.slice(4, 6)} fora de 01 a 12 (MOC J02d, rej. 616)`)
+  if (chNFe.slice(20, 22) !== '55') throw new Error(`chNFe: modelo ${chNFe.slice(20, 22)} — esta API consulta só o 55 (MOC J02f, rej. 618; D-NE2)`)
+  const serie = Number(chNFe.slice(22, 25))
+  if (serie > 969) throw new Error(`chNFe: série ${chNFe.slice(22, 25)} fora de 0 a 969 (MOC J02e, rej. 617)`)
+  if (serie > 909) throw new Error(`chNFe: série ${chNFe.slice(22, 25)} é de emitente pessoa física (CPF) — fora desta API (F-NFE-5)`)
+  if (!isValidCnpj(chNFe.slice(6, 20))) throw new Error('chNFe: CNPJ do emitente zerado ou com DV inválido (MOC J02e, rej. 617)')
+  if (Number(chNFe.slice(25, 34)) === 0) throw new Error('chNFe: número = 0 (MOC J02g, rej. 619)')
+  if (!EMISSION_TYPES.includes(chNFe[34])) throw new Error(`chNFe: tpEmis ${chNFe[34]} fora do leiaute`)
   if (uf !== undefined && chNFe.slice(0, 2) !== cufOf(uf)) throw new Error(`chNFe: cUF ${chNFe.slice(0, 2)} ≠ ${cufOf(uf)} (${uf})`)
 }
 
@@ -74,20 +88,23 @@ export function consCad(uf: Uf, who: { CNPJ: string } | { IE: string }): string 
   const keys = Object.keys(who)
   if (keys.length !== 1) throw new Error('consCad: exatamente um de CNPJ ou IE')
   let tag: string
-  if ('CNPJ' in who) {
-    if (!CNPJ_FORM.test(who.CNPJ)) throw new Error('consCad: CNPJ com 14 posições')
-    tag = `<CNPJ>${who.CNPJ}</CNPJ>`
-  } else if ('IE' in who) {
-    if (!/^[0-9]{2,14}$/.test(who.IE)) throw new Error('consCad: IE só com dígitos (2 a 14)')
-    tag = `<IE>${who.IE}</IE>`
+  // cada valor é LIDO UMA VEZ para uma variável e só ela é conferida e escrita (gate adversarial: getter que muda entre leituras)
+  if (keys[0] === 'CNPJ') {
+    const cnpj = String((who as { CNPJ: string }).CNPJ)
+    if (!CNPJ_FORM.test(cnpj)) throw new Error('consCad: CNPJ com 14 posições')
+    tag = `<CNPJ>${cnpj}</CNPJ>`
+  } else if (keys[0] === 'IE') {
+    const ie = String((who as { IE: string }).IE)
+    if (!/^[0-9]{2,14}$/.test(ie)) throw new Error('consCad: IE só com dígitos (2 a 14)')
+    tag = `<IE>${ie}</IE>`
   } else {
     throw new Error('consCad: exatamente um de CNPJ ou IE')
   }
   return `<ConsCad xmlns="${NS}" versao="2.00"><infCons><xServ>CONS-CAD</xServ><UF>${uf}</UF>${tag}</infCons></ConsCad>`
 }
 
-/** Texto da justificativa: só este conjunto (sem escape — D-NE214) e 15 a 255 caracteres (TJust). */
-export const SAFE_JUSTIFICATION = /^[A-Za-z0-9 .,;:()\-/]{15,255}$/
+/** Texto da justificativa: só este conjunto (sem escape — D-NE214), 15 a 255 caracteres, sem espaço no início nem no fim (TJust). */
+export const SAFE_JUSTIFICATION = /^(?=.{15,255}$)[A-Za-z0-9.,;:()\-/](?:[A-Za-z0-9 .,;:()\-/]*[A-Za-z0-9.,;:()\-/])$/
 
 export interface VoidParts {
   readonly tpAmb: TpAmb
@@ -106,7 +123,8 @@ export function inutNFe(p: VoidParts): { xml: string; id: string } {
   assertTpAmb(p.tpAmb)
   if (!/^[0-9]{2}$/.test(p.yy)) throw new Error('inutNFe: ano com 2 dígitos')
   if (!CNPJ_FORM.test(p.cnpj)) throw new Error('inutNFe: CNPJ com 14 posições')
-  if (!Number.isInteger(p.serie) || p.serie < 0 || p.serie > 999) throw new Error('inutNFe: série 0 a 999')
+  // série de emitente CNPJ (0–909 — MOC J02e); a 910–969 é de pessoa física (F-NFE-5)
+  if (!Number.isInteger(p.serie) || p.serie < 0 || p.serie > 909) throw new Error('inutNFe: série 0 a 909')
   if (!Number.isInteger(p.from) || !Number.isInteger(p.to) || p.from < 1 || p.to < p.from || p.to > 999_999_999) {
     throw new Error('inutNFe: faixa 1 ≤ início ≤ fim ≤ 999999999')
   }

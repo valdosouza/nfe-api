@@ -416,7 +416,14 @@ const ENDPOINTS: Readonly<Record<Environment, Readonly<Record<Endpoint, ServiceU
  * maiúscula (`…/NFeRetAutorizacaoLote`). CONHECIMENTO NEGATIVO (§16.2-10): nunca ler WSDL em tempo de execução para chamar.
  */
 export interface SoapBinding { readonly operation: string; readonly action: string; readonly namespace: string; readonly outputElement: string }
-export const SOAP_BINDINGS_SOURCE = { readAt: '2026-11-22', dir: 'wsdl-2026-11-22' } as const
+/** Proveniência: o MANIFESTO (SHA-256 de cada WSDL) é ancorado pelo próprio hash — trocar arquivo e manifesto juntos não passa; a extração da
+ *  fase 1 (`extracao-fase1.json`, com o SHA-256 de cada WSDL como veio do fisco) fica ao lado e o teste a confere contra o manifesto. */
+export const SOAP_BINDINGS_SOURCE = {
+  readAt:         '2026-11-22',
+  dir:            'wsdl-2026-11-22',
+  manifestSha256: 'f58b65b6db734f287f017b270cca293bc65a44dad12dc35ef9c811c97fa86856',
+  extraction:     'extracao-fase1.json',
+} as const
 const WSDL_NS_BASE = 'http://www.portalfiscal.inf.br/nfe/wsdl/'
 const sb = (wsdl: string, operation: string, actionOp: string = operation): SoapBinding =>
   ({ operation, action: `${WSDL_NS_BASE}${wsdl}/${actionOp}`, namespace: `${WSDL_NS_BASE}${wsdl}`, outputElement: 'nfeResultMsg' })

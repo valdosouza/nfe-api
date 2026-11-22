@@ -1,0 +1,238 @@
+{
+  "lidoEm": "2026-11-22T11:12:10.513Z",
+  "ambiente": "H",
+  "itens": [
+    {
+      "endpoint": "PR",
+      "service": "NfeStatusServico",
+      "url": "https://homologacao.nfe.sefa.pr.gov.br/nfe/NFeStatusServico4?wsdl",
+      "status": 200,
+      "sha256": "bd88cce9bc6042e6fe53cca388bc8057688d2dbfd03a58531c5abf63a92eb7ee",
+      "read": {
+        "ok": true,
+        "op": {
+          "operation": "nfeStatusServicoNF",
+          "action": "http://www.portalfiscal.inf.br/nfe/wsdl/NFeStatusServico4/nfeStatusServicoNF",
+          "namespace": "http://www.portalfiscal.inf.br/nfe/wsdl/NFeStatusServico4",
+          "inputElement": "nfeDadosMsg",
+          "outputElement": "nfeResultMsg"
+        }
+      }
+    },
+    {
+      "endpoint": "PR",
+      "service": "NFeAutorizacao",
+      "url": "https://homologacao.nfe.sefa.pr.gov.br/nfe/NFeAutorizacao4?wsdl",
+      "status": 200,
+      "sha256": "f5c9fc386690a2b83fe15f5ab347549a266925c59762b6f849c8dd32ca85191e",
+      "read": {
+        "ok": true,
+        "op": {
+          "operation": "nfeAutorizacaoLote",
+          "action": "http://www.portalfiscal.inf.br/nfe/wsdl/NFeAutorizacao4/nfeAutorizacaoLote",
+          "namespace": "http://www.portalfiscal.inf.br/nfe/wsdl/NFeAutorizacao4",
+          "inputElement": "nfeDadosMsg",
+          "outputElement": "nfeResultMsg"
+        }
+      }
+    },
+    {
+      "endpoint": "PR",
+      "service": "NFeRetAutorizacao",
+      "url": "https://homologacao.nfe.sefa.pr.gov.br/nfe/NFeRetAutorizacao4?wsdl",
+      "status": 200,
+      "sha256": "39bb0b423a19dc8a6f9170ded67871e5df6d6cf83a4cd218fbf29f03fd6e4f5f",
+      "read": {
+        "ok": true,
+        "op": {
+          "operation": "nfeRetAutorizacaoLote",
+          "action": "http://www.portalfiscal.inf.br/nfe/wsdl/NFeRetAutorizacao4/NFeRetAutorizacaoLote",
+          "namespace": "http://www.portalfiscal.inf.br/nfe/wsdl/NFeRetAutorizacao4",
+          "inputElement": "nfeDadosMsg",
+          "outputElement": "nfeResultMsg"
+        }
+      }
+    },
+    {
+      "endpoint": "PR",
+      "service": "NfeConsultaProtocolo",
+      "url": "https://homologacao.nfe.sefa.pr.gov.br/nfe/NFeConsultaProtocolo4?wsdl",
+      "status": 200,
+      "sha256": "0dcd0a13e0d5b185b676db16e85b06745ac0d983f2f3fde8e8c96244c4eb4d3a",
+      "read": {
+        "ok": true,
+        "op": {
+          "operation": "nfeConsultaNF",
+          "action": "http://www.portalfiscal.inf.br/nfe/wsdl/NFeConsultaProtocolo4/nfeConsultaNF",
+          "namespace": "http://www.portalfiscal.inf.br/nfe/wsdl/NFeConsultaProtocolo4",
+          "inputElement": "nfeDadosMsg",
+          "outputElement": "nfeResultMsg"
+        }
+      }
+    },
+    {
+      "endpoint": "PR",
+      "service": "NfeConsultaCadastro",
+      "url": "https://homologacao.nfe.sefa.pr.gov.br/nfe/CadConsultaCadastro4?wsdl",
+      "status": 200,
+      "sha256": "28b15682782c0ff17ecc2131400e797b717914b87b036cc26275077cf80c0dde",
+      "read": {
+        "ok": true,
+        "op": {
+          "operation": "consultaCadastro",
+          "action": "http://www.portalfiscal.inf.br/nfe/wsdl/CadConsultaCadastro4/consultaCadastro",
+          "namespace": "http://www.portalfiscal.inf.br/nfe/wsdl/CadConsultaCadastro4",
+          "inputElement": "nfeDadosMsg",
+          "outputElement": "nfeResultMsg"
+        }
+      }
+    },
+    {
+      "endpoint": "PR",
+      "service": "NfeInutilizacao",
+      "url": "https://homologacao.nfe.sefa.pr.gov.br/nfe/NFeInutilizacao4?wsdl",
+      "status": 200,
+      "sha256": "8d03e0fa41afadf1d39d1c576b910b31d16f825e62e09f4dfb7abe2be7dab4cb",
+      "read": {
+        "ok": true,
+        "op": {
+          "operation": "nfeInutilizacaoNF",
+          "action": "http://www.portalfiscal.inf.br/nfe/wsdl/NFeInutilizacao4/nfeInutilizacaoNF",
+          "namespace": "http://www.portalfiscal.inf.br/nfe/wsdl/NFeInutilizacao4",
+          "inputElement": "nfeDadosMsg",
+          "outputElement": "nfeResultMsg"
+        }
+      }
+    },
+    {
+      "endpoint": "PR",
+      "service": "RecepcaoEvento",
+      "url": "https://homologacao.nfe.sefa.pr.gov.br/nfe/NFeRecepcaoEvento4?wsdl",
+      "status": 200,
+      "sha256": "8f23c7fcdfdae3c630de6047ef3500cbdeed5dffc94affbb1c8bbce3bf369815",
+      "read": {
+        "ok": false,
+        "reason": "operacao-ausente"
+      }
+    },
+    {
+      "endpoint": "SVRS",
+      "service": "NfeStatusServico",
+      "url": "https://nfe-homologacao.svrs.rs.gov.br/ws/NfeStatusServico/NfeStatusServico4.asmx?wsdl",
+      "status": 200,
+      "sha256": "7ba2d3974ff5897346bdb27bdf235fe7634ac8d7bec4939ab368848e8cc19224",
+      "read": {
+        "ok": true,
+        "op": {
+          "operation": "nfeStatusServicoNF",
+          "action": "http://www.portalfiscal.inf.br/nfe/wsdl/NFeStatusServico4/nfeStatusServicoNF",
+          "namespace": "http://www.portalfiscal.inf.br/nfe/wsdl/NFeStatusServico4",
+          "inputElement": "nfeDadosMsg",
+          "outputElement": "nfeResultMsg"
+        }
+      }
+    },
+    {
+      "endpoint": "SVRS",
+      "service": "NFeAutorizacao",
+      "url": "https://nfe-homologacao.svrs.rs.gov.br/ws/NfeAutorizacao/NFeAutorizacao4.asmx?wsdl",
+      "status": 200,
+      "sha256": "5e9e3af463ac215c0b2e881ade516e5cce1d87143b83c0d73dc86b11d7c7adc9",
+      "read": {
+        "ok": true,
+        "op": {
+          "operation": "nfeAutorizacaoLote",
+          "action": "http://www.portalfiscal.inf.br/nfe/wsdl/NFeAutorizacao4/nfeAutorizacaoLote",
+          "namespace": "http://www.portalfiscal.inf.br/nfe/wsdl/NFeAutorizacao4",
+          "inputElement": "nfeDadosMsg",
+          "outputElement": "nfeResultMsg"
+        }
+      }
+    },
+    {
+      "endpoint": "SVRS",
+      "service": "NFeRetAutorizacao",
+      "url": "https://nfe-homologacao.svrs.rs.gov.br/ws/NfeRetAutorizacao/NFeRetAutorizacao4.asmx?wsdl",
+      "status": 200,
+      "sha256": "7e810f82e832ef8ab2335aaa30fe74b9336adf8d54b06c192665de460d01b67a",
+      "read": {
+        "ok": true,
+        "op": {
+          "operation": "nfeRetAutorizacaoLote",
+          "action": "http://www.portalfiscal.inf.br/nfe/wsdl/NFeRetAutorizacao4/nfeRetAutorizacaoLote",
+          "namespace": "http://www.portalfiscal.inf.br/nfe/wsdl/NFeRetAutorizacao4",
+          "inputElement": "nfeDadosMsg",
+          "outputElement": "nfeResultMsg"
+        }
+      }
+    },
+    {
+      "endpoint": "SVRS",
+      "service": "NfeConsultaProtocolo",
+      "url": "https://nfe-homologacao.svrs.rs.gov.br/ws/NfeConsulta/NfeConsulta4.asmx?wsdl",
+      "status": 200,
+      "sha256": "0f467d73fa61a790dc4e46ec2781c036b8d76c7867434713a3f0bfb1fba862fa",
+      "read": {
+        "ok": true,
+        "op": {
+          "operation": "nfeConsultaNF",
+          "action": "http://www.portalfiscal.inf.br/nfe/wsdl/NFeConsultaProtocolo4/nfeConsultaNF",
+          "namespace": "http://www.portalfiscal.inf.br/nfe/wsdl/NFeConsultaProtocolo4",
+          "inputElement": "nfeDadosMsg",
+          "outputElement": "nfeResultMsg"
+        }
+      }
+    },
+    {
+      "endpoint": "SVRS",
+      "service": "NfeConsultaCadastro",
+      "url": "https://cad-homologacao.svrs.rs.gov.br/ws/cadconsultacadastro/cadconsultacadastro4.asmx?wsdl",
+      "status": 200,
+      "sha256": "10abc03646a164a288c7bb20e8beab579993ea0937149ad2c5fe6938a80112d6",
+      "read": {
+        "ok": true,
+        "op": {
+          "operation": "consultaCadastro",
+          "action": "http://www.portalfiscal.inf.br/nfe/wsdl/CadConsultaCadastro4/consultaCadastro",
+          "namespace": "http://www.portalfiscal.inf.br/nfe/wsdl/CadConsultaCadastro4",
+          "inputElement": "nfeDadosMsg",
+          "outputElement": "nfeResultMsg"
+        }
+      }
+    },
+    {
+      "endpoint": "SVRS",
+      "service": "NfeInutilizacao",
+      "url": "https://nfe-homologacao.svrs.rs.gov.br/ws/nfeinutilizacao/nfeinutilizacao4.asmx?wsdl",
+      "status": 200,
+      "sha256": "5daf88658ab71d118ebe173f8a91d71396a4891b42aa4d4a3dd091989a8d6d54",
+      "read": {
+        "ok": true,
+        "op": {
+          "operation": "nfeInutilizacaoNF",
+          "action": "http://www.portalfiscal.inf.br/nfe/wsdl/NFeInutilizacao4/nfeInutilizacaoNF",
+          "namespace": "http://www.portalfiscal.inf.br/nfe/wsdl/NFeInutilizacao4",
+          "inputElement": "nfeDadosMsg",
+          "outputElement": "nfeResultMsg"
+        }
+      }
+    },
+    {
+      "endpoint": "SVRS",
+      "service": "RecepcaoEvento",
+      "url": "https://nfe-homologacao.svrs.rs.gov.br/ws/recepcaoevento/recepcaoevento4.asmx?wsdl",
+      "status": 200,
+      "sha256": "f493cb4aba9d40b90f081eb29c895ca4c84d6cd11007d6b4f794b19bf54243bb",
+      "read": {
+        "ok": true,
+        "op": {
+          "operation": "nfeRecepcaoEvento",
+          "action": "http://www.portalfiscal.inf.br/nfe/wsdl/NFeRecepcaoEvento4/nfeRecepcaoEvento",
+          "namespace": "http://www.portalfiscal.inf.br/nfe/wsdl/NFeRecepcaoEvento4",
+          "inputElement": "nfeDadosMsg",
+          "outputElement": "nfeResultMsg"
+        }
+      }
+    }
+  ]
+}

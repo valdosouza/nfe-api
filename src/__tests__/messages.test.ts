@@ -12,7 +12,7 @@ const CNPJ = '07742094000113'
 /** Chave de H bem formada: cUF 41, AAMM 2611, CNPJ, 55, série 1, número 1, tpEmis 1, cNF 12345678 + DV pelo módulo 11. */
 const BASE43 = `412611${CNPJ}55001000000001112345678`
 const CHAVE = BASE43 + String(mod11Ascii48(BASE43))
-const VOID = { tpAmb: '2' as const, uf: 'PR' as const, yy: '26', cnpj: CNPJ, serie: 999, from: 1, to: 1, xJust: 'SMOKE DE HOMOLOGACAO SEM ENVIO' }
+const VOID = { tpAmb: '2' as const, uf: 'PR' as const, yy: '26', cnpj: CNPJ, serie: 1, from: 1, to: 1, xJust: 'SMOKE DE HOMOLOGACAO SEM ENVIO' }
 
 describe('cada montador sai válido no XSD local (D-NE211)', () => {
   it('consStatServ', async () => {
@@ -46,11 +46,28 @@ describe('consSitNFe confere a chave antes de montar', () => {
     expect(() => consSitNFe(wrong, '2')).toThrow(/DV/)
   })
   it('cUF da chave ≠ UF pedida → recusa', () => { expect(() => consSitNFe(CHAVE, '2', 'SC')).toThrow(/cUF/) })
-  it('série 970 a 999 → recusa (MOC J02e, rej. 617 — a SEFAZ-PR respondeu 617 à série 999 no smoke de 2026-11-22)', () => {
-    const b999 = `412611${CNPJ}55999000000001112345678`
-    expect(() => consSitNFe(b999 + String(mod11Ascii48(b999)), '2')).toThrow(/série 999/)
-    const b969 = `412611${CNPJ}55969000000001112345678`
-    expect(() => consSitNFe(b969 + String(mod11Ascii48(b969)), '2')).not.toThrow()
+  /** Chave com DV certo a partir das partes (cUF, AAMM, CNPJ, mod, série, nNF, tpEmis). */
+  const key = (p: { aamm?: string; cnpj?: string; mod?: string; serie?: string; nnf?: string; tpEmis?: string } = {}) => {
+    const b = `41${p.aamm ?? '2611'}${p.cnpj ?? CNPJ}${p.mod ?? '55'}${p.serie ?? '001'}${p.nnf ?? '000000001'}${p.tpEmis ?? '1'}12345678`
+    return b + String(mod11Ascii48(b))
+  }
+  it.each([
+    ['série 999 (J02e, 617 — a SEFAZ-PR respondeu 617 no smoke de 2026-11-22)', { serie: '999' }, /série 999/],
+    ['série 910–969 = emitente PF (F-NFE-5)', { serie: '969' }, /pessoa física/],
+    ['mês 13 (J02d, 616)', { aamm: '2613' }, /mês/],
+    ['modelo 65 (J02f, 618; D-NE2)', { mod: '65' }, /modelo/],
+    ['CNPJ zerado (J02e, 617)', { cnpj: '00000000000000' }, /CNPJ/],
+    ['CNPJ com DV errado (J02e, 617)', { cnpj: '12519458000131' }, /CNPJ/],
+    ['número 0 (J02g, 619)', { nnf: '000000000' }, /número/],
+    ['tpEmis 0 (fora do leiaute)', { tpEmis: '0' }, /tpEmis/],
+  ])('chave recusada antes da SEFAZ: %s (RF-NFE-34)', (_l, parts, msg) => {
+    expect(() => consSitNFe(key(parts), '2')).toThrow(msg)
+  })
+  it('série 909 e tpEmis 9 passam', () => {
+    expect(() => consSitNFe(key({ serie: '909', tpEmis: '9' }), '2', 'PR')).not.toThrow()
+  })
+  it('UF com nome de propriedade do Object → recusa (gate adversarial)', () => {
+    expect(() => consStatServ('2', 'constructor' as any)).toThrow(/UF desconhecida/)
   })
   it('tpAmb fora de 1/2 → recusa', () => { expect(() => consSitNFe(CHAVE, '3' as any)).toThrow(/tpAmb/) })
   it('assertAccessKey aceita a chave certa', () => { expect(() => assertAccessKey(CHAVE, 'PR')).not.toThrow() })
@@ -68,10 +85,12 @@ describe('inutNFe: Id por TODAS as partes e justificativa segura', () => {
     ['com <', 'Justificativa com < no meio'],
     ['com &', 'Justificativa com & no meio'],
     ['com acento', 'Justificação de homologação'],
+    ['só espaços', '               '],
+    ['espaço no início', ' Justificativa de teste'],
   ])('xJust %s → recusa', (_l, xJust) => { expect(() => inutNFe({ ...VOID, xJust })).toThrow(/xJust/) })
   it('faixa invertida, série fora e ano mal formado → recusa', () => {
     expect(() => inutNFe({ ...VOID, from: 5, to: 4 })).toThrow(/faixa/)
-    expect(() => inutNFe({ ...VOID, serie: 1000 })).toThrow(/série/)
+    expect(() => inutNFe({ ...VOID, serie: 910 })).toThrow(/série/)
     expect(() => inutNFe({ ...VOID, yy: '2026' })).toThrow(/ano/)
   })
 })

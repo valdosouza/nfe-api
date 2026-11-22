@@ -1,6 +1,6 @@
 /// <reference types="jest" />
 // nfe-api:NFE.E4.P4 — leitor de WSDL (`src/authority/wsdl.ts`). Ficha `projetos/nfe-api/SUBJECT/NFE_SEFAZ/ficha-nfe-e4-p4-smoke-sefaz-h.md`,
-// mudança 2. WSDL SINTÉTICOS na forma do 4.00 (SUPOSIÇÃO: não há WSDL no acervo antes da fase 1 do smoke — a forma real se confere nela).
+// mudança 2. WSDL SINTÉTICOS na forma do 4.00; os REAIS (fase 1, 2026-11-22) ficam em `acervo/wsdl-2026-11-22/` e são lidos em `authorizers.test.ts` (g).
 import { readWsdlOperation } from '../authority/wsdl'
 
 const TNS = 'http://www.portalfiscal.inf.br/nfe/wsdl/NFeStatusServico4'
@@ -61,7 +61,10 @@ describe('recusas tipadas', () => {
     ['sem soapAction', wsdl({ ops: [{ name: 'nfeStatusServicoNF', action: null }] }), 'nfeStatusServicoNF', 'acao-ausente'],
     ['soapAction vazia', wsdl({ ops: [{ name: 'nfeStatusServicoNF', action: '' }] }), 'nfeStatusServicoNF', 'acao-ausente'],
     ['operação repetida no binding', wsdl({ ops: [{ name: 'nfeStatusServicoNF', action: 'a' }, { name: 'nfeStatusServicoNF', action: 'a' }] }), 'nfeStatusServicoNF', 'operacao-repetida'],
-    ['bindings 1.2 com ações diferentes', wsdl({ extra12: [{ name: 'nfeStatusServicoNF', action: 'outra' }] }), 'nfeStatusServicoNF', 'acoes-divergentes'],
+    ['bindings 1.2 com ações diferentes', wsdl({ extra12: [{ name: 'nfeStatusServicoNF', action: `${TNS}/outra` }] }), 'nfeStatusServicoNF', 'acoes-divergentes'],
+    ['ação com aspas (iria ao Content-Type)', wsdl({ ops: [{ name: 'nfeStatusServicoNF', action: 'urn:a&quot;b; x=y' }] }), 'nfeStatusServicoNF', 'acao-insegura'],
+    ['ação relativa (não é URI)', wsdl({ ops: [{ name: 'nfeStatusServicoNF', action: 'nfeStatusServicoNF' }] }), 'nfeStatusServicoNF', 'acao-insegura'],
+    ['binding aponta portType de outro namespace', wsdl().replace('type="tns:SvcSoap"', 'xmlns:evil="urn:evil" type="evil:SvcSoap"'), 'nfeStatusServicoNF', 'operacao-ausente'],
     ['mensagens ausentes', wsdl({ noMessages: true }), 'nfeStatusServicoNF', 'mensagem-ausente'],
     ['não é WSDL', '<html><body>erro</body></html>', 'nfeStatusServicoNF', 'wsdl-ilegivel'],
     ['DOCTYPE', '<!DOCTYPE x><x/>', 'nfeStatusServicoNF', 'wsdl-ilegivel'],

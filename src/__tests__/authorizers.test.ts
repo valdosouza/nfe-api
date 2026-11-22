@@ -167,6 +167,13 @@ describe('(g) parte SOAP do grão (ii) = os WSDL arquivados (D-NE182/D-NE199; NF
     }
     expect(MANIFEST.ambiente).toBe('H')
   })
+  it('o manifesto é o que a constante ancora, e a extração da fase 1 (hash do que veio do fisco) bate com ele', () => {
+    expect(crypto.createHash('sha256').update(fs.readFileSync(path.join(DIR, 'MANIFESTO.json'))).digest('hex')).toBe(SOAP_BINDINGS_SOURCE.manifestSha256)
+    const ext = JSON.parse(fs.readFileSync(path.join(DIR, SOAP_BINDINGS_SOURCE.extraction), 'utf8')) as { ambiente: string; itens: { endpoint: string; service: string; status: number; sha256: string }[] }
+    expect(ext.ambiente).toBe('H')
+    expect(ext.itens).toHaveLength(14)
+    for (const i of ext.itens) expect([i.endpoint, i.service, i.status, i.sha256]).toEqual([i.endpoint, i.service, 200, MANIFEST.files[`${i.endpoint}-${i.service}.wsdl`]])
+  })
   it('cada entrada da constante é a re-extração do WSDL arquivado (operação, ação, namespace, saída)', () => {
     const entries = soapBindingEntries('H')
     expect(entries).toHaveLength(14)

@@ -5,6 +5,7 @@ import fs from 'fs'
 import os from 'os'
 import path from 'path'
 import { contextFromEnv } from '../context'
+import { FAKE_TECH } from './technical-responsible-fake'
 import { ServerCaRefusedError, fichaPathOf, loadServerCa } from '../authority/server-ca'
 
 const PEM = path.resolve(__dirname, '..', '..', 'acervo', 'icp', 'raizes-icp-brasil.pem')
@@ -58,7 +59,7 @@ describe('o boot recusa (D-NE187)', () => {
   })
   it('contextFromEnv sem SEFAZ_SERVER_CA_PATH → o serviço não sobe', () => {
     const env = { DB_HOST: 'x', DB_USER: 'x', DB_PASSWORD: 'x', FISCAL_DB_NAME: 'fiscal_api', STORAGE_PATH: tmp() } as NodeJS.ProcessEnv
-    const over = { pool: { query: jest.fn(), getConnection: jest.fn() } as any }
+    const over = { pool: { query: jest.fn(), getConnection: jest.fn() } as any, technicalResponsible: FAKE_TECH }   // DEPLOY.E1.P8
     expect(() => contextFromEnv(env, over)).toThrow(ServerCaRefusedError)
     expect(() => contextFromEnv(env, over)).toThrow(/SEFAZ_SERVER_CA_PATH/)
   })

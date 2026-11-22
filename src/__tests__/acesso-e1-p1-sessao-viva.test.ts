@@ -18,6 +18,7 @@ import * as fiscal from 'fiscal-api'
 import { MasterKeyRing, ProductTokenVerifier, FsFiscalStorage } from 'fiscal-api'
 import { createApp, loadOpenApi } from '../app'
 import { contextFromEnv } from '../context'
+import { FAKE_TECH } from './technical-responsible-fake'
 import type { AppContext } from '../context'
 
 jest.mock('fiscal-api', () => {
@@ -84,7 +85,7 @@ afterAll(() => fs.rmSync(storageRoot, { recursive: true, force: true }))
 const ctx = (over: Partial<AppContext> = {}): AppContext => ({
   db: { host: 'x', port: 0, user: 'x', password: 'x', database: 'fiscal_api' },
   pool, keyring: MasterKeyRing.of({ 1: randomBytes(32) }), storage: new FsFiscalStorage(storageRoot),
-  fiscalDb: 'fiscal_api', verifier, corsOrigins: [], checkIdentity: true, serverCa: SERVER_CA, ...over,
+  fiscalDb: 'fiscal_api', verifier, corsOrigins: [], checkIdentity: true, serverCa: SERVER_CA, technicalResponsible: FAKE_TECH, ...over,
 })
 const EMITTER = { issuers: [], certificate: { certificate: false, privateKey: false, certificateInfo: null } }
 const get = (app: ReturnType<typeof createApp>, token: string) => request(app).get('/v1/emitter').set('Authorization', `Bearer ${token}`)
@@ -158,7 +159,7 @@ describe('ACESSO.E1.P1.T1 — toda rota protegida lê a sessão viva; o admin é
   })
 
   it('(g) produção liga a sessão: `contextFromEnv` dá `checkIdentity: true`, e nenhuma variável de ambiente o desliga', () => {
-    const over = { pool, verifier, keyring: MasterKeyRing.of({ 1: randomBytes(32) }), storage: new FsFiscalStorage(storageRoot), serverCa: SERVER_CA }
+    const over = { pool, verifier, keyring: MasterKeyRing.of({ 1: randomBytes(32) }), storage: new FsFiscalStorage(storageRoot), serverCa: SERVER_CA, technicalResponsible: FAKE_TECH }
     for (const env of [{}, { CHECK_IDENTITY: 'false', checkIdentity: 'false', NODE_ENV: 'production', FISCAL_CHECK_IDENTITY: '0' }]) {
       expect(contextFromEnv(env as NodeJS.ProcessEnv, over).checkIdentity).toBe(true)
     }

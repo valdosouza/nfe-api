@@ -10,6 +10,7 @@ import { generateKeyPairSync, randomBytes } from 'crypto'
 import { FsFiscalStorage, MasterKeyRing, ProductTokenVerifier } from 'fiscal-api'
 import { merchandiseDocumentKind, merchandiseFileKey } from '../nfe/fiscal-file'
 import { contextFromEnv } from '../context'
+import { FAKE_TECH } from './technical-responsible-fake'
 import { assertCorsOrigins } from '../cors-origins'
 
 const SRC = path.resolve(__dirname, '..')
@@ -105,6 +106,7 @@ describe('D-F241 — o tipo da pasta pelo modelo (55 = nfe, 65 = nfce)', () => {
 describe('raiz — o arquivo fiscal pela regra do núcleo (fiscalStorageRootFromEnv, P-DEP-2)', () => {
   const overrides = () => ({
     pool: { query: jest.fn(), getConnection: jest.fn() } as any,
+    technicalResponsible: FAKE_TECH,   // DEPLOY.E1.P8: estes casos provam a ordem do STORAGE_PATH
     keyring: MasterKeyRing.of({ 1: randomBytes(32) }),
     verifier: ProductTokenVerifier.of({ k1: PUB_PEM }),
     // NFE.E4.P3.T3: as raízes entram por override — estes casos provam a ordem do STORAGE_PATH

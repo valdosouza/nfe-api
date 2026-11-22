@@ -1,6 +1,6 @@
 import {
   Pool, createFiscalPool, dbConfigFromEnv, FiscalDbConfig, FiscalStorage, MasterKeyRing, ProductTokenVerifier, FsFiscalStorage,
-  fiscalStorageRootFromEnv,
+  fiscalStorageRootFromEnv, technicalResponsibleFromEnv, type TechnicalResponsible,
 } from 'fiscal-api'
 import { loadServerCa, type ServerCa } from './authority/server-ca'
 
@@ -31,9 +31,18 @@ export interface AppContext {
    * sobe. Vai no `ca` das chamadas ao fisco.
    */
   serverCa: ServerCa
+  /**
+   * Responsável técnico da instância — os dados PÚBLICOS do `infRespTec` (D-NE217; valores = os do ERP Desktop, postos no `.env` pelo
+   * Valdo — D-NE229), lidos e conferidos pela peça do núcleo `technicalResponsibleFromEnv` (núcleo 4.1.0, DEPLOY.E1.P8): variável ausente ou
+   * fora da forma = o serviço NÃO sobe. O builder (NFE.E5.P3) lê daqui; o valor nunca vai a log. Congelado no boot: troca = reiniciar.
+   */
+  technicalResponsible: TechnicalResponsible
 }
 
 export function contextFromEnv(env: NodeJS.ProcessEnv = process.env, overrides: Partial<AppContext> = {}): AppContext {
+  // D-NE217 (DEPLOY.E1.P8): a 1ª conferência — tudo ou nada; o erro do responsável técnico sai antes dos de banco, storage e CA (diz o
+  // NOME da variável, nunca o valor). O override é SÓ de teste (o `server.ts` não o passa).
+  const technicalResponsible = overrides.technicalResponsible ?? technicalResponsibleFromEnv(env)
   const db = dbConfigFromEnv(env)
   const pool: Pool = overrides.pool ?? createFiscalPool(db)
   return {
@@ -48,5 +57,6 @@ export function contextFromEnv(env: NodeJS.ProcessEnv = process.env, overrides: 
     verifier: overrides.verifier ?? ProductTokenVerifier.fromEnv(env),
     corsOrigins: overrides.corsOrigins ?? String(env.CORS_ORIGINS ?? '').split(',').map(s => s.trim()).filter(Boolean),
     checkIdentity: overrides.checkIdentity ?? true,
+    technicalResponsible,
   }
 }

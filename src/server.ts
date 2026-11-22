@@ -2,6 +2,7 @@ import 'dotenv/config'
 import {
   logger, assertSessionInvariants, assertIssuerModelDomainEnforced, assertIssuerEnvironmentDomainEnforced, assertFamilyViewsReadable,
   assertWithdrawnRangesViewReadable, MERCHANDISE_VOICE_READING, runMigrations, fiscalStorageRootFromEnv, access,
+  assertFiscalCodeDomainsEnforced, assertRequiredProviderCodesPresent,
 } from 'fiscal-api'
 import { contextFromEnv } from './context'
 import { createApp } from './app'
@@ -13,6 +14,8 @@ import { assertCorsOrigins } from './cors-origins'
 
 async function main(): Promise<void> {
   const ctx = contextFromEnv()
+  // D-NE217 (DEPLOY.E1.P8): o `contextFromEnv` já conferiu as quatro variáveis do responsável técnico — o log diz só que conferiu, sem valor
+  logger.info('Responsável técnico (infRespTec — D-NE217): conferido')
   // gates do DEPLOY.E1.P5: as duas travas de produção (P-DEP-2, D-F236) dependem do NODE_ENV — o boot diz em que ambiente subiu e onde o XML mora
   logger.info(`Ambiente: NODE_ENV=${process.env.NODE_ENV ?? '(ausente — não-produção)'} · arquivo fiscal em ${fiscalStorageRootFromEnv(process.env)}`)
   // D-F236: em produção o núcleo recusa origem que não seja https:// e recusa localhost — o ambiente vem do processo
@@ -30,6 +33,14 @@ async function main(): Promise<void> {
   // D-NE158: a família está FORA do catálogo até a janela da NE-6 — a nfe-api confere a PRÓPRIA view passando a leitura (D-F113 por família)
   await assertFamilyViewsReadable(ctx.pool, ctx.fiscalDb, [MERCHANDISE_VOICE_READING])
   await assertWithdrawnRangesViewReadable(ctx.pool, ctx.fiscalDb)   // D-NE161: a view das faixas retiradas responde ao SELECT publicado
+  // DEPLOY.E1.P8 — configuração fiscal por UF (migration 006 do núcleo 4.1.0, D-NE221/D-NE223): os domínios pelo CHECK binário de nome
+  // certo, e o boot RECUSA se faltar a credencial do fornecedor (o CSRT) exigida para algum (modelo × ambiente) com habilitação viva — o
+  // erro diz UF, tipo, modelo e ambiente. Cadastro: `scripts/fiscal-credential.mjs` do núcleo, só pelo Valdo (D-NE226), até a tela.
+  // É PRESENÇA NO INSTANTE DO BOOT, de todas as UFs com regra (a habilitação não tem UF), só dono `provider`: NÃO substitui a conferência
+  // por nota — o builder (NFE.E5.P3) chama `requiredFiscalCredentialsFor` pela UF do emitente × modelo × ambiente (D-NE218) e calcula o
+  // `hashCSRT` na família (§22.6-3). Habilitação nova (55/P, 65) sem o código exigido derruba o PRÓXIMO boot — cadastrar o código antes.
+  await assertFiscalCodeDomainsEnforced(ctx.pool)
+  await assertRequiredProviderCodesPresent(ctx.pool)
   // ACESSO.E1.P1 (D-AU3/D-AU12): a sessão viva é lida em TODA rota protegida — sem a `vw_user_link` (script sql/70) ou sem o GRANT nela
   // (seção 1a do nfse-api/ops/grants.sql — o MESMO usuário 'fiscal_api'), o serviço NÃO sobe
   logger.info(`Sessão viva (setes_central.vw_user_link): ${await access.assertSessionViewReadable(ctx.pool)}`)

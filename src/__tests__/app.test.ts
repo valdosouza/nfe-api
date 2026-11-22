@@ -17,6 +17,7 @@ import { KeyProof } from '../key-proof'
 import type { AppContext } from '../context'
 import { emitterRoutes } from '../modules/emitter/emitter.routes'
 import { SERVED_MODELS } from '../modules/emitter/emitter.service'
+import { FAKE_TECH } from './technical-responsible-fake'
 
 jest.mock('fiscal-api', () => {
   const actual = jest.requireActual('fiscal-api')
@@ -49,7 +50,7 @@ const ctx = (over: Partial<AppContext> = {}): AppContext => ({
   db: { host: 'x', port: 0, user: 'x', password: 'x', database: 'fiscal_api' },
   pool, keyring: MasterKeyRing.of({ 1: randomBytes(32) }), storage: new FsFiscalStorage(storageRoot),
   fiscalDb: 'fiscal_api', verifier: ProductTokenVerifier.of({ k1: pubPem }), corsOrigins: ['https://app.setesgestao.com.br'],
-  checkIdentity: true, serverCa: SERVER_CA, ...over,
+  checkIdentity: true, serverCa: SERVER_CA, technicalResponsible: FAKE_TECH, ...over,
 })
 const EMITTER = { issuers: [{ model: '55', environment: 'H', serie: null, enabled: false, authority: 'SEFAZ', cutoverAt: '2026-10-20 00:00:00' }], certificate: { certificate: false, privateKey: false, certificateInfo: null } }
 

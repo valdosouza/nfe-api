@@ -14,6 +14,11 @@
 --     `src/__tests__/acesso-e1-p1-sessao-viva.test.ts` (toda `setes_central.<nome>` lida pelo código da nfe-api e pelo núcleo INSTALADO tem
 --     o GRANT lá). O boot confere a view (`access.assertSessionViewReadable`) — sem ela ou sem o GRANT, a nfe-api não sobe.
 --
+-- 1b. DEPLOY.E1.P8 (núcleo 4.1.0, D-NE221/D-NE223): a migration 006 do NÚCLEO cria a configuração fiscal por UF (`tb_fiscal_code_type`,
+--     `tb_fiscal_code_requirement`, `tb_provider_fiscal_credential`, `tb_establishment_fiscal_credential`) no `fiscal_api`, onde o
+--     'fiscal_api' já tem controle total — nada a conceder. O boot da nfe-api a sonda (`assertFiscalCodeDomainsEnforced`) e recusa sem o
+--     CSRT exigido (`assertRequiredProviderCodesPresent`).
+--
 -- 2. Usuário do setes-api lê a voz e a NUMERAÇÃO da NF-e SÓ pelas VIEWs publicadas (contrato — D-F15), nunca as tabelas internas. GRANT
 --    MÍNIMO (parecer do guardião da NE-2, §15.3-6.3 — "só a view de TENTATIVAS, e só com o leitor"; a view de VOZES não nasce — D-NE160):
 --      - `vw_invoice_merchandise_transmission` — o plano de cancelamento, a prova, a pendência do efeito e o selo (`readFamilyTransmissions`

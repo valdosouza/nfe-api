@@ -13,7 +13,7 @@ O núcleo `fiscal-api` entra AQUI só pelo **pacote versionado** `vendor/fiscal-
 `prompt_apis_fiscais_isoladas.md` §23): sem `paths`/`moduleNameMapper` para a pasta irmã (cerca `src/__tests__/fiscal-api-package-fence.test.ts`
 — vendor = lock = instalado); mexeu no núcleo? gere o pacote (no núcleo: `node scripts/pack-release.mjs vX.Y.Z <saída>`), troque o arquivo em
 `vendor/` e rode `npm install`.
-**Núcleo em uso: 4.1.0** (DEPLOY.E1.P8 — peças da NE-4, o mesmo tgz da nfse-api — D-F237: escritor de XML D-NE214, fórmula do vNF D-NE215 em `fiscal-api/merchandise-total`, responsável técnico pelo `.env` D-NE217/D-NE229 — `FISCAL_TECH_RESPONSIBLE_*` conferidas no `contextFromEnv`, e a configuração fiscal por UF da migration 006 do núcleo D-NE221/D-NE223 — o boot sonda os CHECKs e RECUSA sem o CSRT exigido para cada modelo × ambiente com habilitação viva (presença no instante do boot — NÃO substitui a conferência por nota pela UF do emitente, D-NE218, que é do builder; habilitação 55/P nova exige antes o CSRT de P); o CSRT de H entra pelo `scripts/fiscal-credential.mjs` do núcleo, só pelo Valdo — D-NE226; prova em `src/__tests__/deploy-e1-p8.test.ts`. O 4.0.0 veio no DEPLOY.E1.P7 — teto de 2 MB no transporte = ambíguo `envelope-ilegivel` e `verifyXml` pelo elemento, D-NE193/D-NE194, por acompanhamento da nfse-api f6682a3 — D-F237; superfície fixada em `src/__tests__/deploy-e1-p7.test.ts`; a 3.0.0 — token sem `role`, admin só do perfil vivo, D-AU3/D-AU19 — veio no ACESSO.E1.P1; o 2.0.0 no DEPLOY.E1.P5): XML no layout D-F241 pelo `src/nfe/fiscal-file.ts`
+**Núcleo em uso: 5.0.0** (DEPLOY.E1.P9 — janela da NE-6, o mesmo tgz da nfse-api — D-F237: a família NF-e ENTROU no catálogo `VOICE_READINGS` e em `fiscal-api/reading` — D-NE158; `assertFamilyViewsReadable` sem lista padrão — o boot daqui segue passando só `[MERCHANDISE_VOICE_READING]`, NUNCA o catálogo inteiro — D-NE76; migration 007 do núcleo = `vw_establishment_issuer`, a habilitação por modelo que o ERP lê ao cunhar — D-NE170, com as faixas retiradas — D-NE161; o emitter passa a contar as NF-e vivas; prova em `src/__tests__/deploy-e1-p9.test.ts`. O 4.1.0 veio no DEPLOY.E1.P8 — peças da NE-4, o mesmo tgz da nfse-api — D-F237: escritor de XML D-NE214, fórmula do vNF D-NE215 em `fiscal-api/merchandise-total`, responsável técnico pelo `.env` D-NE217/D-NE229 — `FISCAL_TECH_RESPONSIBLE_*` conferidas no `contextFromEnv`, e a configuração fiscal por UF da migration 006 do núcleo D-NE221/D-NE223 — o boot sonda os CHECKs e RECUSA sem o CSRT exigido para cada modelo × ambiente com habilitação viva (presença no instante do boot — NÃO substitui a conferência por nota pela UF do emitente, D-NE218, que é do builder; habilitação 55/P nova exige antes o CSRT de P); o CSRT de H entra pelo `scripts/fiscal-credential.mjs` do núcleo, só pelo Valdo — D-NE226; prova em `src/__tests__/deploy-e1-p8.test.ts`. O 4.0.0 veio no DEPLOY.E1.P7 — teto de 2 MB no transporte = ambíguo `envelope-ilegivel` e `verifyXml` pelo elemento, D-NE193/D-NE194, por acompanhamento da nfse-api f6682a3 — D-F237; superfície fixada em `src/__tests__/deploy-e1-p7.test.ts`; a 3.0.0 — token sem `role`, admin só do perfil vivo, D-AU3/D-AU19 — veio no ACESSO.E1.P1; o 2.0.0 no DEPLOY.E1.P5): XML no layout D-F241 pelo `src/nfe/fiscal-file.ts`
 (55 = `nfe`, 65 = `nfce`), raiz por `fiscalStorageRootFromEnv`, CORS com o ambiente (D-F236).
 **Health com prova da chave-mestra** (DEPLOY.E1.P6, D-NE189 — gêmea da nfse-api b3f192e): `src/key-proof.ts` abre UM A1 guardado por versão
 (`verifyStoredKeys` do núcleo) no boot ANTES do `listen` e a cada `KEY_PROOF_INTERVAL_MINUTES = 5` (D-F243/D-F245/D-F250/D-F251); o
@@ -44,10 +44,10 @@ Ao concluir tarefa que gere conhecimento novo, siga `Infra-IA/skills-genericas/a
   (`defineVoiceFamily` — o ÚNICO lugar; cerca por AST `src/__tests__/voice-kind-fence.ts` — D-NE167), sondas `assertMerchandiseVoiceDomainsEnforced` +
   `assertNumberVoidDomainsEnforced` (`src/nfe/number-void.ts`, com `voidId` por partes).
 - **No núcleo** (E4 — `fiscal-api/src/voice/families/merchandise.ts`, `src/numbering/withdrawn-ranges.ts`): leitura publicada
-  `MERCHANDISE_VOICE_READING` **FORA do catálogo `VOICE_READINGS` e fora de `fiscal-api/reading`** (D-NE158 — entra na janela da NE-6, antes da 1ª
+  `MERCHANDISE_VOICE_READING` **no catálogo `VOICE_READINGS` e em `fiscal-api/reading` desde o núcleo 5.0.0** (D-NE158 — janela da NE-6, antes da 1ª
   tentativa possível; o boot daqui confere a PRÓPRIA view: `assertFamilyViewsReadable(pool, db, [MERCHANDISE_VOICE_READING])`);
   `humanEffectCancel = () => false` (D-NE159 — conhecimento negativo); leitor das faixas retiradas escopado por institution × modelo × série ×
-  AMBIENTE (D-NE161/D-NE163), exposto em `fiscal-api/reading` só com o 1º leitor (NE-6).
+  AMBIENTE (D-NE161/D-NE163), exposto em `fiscal-api/reading` desde o núcleo 5.0.0 (NE-6).
 
 **Gates da NE-2 (§15.9.6)**: socrático **0,76 ✅** · adversarial **0,78 ✅** (nenhum HIGH/CRITICAL); MEDIUM viraram Q-NE170 (eixo AMBIENTE da cunhagem no ERP),
 Q-NE171 (`deleted` × `withdrawn` na faixa) e Q-NE172 (`sql_mode` não estrito — transversal); corrigidos na sessão: cerca rota × contrato lendo o app REAL,
@@ -55,7 +55,7 @@ cerca por AST sem `eval`/`Function`/nome montado/`erp` sombreado, sonda do boot 
 estrito, eco do modelo cortado, leitor das faixas pelo índice. Q-NE169 (UNIQUE da prova sem institution) aberta — rec. manter.
 
 **Scripts**: `npm run dev` (porta 3003; `.env` a partir do `.env.example` — o MESMO usuário `fiscal_api` e a MESMA `FISCAL_MASTER_KEYS` da
-nfse-api) · `npm test` (20 suítes / 314 — 2026-11-22) · `npm run typecheck` · `npm run db:migrate` (aplica núcleo 001–006 + nfe-api 001 — na publicação, no `fiscal_api`
+nfse-api) · `npm test` (20 suítes / 314 — 2026-11-22) · `npm run typecheck` · `npm run db:migrate` (aplica núcleo 001–007 + nfe-api 001 — na publicação, no `fiscal_api`
 do dev; D-NE168) · `npm run prove:001` (SÓ em `FISCAL_DB_NAME=fiscal_api_adv*` — recusa o real) · `npm run explain:leituras` · `npm run token:dev`.
 ⚠️ A nfe-api **não fica no ar** (D-NE168 — sobe só para o passeio); nenhuma rota de NF-e é servida antes da NE-3/NE-5.
 
@@ -82,5 +82,6 @@ aplica efeito; não calcula imposto (D-F10/D-F11/D-F15). O builder de autorizaç
    `src/nfe/voice-family.ts` (cerca por AST); nenhum "S antes do POST" — quem produzir S dá a saída na mesma entrega (D-F105).
 3. Domínio fechado = CHECK BINÁRIO conferido no boot pelo NOME (PADROES §11 regras 11/16); nunca `INSERT IGNORE`; nunca desligar o CHECK na
    sessão (D-F122).
-4. A família entra no catálogo `VOICE_READINGS` só na janela da NE-6 (D-NE158); até lá o boot confere a própria view e nenhuma reserva é montada.
+4. A família está no catálogo `VOICE_READINGS` desde o núcleo 5.0.0 (D-NE158, janela da NE-6); o boot confere SÓ a própria view (lista de uma
+   leitura — D-NE76), nunca o catálogo inteiro.
 5. OpenAPI em todo endpoint; rota nova = tirar a marca `x-onda` na MESMA entrega; gates socrático ≥ 0,70 + adversarial sem HIGH antes de "pronto".

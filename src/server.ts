@@ -30,7 +30,9 @@ async function main(): Promise<void> {
   await assertMerchandiseStrictSession(ctx.pool)           // D-NE172: a sessão é ESTRITA — a chave de 45 posições é RECUSADA (1406), nunca cortada calada
   await assertNumberVoidDomainsEnforced(ctx.pool)          // D-NE163: domínios da faixa inutilizada (001 desta API)
   await assertNumberVoidUniqueKeys(ctx.pool)               // D-NE163: as DUAS UNIQUE da faixa com as colunas decididas (CREATE IF NOT EXISTS não corrige tabela antiga)
-  // D-NE158: a família está FORA do catálogo até a janela da NE-6 — a nfe-api confere a PRÓPRIA view passando a leitura (D-F113 por família)
+  // D-NE158 (DEPLOY.E1.P9, núcleo 5.0.0): a família ENTROU no catálogo `VOICE_READINGS` na janela da NE-6 e a conferência não tem mais
+  // lista padrão — a nfe-api segue passando a PRÓPRIA leitura (D-F113 por família), nunca o catálogo inteiro: o boot dela não depende
+  // das migrations de outra família (D-NE76)
   await assertFamilyViewsReadable(ctx.pool, ctx.fiscalDb, [MERCHANDISE_VOICE_READING])
   await assertWithdrawnRangesViewReadable(ctx.pool, ctx.fiscalDb)   // D-NE161: a view das faixas retiradas responde ao SELECT publicado
   // DEPLOY.E1.P8 — configuração fiscal por UF (migration 006 do núcleo 4.1.0, D-NE221/D-NE223): os domínios pelo CHECK binário de nome

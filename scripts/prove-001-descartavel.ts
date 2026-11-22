@@ -108,9 +108,9 @@ async function main(): Promise<void> {
     await readFamilyTransmissions(capture('tentativas da nota (vida)'), MERCHANDISE_VOICE_READING, cfg.database, ref, 1)
     await readFamilyTransmissionsMany(capture('tentativas em lote'), MERCHANDISE_VOICE_READING, cfg.database, { institutionId: INST, terminal: TERMINAL }, [{ invoiceId: INVOICE, lifeEvent: 1 }, { invoiceId: INVOICE + 1, lifeEvent: 1 }])
     await readWithdrawnRanges(capture('faixas retiradas'), cfg.database, { institutionId: INST, model: '55', serie: 1, environment: 'H' })
-    // a contagem de vivas do emitter (`countLiveTransmissions`) percorre o CATÁLOGO — a família ainda não está nele (D-NE158); a forma dela é
-    // a MESMA WHERE sobre a view publicada: registrada aqui com a view desta família para o EXPLAIN (quando entrar no catálogo, o script da
-    // nfse-api/nfe-api a captura da função real)
+    // a contagem de vivas do emitter (`countLiveTransmissions`) percorre o CATÁLOGO — a família entrou nele no núcleo 5.0.0 (D-NE158); a forma dela é
+    // a MESMA WHERE sobre a view publicada: registrada aqui com a view desta família para o EXPLAIN (capturar da função real do
+    // emitter fica para quem mexer neste script)
     const finals = [...FINAL_TRANSMISSION_KINDS].map(k => `'${k}'`).join(',')
     captured.push({ label: 'vivas do emissor (forma do countLiveTransmissions)', params: [INST, null, null],
       sql: `SELECT COUNT(*) AS n FROM ${MERCHANDISE_VOICE_READING.transmissionView} t WHERE t.tb_institution_id = ? AND (? IS NULL OR t.environment = ?) AND (t.last_kind IS NULL OR t.last_kind NOT IN (${finals}))` })

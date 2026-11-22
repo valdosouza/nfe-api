@@ -159,7 +159,7 @@ describe('as sondas do boot — cada CHECK pelo NOME, PK própria, o resto váli
       'await assertFamilyViewsReadable(ctx.pool, ctx.fiscalDb, [MERCHANDISE_VOICE_READING])', 'await assertWithdrawnRangesViewReadable(ctx.pool, ctx.fiscalDb)']) {
       expect([call, at(call) > at('await runMigrations(')]).toEqual([call, true])
     }
-    expect(server).not.toMatch(/assertFamilyViewsReadable\(ctx\.pool, ctx\.fiscalDb\)/)       // nunca o catálogo inteiro (a família não está nele)
+    expect(server).not.toMatch(/assertFamilyViewsReadable\(ctx\.pool, ctx\.fiscalDb\)/)       // nunca sem a lista (o núcleo 5.0.0 nem compila) — e nunca o catálogo inteiro (D-NE76; cerca em deploy-e1-p9)
     // D-NE172: a prova da sessão estrita vem DEPOIS da conferência dos invariantes (que já exige o modo) — as duas, antes de ouvir
     expect(at('await assertMerchandiseStrictSession(ctx.pool)')).toBeGreaterThan(at('await assertSessionInvariants(ctx.pool)'))
     expect(at('await assertMerchandiseStrictSession(ctx.pool)')).toBeLessThan(at('.listen('))

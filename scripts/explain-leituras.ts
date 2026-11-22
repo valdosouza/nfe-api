@@ -5,8 +5,9 @@
  *   - as tentativas de UMA nota na vida (`readFamilyTransmissions` sobre a view publicada — o selo, o plano de cancelamento na NE-6);
  *   - as tentativas em LOTE (`readFamilyTransmissionsMany` — a lista de notas);
  *   - as faixas RETIRADAS da numeração de um eixo (`readWithdrawnRanges` — a cunhagem do número no ERP, NE-6).
- * A contagem de vivas do emitter (`countLiveTransmissions`) percorre o CATÁLOGO `VOICE_READINGS` — a família entra nele na janela da NE-6
- * (D-NE158); até lá ela conta 0 e não há SQL dela para explicar (a forma é a mesma WHERE, provada em `prove-001-descartavel.ts`).
+ * A contagem de vivas do emitter (`countLiveTransmissions`) percorre o CATÁLOGO `VOICE_READINGS` — a família ENTROU nele na janela da NE-6
+ * (D-NE158, núcleo 5.0.0 — DEPLOY.E1.P9) e passou a ser contada; este script ainda não a captura da função real (a forma é a mesma
+ * WHERE, provada em `prove-001-descartavel.ts`).
  * Regra (cerca M5): subconsulta DEPENDENTE por ALL/index = FALHA; MATERIALIZED varrendo = FALHA; a tabela que dirige pode varrer no dev — AVISO.
  *   npx tsx --require tsconfig-paths/register scripts/explain-leituras.ts [institutionId=1]
  * EXPLAIN de VIEW exige `SHOW VIEW` — rode com um usuário de diagnóstico em EXPLAIN_DB_USER / EXPLAIN_DB_PASSWORD se o do serviço não tiver.

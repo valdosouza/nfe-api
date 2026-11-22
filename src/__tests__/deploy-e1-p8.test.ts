@@ -20,16 +20,17 @@ import { FAKE_TECH, FAKE_TECH_ENV } from './technical-responsible-fake'
 const SRC = path.resolve(__dirname, '..')
 const PKG_DIR = path.dirname(require.resolve('fiscal-api/package.json'))
 
-describe('núcleo 4.1.0 — o pacote instalado (DEPLOY.E1.P8, D-F237)', () => {
-  it('a versão instalada é a 4.1.0 e o vendor é o do package.json', () => {
-    expect(JSON.parse(fs.readFileSync(path.join(PKG_DIR, 'package.json'), 'utf8')).version).toBe('4.1.0')
-    const own = JSON.parse(fs.readFileSync(path.resolve(SRC, '..', 'package.json'), 'utf8'))
-    expect(own.dependencies['fiscal-api']).toBe('file:vendor/fiscal-api-4.1.0.tgz')
+describe('núcleo 4.1.0 em diante — as peças da NE-4 no pacote instalado (DEPLOY.E1.P8, D-F237)', () => {
+  // a versão EXATA instalada e a lista inteira das migrations do núcleo são da adoção vigente (`deploy-e1-p9.test.ts`); aqui fica o que a
+  // P8 trouxe e não pode sumir numa versão seguinte
+  it('o pacote instalado é o 4.1.0 ou posterior', () => {
+    const [major, minor] = String(JSON.parse(fs.readFileSync(path.join(PKG_DIR, 'package.json'), 'utf8')).version).split('.').map(Number)
+    expect(major > 4 || (major === 4 && minor >= 1)).toBe(true)
   })
 
   it('a migration 006 do núcleo (configuração fiscal por UF) está no pacote, e o boot aplica o núcleo ANTES da família', () => {
     const core = fs.readdirSync(CORE_MIGRATIONS_DIR).filter(f => f.endsWith('.sql')).sort()
-    expect(core.map(f => f.slice(0, 3))).toEqual(['001', '002', '003', '004', '005', '006'])
+    expect(core.slice(0, 6).map(f => f.slice(0, 3))).toEqual(['001', '002', '003', '004', '005', '006'])
     expect(core[5]).toBe('006_fiscal_code.sql')
     expect(MIGRATION_SETS.map(s => s.project)).toEqual([CORE_MIGRATIONS_PROJECT, NFE_MIGRATIONS_PROJECT])
     expect(MIGRATION_SETS[0].dir).toBe(CORE_MIGRATIONS_DIR)

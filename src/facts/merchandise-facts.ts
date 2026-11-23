@@ -23,6 +23,7 @@ import { numberItems } from '../nfe/item-numbering'
  * Não valida conteúdo (camada 1 — NFE.E5.P5) nem monta a entrada do leiaute (builder — NFE.E5.P3). Só recusa o que impede a leitura fiel.
  */
 
+/** O modelo que a NE-4 monta. A fonte NÃO filtra por ele (devolve o `model` da nota como fato): quem recusa outro modelo é quem monta (P3/P5). */
 export const MERCHANDISE_MODEL = '55' as const
 /** Nível da unidade-base na `tb_merchandise_trade_unit` (CHECK `ck_mtu_base_factor`: nível 1 tem fator 1). */
 const BASE_TRADE_LEVEL = 1
@@ -32,6 +33,8 @@ export const MerchandiseFactsErrors = Object.freeze({
   BRANCH_MISSING:          'INVOICE_MERCHANDISE_BRANCH_MISSING',
   ITEMS_MISSING:           'INVOICE_MERCHANDISE_ITEMS_MISSING',
   ITEM_TAX_RECORD_MISSING: 'INVOICE_ITEM_TAX_RECORD_MISSING',
+  ITEM_PRODUCT_MISSING:    'INVOICE_ITEM_PRODUCT_MISSING',
+  ITEM_ID_DUPLICATED:      'INVOICE_ITEM_ID_DUPLICATED',
 } as const)
 
 const txt = (v: unknown): string | null => (v == null ? null : String(v))
@@ -161,7 +164,7 @@ export async function listMerchandiseItems(q: Queryable, schemaName: string, ref
             AND ${alias}.terminal = oi.terminal AND ${alias}.deleted = 'N'`
   const unit = (alias: string) => `${alias}.tb_institution_id = m.tb_institution_id AND ${alias}.tb_merchandise_id = m.id AND ${alias}.deleted = 'N'`
   const [rows] = await q.query(
-    `SELECT oi.id AS itemId, oi.kind, CAST(oi.quantity AS CHAR) AS quantity, CAST(oi.unit_value AS CHAR) AS unitValue, CAST(oi.discount_value AS CHAR) AS discountValue,
+    `SELECT oi.id AS itemId, oi.kind, p.id AS productId, CAST(oi.quantity AS CHAR) AS quantity, CAST(oi.unit_value AS CHAR) AS unitValue, CAST(oi.discount_value AS CHAR) AS discountValue,
             p.description, m.id AS merchandiseId, m.ncm, m.cest, m.source, m.manuf_sign_ind_scale AS manufScale, mf.cnpj AS factoryCnpj,
             su.level AS saleLevel, sm.abbreviation AS saleAbbr, CAST(su.factor AS CHAR) AS saleFactor, su.gtin AS saleGtin,
             tu.level AS taxLevel, tm.abbreviation AS taxAbbr, CAST(tu.factor AS CHAR) AS taxFactor, tu.gtin AS taxGtin,
@@ -181,7 +184,7 @@ export async function listMerchandiseItems(q: Queryable, schemaName: string, ref
             co.tb_order_item_id AS cofinsItem, co.cst AS cofinsCst, CAST(co.base_value AS CHAR) AS cofinsBase, CAST(co.aliq_value AS CHAR) AS cofinsAliq,
             CAST(co.tag_value AS CHAR) AS cofinsValue, CAST(co.qt_sale_qtty AS CHAR) AS cofinsQtty, CAST(co.qt_aliq_value AS CHAR) AS cofinsQtAliq
        FROM \`${s}\`.tb_order_item oi
-       JOIN \`${s}\`.tb_product p ON p.id = oi.tb_product_id AND p.tb_institution_id = oi.tb_institution_id
+       LEFT JOIN \`${s}\`.tb_product p ON p.id = oi.tb_product_id AND p.tb_institution_id = oi.tb_institution_id
        LEFT JOIN \`${s}\`.tb_merchandise m ON m.id = p.id AND m.tb_institution_id = p.tb_institution_id
        LEFT JOIN \`${s}\`.tb_merchandise_factory mf ON mf.tb_institution_id = m.tb_institution_id AND mf.tb_merchandise_id = m.id AND mf.deleted = 'N'
        LEFT JOIN \`${s}\`.tb_merchandise_trade_unit su ON ${unit('su')} AND su.level = COALESCE(m.default_sale_trade_level, ${BASE_TRADE_LEVEL})
@@ -193,16 +196,33 @@ export async function listMerchandiseItems(q: Queryable, schemaName: string, ref
        LEFT JOIN \`${s}\`.tb_order_item_ipi ip ON ${tax('ip')}
        LEFT JOIN \`${s}\`.tb_order_item_pis pi ON ${tax('pi')}
        LEFT JOIN \`${s}\`.tb_order_item_cofins co ON ${tax('co')}
-      WHERE oi.tb_order_id = ? AND oi.tb_institution_id = ? AND oi.terminal = ? AND oi.deleted = 'N' AND p.kind <> 'S'
+      WHERE oi.tb_order_id = ? AND oi.tb_institution_id = ? AND oi.terminal = ? AND oi.deleted = 'N' AND (p.id IS NULL OR p.kind <> 'S')
       ORDER BY oi.id`, key)
   if (rows.length === 0) {
     throw new HttpError(422, `Nota ${ref.invoiceId} não tem item de mercadoria`,
       [{ field: 'items', message: 'Nenhum item de mercadoria vivo no pedido' }], MerchandiseFactsErrors.ITEMS_MISSING)
   }
+  // Limite dos erros com lista: até 50 campos (uma nota com milhares de itens ruins não devolve um corpo de centenas de KB).
+  const capped = <T,>(list: T[]): T[] => list.slice(0, 50)
+  // Item vivo cujo produto não existe mais no cadastro: não dá para saber se é mercadoria — recusa, nunca some em silêncio do `det`.
+  const orphans = (rows as any[]).filter(r => r.productId == null)
+  if (orphans.length) {
+    throw new HttpError(422, `Nota ${ref.invoiceId}: ${orphans.length} item(ns) do pedido sem o produto no cadastro`,
+      capped(orphans).map(r => ({ field: `items[${Number(r.itemId)}]`, message: 'Produto do item não encontrado no cadastro' })),
+      MerchandiseFactsErrors.ITEM_PRODUCT_MISSING)
+  }
+  // O id do item é único por pedido entre os `kind` (D-NE220 — a cerca é do faturamento). Nota que não passou por ela (sincronizada, antiga)
+  // pode repetir o id em dois `kind`; as tabelas de imposto não têm `kind`, então os dois itens leriam o MESMO cálculo: recusa aqui.
+  const seen = new Set<number>(), repeated = new Set<number>()
+  for (const r of rows as any[]) { const id = Number(r.itemId); if (seen.has(id)) repeated.add(id); seen.add(id) }
+  if (repeated.size) {
+    throw new HttpError(422, `Nota ${ref.invoiceId}: ${repeated.size} id(s) de item repetido(s) entre tipos de item`,
+      capped([...repeated]).map(id => ({ field: `items[${id}]`, message: 'Id de item repetido no pedido' })), MerchandiseFactsErrors.ITEM_ID_DUPLICATED)
+  }
   const missing = (rows as any[]).filter(r => r.icmsItem == null)
   if (missing.length) {
-    throw new HttpError(422, `Nota ${ref.invoiceId}: item de mercadoria sem cálculo de imposto registrado pelo faturamento`,
-      missing.map(r => ({
+    throw new HttpError(422, `Nota ${ref.invoiceId}: ${missing.length} item(ns) de mercadoria sem cálculo de imposto registrado pelo faturamento`,
+      capped(missing).map(r => ({
         field: `items[${Number(r.itemId)}]`,
         message: 'Sem cálculo registrado de ICMS',
       })), MerchandiseFactsErrors.ITEM_TAX_RECORD_MISSING)
@@ -394,6 +414,9 @@ export async function readPayments(q: Queryable, schemaName: string, ref: Invoic
 export interface ShippingFacts {
   /** modFrete (`tb_order_shipping.tb_freight_mode_id`); null = pedido sem a linha de transporte. */
   freightMode: string | null
+  /** O id da transportadora GRAVADO no pedido (`tb_order_shipping.tb_carrier_id`), cru. Com id e `carrier` nulo, a transportadora foi
+   *  excluída ou não tem entidade: quem monta decide (nunca "sem transportadora" em silêncio). */
+  carrierId:   number | null
   /** A transportadora (entidade), lida ao vivo; null = sem transportadora. Volumes, pesos e placa não têm origem no ERP web. */
   carrier:     PartyFact | null
 }
@@ -401,15 +424,18 @@ export interface ShippingFacts {
 export async function readShipping(q: Queryable, schemaName: string, ref: InvoiceRef): Promise<ShippingFacts> {
   const s = assertSchema(schemaName)
   const [rows] = await q.query(
-    `SELECT sh.tb_freight_mode_id AS freightMode, ca.id AS carrierId
+    `SELECT sh.tb_freight_mode_id AS freightMode, sh.tb_carrier_id AS orderCarrierId, ca.id AS carrierId
        FROM \`${s}\`.tb_order_shipping sh
        LEFT JOIN \`${s}\`.tb_carrier ca ON ca.id = sh.tb_carrier_id AND ca.tb_institution_id = sh.tb_institution_id AND ca.deleted = 'N'
       WHERE sh.id = ? AND sh.tb_institution_id = ? AND sh.terminal = ? AND sh.deleted = 'N'`,
     [ref.invoiceId, ref.institutionId, ref.terminal])
   const r = rows[0]
-  if (!r) return { freightMode: null, carrier: null }
+  if (!r) return { freightMode: null, carrierId: null, carrier: null }
   const carrierId = int(r.carrierId)
-  return { freightMode: txt(r.freightMode), carrier: carrierId == null ? null : await readParty(q, schemaName, ref.institutionId, carrierId) }
+  return {
+    freightMode: txt(r.freightMode), carrierId: int(r.orderCarrierId),
+    carrier: carrierId == null ? null : await readParty(q, schemaName, ref.institutionId, carrierId),
+  }
 }
 
 /** O elo da devolução por item (D-NE219): item desta nota → pedido (= nota), terminal e item de ORIGEM. Vazio = a nota não é devolução. */

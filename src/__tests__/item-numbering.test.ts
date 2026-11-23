@@ -60,16 +60,54 @@ describe('CERCA — uma peça só: nenhum outro arquivo de src/ atribui nItem', 
   const src = path.resolve(__dirname, '..')
   const files = (dir: string): string[] => fs.readdirSync(dir, { withFileTypes: true }).flatMap(d =>
     d.isDirectory() ? (d.name === '__tests__' ? [] : files(path.join(dir, d.name))) : d.name.endsWith('.ts') ? [path.join(dir, d.name)] : [])
-  const clean = (f: string) => fs.readFileSync(f, 'utf8').replace(/\/\*[\s\S]*?\*\/|\/\/[^\n]*/g, '')
-  const ASSIGNS = /\bnItem\s*(?::(?!\s*(?:number|string)\b)|=(?!=))/      // chave de objeto `nItem: valor` ou atribuição `nItem =`; o TIPO `nItem: number` não conta
+  // `(?<!:)` — o `//` de uma URL dentro de texto não é comentário (gate adversarial: escondia o resto da linha).
+  const clean = (f: string) => fs.readFileSync(f, 'utf8').replace(/\/\*[\s\S]*?\*\/|(?<!:)\/\/[^\n]*/g, '')
+  // Chave de objeto (`nItem: valor`, `'nItem': valor`), atribuição (`nItem =`, `+=`, `['nItem'] =`), declaração tipada com valor
+  // (`nItem: number = 1`) e `nItem++`. O TIPO sozinho (`nItem: number`) e a leitura não contam. Limite conhecido: o shorthand `{ nItem }`,
+  // a chave computada e outro nome (`nitem`) passam — a cerca pega o descuido, não a má-fé.
+  const ASSIGNS = /\bnItem\b['"`]?\]?\s*(?::(?!\s*(?:number|string)\b(?!\s*=))|(?:[-+*/]|\?\?)?=(?!=)|\+\+|--)/
 
   it('a regex pega a atribuição e deixa passar o tipo e a leitura', () => {
-    expect(['{ nItem: i + 1 }', 'x.nItem = 3', 'nItem=1'].map(s => ASSIGNS.test(s))).toEqual([true, true, true])
-    expect(['readonly nItem: number', 'it.nItem === 2', 'n.nItemOf(3)', 'det[nItem]'].map(s => ASSIGNS.test(s))).toEqual([false, false, false, false])
+    const caught = ['{ nItem: i + 1 }', 'x.nItem = 3', 'nItem=1', "{ 'nItem': 7 }", "o['nItem'] = 2", 'let nItem: number = 41', 'nItem++', 'nItem += 1']
+    expect(caught.filter(s => !ASSIGNS.test(s))).toEqual([])
+    const free = ['readonly nItem: number', 'nItem: number', 'it.nItem === 2', 'n.nItemOf(3)', 'det[nItem]', 'f(nItem: string)']
+    expect(free.filter(s => ASSIGNS.test(s))).toEqual([])
   })
 
   it('só src/nfe/item-numbering.ts atribui', () => {
     const offenders = files(src).filter(f => ASSIGNS.test(clean(f))).map(f => path.relative(src, f).replace(/\\/g, '/'))
     expect(offenders).toEqual(['nfe/item-numbering.ts'])
+  })
+})
+
+describe('G3 — achados do gate adversarial na peça do nItem', () => {
+  it('[FIXED] array esparso é recusado (a cópia é validada, não a entrada)', () => {
+    // eslint-disable-next-line no-sparse-arrays
+    expect(code(() => numberItems([1, , 3] as any))).toMatchObject({ code: 'INVALID_ID' })
+    expect(code(() => numberItems(new Array(3) as any))).toMatchObject({ code: 'INVALID_ID' })
+  })
+
+  it('[FIXED] a mensagem do erro mostra no máximo 20 ids; a lista inteira fica em itemIds', () => {
+    const bad = Array.from({ length: 200_000 }, (_, i) => -(i + 1))
+    try { numberItems(bad); throw new Error('não recusou') } catch (e: any) {
+      expect(e).toBeInstanceOf(ItemNumberingError)
+      expect(e.itemIds).toHaveLength(200_000)
+      expect(e.message.length).toBeLessThan(300)
+      expect(e.message).toContain('200000 no total')
+    }
+  })
+
+  it('[RESISTED] entradas hostis: texto, null, Infinity, 2^53, bigint, objeto → INVALID_ID; nItemOf de texto → undefined', () => {
+    for (const hostile of ['1', null, undefined, Infinity, 2 ** 53, BigInt(1), { valueOf: () => 1 }, [1]]) {
+      expect(code(() => numberItems([1, hostile as any]))).toMatchObject({ code: 'INVALID_ID' })
+    }
+    expect(numberItems([1, 2]).nItemOf('1' as any)).toBeUndefined()
+  })
+
+  it('[RESISTED] nItemOf acerta além do 3º item e o resultado não aceita mudança', () => {
+    const n = numberItems([50, 40, 30, 20, 10])
+    expect([10, 20, 30, 40, 50].map(id => n.nItemOf(id))).toEqual([1, 2, 3, 4, 5])
+    expect(() => { (n.items as any).push({ itemId: 60, nItem: 6 }) }).toThrow()
+    expect(() => { (n.items[0] as any).nItem = 9 }).toThrow()
   })
 })

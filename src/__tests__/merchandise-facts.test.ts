@@ -38,7 +38,7 @@ const invoiceRow: Row = {
 }
 
 const itemRow = (itemId: number, over: Row = {}): Row => ({
-  itemId, kind: 'Sale', quantity: '2.0000', unitValue: '10.000000', discountValue: '0.000000',
+  itemId, kind: 'Sale', productId: 500 + itemId, quantity: '2.0000', unitValue: '10.000000', discountValue: '0.000000',
   description: 'Flange usinada', merchandiseId: 900 + itemId, ncm: '73259990', cest: null, source: '0', manufScale: 'S', factoryCnpj: null,
   saleLevel: 1, saleAbbr: 'PC', saleFactor: '1.000000', saleGtin: null, taxLevel: 1, taxAbbr: 'PC', taxFactor: '1.000000', taxGtin: null,
   icmsItem: itemId, icmsCst: '101', icmsOrigin: '0', cfopId: '5101', credCalcAliq: '0.00', credExplValue: '0.000000', freightValue: '0.00',
@@ -110,7 +110,7 @@ describe('NFE.E5.P2.T1 — itens: cadastro ao vivo + cálculo registrado', () =>
     expect(rule.sql).toContain('tb_order_item_tax_rule')
     expect(items.sql).not.toContain('tb_order_item_tax_rule')                                                    // colação diferente: nunca no JOIN (provado no banco real)
     const sql = items.sql.replace(/\s+/g, ' ')
-    expect(sql).toContain("WHERE oi.tb_order_id = ? AND oi.tb_institution_id = ? AND oi.terminal = ? AND oi.deleted = 'N' AND p.kind <> 'S' ORDER BY oi.id")
+    expect(sql).toContain("WHERE oi.tb_order_id = ? AND oi.tb_institution_id = ? AND oi.terminal = ? AND oi.deleted = 'N' AND (p.id IS NULL OR p.kind <> 'S') ORDER BY oi.id")
     for (const alias of ['ic', 'ip', 'pi', 'co']) {
       expect(sql).toContain(`${alias}.tb_order_item_id = oi.id AND ${alias}.tb_institution_id = oi.tb_institution_id AND ${alias}.terminal = oi.terminal AND ${alias}.deleted = 'N'`)
     }
@@ -233,15 +233,15 @@ describe('NFE.E5.P2.T1 — pagamento, transporte e devolução', () => {
   })
 
   it('transporte sem a linha do pedido → nulos; com modalidade e sem transportadora → carrier null', async () => {
-    expect(await readShipping(fakeDb([['tb_order_shipping', []]]), SCHEMA, REF)).toEqual({ freightMode: null, carrier: null })
-    const db = fakeDb([['tb_order_shipping', [{ freightMode: '0', carrierId: null }]]])
-    expect(await readShipping(db, SCHEMA, REF)).toEqual({ freightMode: '0', carrier: null })
+    expect(await readShipping(fakeDb([['tb_order_shipping', []]]), SCHEMA, REF)).toEqual({ freightMode: null, carrierId: null, carrier: null })
+    const db = fakeDb([['tb_order_shipping', [{ freightMode: '0', orderCarrierId: 0, carrierId: null }]]])
+    expect(await readShipping(db, SCHEMA, REF)).toEqual({ freightMode: '0', carrierId: 0, carrier: null })
     expect(db.calls[0].params).toEqual([5001, INST, TERMINAL])
   })
 
   it('transporte com transportadora → a entidade dela, lida ao vivo', async () => {
     const db = fakeDb([
-      ['tb_order_shipping', [{ freightMode: '1', carrierId: 77 }]],
+      ['tb_order_shipping', [{ freightMode: '1', orderCarrierId: 77, carrierId: 77 }]],
       ['setes_central.tb_entity', [{ nameCompany: 'TRANSPORTES Y', nickTrade: null }]],
       ['setes_central.tb_company', [{ cnpj: '98765432000110', im: null, ie: '111' }]],
       ['setes_central.tb_person', []], ['setes_central.tb_address', []], ['tb_entity_tax', []],
@@ -289,5 +289,173 @@ describe('NFE.E5.P2.T1 — a fonte SÓ LÊ e o terminal nunca é literal', () =>
     expect(scoped(a)).toHaveLength(8)                               // nota, itens, regra, FCP, condição, parcelas, transporte, devolução
     expect(scoped(a).every(c => c.params[1] === INST && c.params[2] === 0)).toBe(true)
     expect(scoped(b).every(c => c.params[1] === INST && c.params[2] === 7)).toBe(true)
+  })
+})
+
+// =======================================================================================================================================
+// G3 — os achados dos gates do passo viram sondas permanentes (socrático 0,80 · adversarial 0,72, 2026-11-23)
+// =======================================================================================================================================
+
+const norm = (sql: string) => sql.replace(/\s+/g, ' ')
+
+describe('G3 [FIXED] — o conjunto de itens não muda em silêncio', () => {
+  const db = (rows: Row[]) => fakeDb([['tb_order_item_icms_fcp', []], ['tb_order_item_tax_rule', []], ['tb_order_item', rows]])
+
+  it('item vivo cujo produto sumiu do cadastro → 422 INVOICE_ITEM_PRODUCT_MISSING (nunca some do det)', async () => {
+    const r = await refused(listMerchandiseItems(db([itemRow(10), itemRow(20, { productId: null, merchandiseId: null })]), SCHEMA, REF))
+    expect(r).toMatchObject({ status: 422, code: MerchandiseFactsErrors.ITEM_PRODUCT_MISSING })
+    expect(r.fields).toEqual([{ field: 'items[20]', message: 'Produto do item não encontrado no cadastro' }])
+  })
+
+  it('o produto entra por LEFT JOIN e o filtro de serviço não derruba o item sem produto', async () => {
+    const d = db([itemRow(10)])
+    await listMerchandiseItems(d, SCHEMA, REF)
+    const sql = norm(d.calls[0].sql)
+    expect(sql).toContain('LEFT JOIN `setes_cliente_x`.tb_product p ON p.id = oi.tb_product_id AND p.tb_institution_id = oi.tb_institution_id')
+    expect(sql).toContain("AND oi.deleted = 'N' AND (p.id IS NULL OR p.kind <> 'S') ORDER BY oi.id")
+  })
+
+  it('mesmo id em dois kind (nota que não passou pela cerca do faturamento — D-NE220) → 422 INVOICE_ITEM_ID_DUPLICATED, não 500', async () => {
+    const r = await refused(listMerchandiseItems(db([itemRow(10), itemRow(10, { kind: 'Adjust' }), itemRow(30)]), SCHEMA, REF))
+    expect(r).toMatchObject({ status: 422, code: MerchandiseFactsErrors.ITEM_ID_DUPLICATED })
+    expect(r.fields).toEqual([{ field: 'items[10]', message: 'Id de item repetido no pedido' }])
+  })
+
+  it('erro com lista tem teto de 50 campos (5.000 itens sem ICMS não devolvem 5.000 campos)', async () => {
+    const rows = Array.from({ length: 5000 }, (_, i) => itemRow(i + 1, { icmsItem: null }))
+    const r = await refused(listMerchandiseItems(db(rows), SCHEMA, REF))
+    expect(r.code).toBe(MerchandiseFactsErrors.ITEM_TAX_RECORD_MISSING)
+    expect((r.fields as unknown[]).length).toBe(50)
+  })
+})
+
+describe('G3 [FIXED] — cada coluna do item chega ao fato certo (gate adversarial: 47 de 59 mutações sobreviviam)', () => {
+  // [tabela, coluna, alias, decimal?] — a MESMA tabela confere o SQL e monta a linha de exemplo, com um valor ÚNICO por alias.
+  const COLS: [string, string, string, boolean][] = [
+    ['oi', 'quantity', 'quantity', true], ['oi', 'unit_value', 'unitValue', true], ['oi', 'discount_value', 'discountValue', true],
+    ['m', 'manuf_sign_ind_scale', 'manufScale', false], ['mf', 'cnpj', 'factoryCnpj', false],
+    ['sm', 'abbreviation', 'saleAbbr', false], ['su', 'factor', 'saleFactor', true], ['su', 'gtin', 'saleGtin', false],
+    ['tm', 'abbreviation', 'taxAbbr', false], ['tu', 'factor', 'taxFactor', true], ['tu', 'gtin', 'taxGtin', false],
+    ['ic', 'cst', 'icmsCst', false], ['ic', 'origem', 'icmsOrigin', false], ['ic', 'tb_cfop_id', 'cfopId', false],
+    ['ic', 'determ_base', 'determBase', false], ['ic', 'determ_base_st', 'determBaseSt', false],
+    ['ic', 'aliq_rd_base', 'aliqRdBase', true], ['ic', 'base_value', 'icmsBase', true], ['ic', 'aliq', 'icmsAliq', true], ['ic', 'aliq_rd', 'aliqRd', true],
+    ['ic', 'value', 'icmsValue', true], ['ic', 'aliq_rd_base_st', 'aliqRdBaseSt', true], ['ic', 'base_value_st', 'baseValueSt', true],
+    ['ic', 'aliq_st', 'aliqSt', true], ['ic', 'aliq_rd_st', 'aliqRdSt', true], ['ic', 'value_st', 'valueSt', true], ['ic', 'mva', 'mva', true],
+    ['ic', 'withheld_base_value', 'withheldBaseValue', true], ['ic', 'withheld_value', 'withheldValue', true],
+    ['ic', 'withheld_base_value_st', 'withheldBaseValueSt', true], ['ic', 'withheld_value_st', 'withheldValueSt', true],
+    ['ic', 'cred_calc_aliq', 'credCalcAliq', true], ['ic', 'cred_expl_value', 'credExplValue', true], ['ic', 'freight_value', 'freightValue', true],
+    ['ic', 'insurance_Value', 'insuranceValue', true], ['ic', 'expenses_value', 'expensesValue', true], ['ic', 'approximate_tax', 'approximateTax', true],
+    ['ic', 'operation_value', 'operationValue', true], ['ic', 'deferred_aliq', 'deferredAliq', true], ['ic', 'deferred_value', 'deferredValue', true],
+    ['ip', 'cst', 'ipiCst', false], ['ip', 'class_frame_code', 'classFrameCode', false], ['ip', 'base_value', 'ipiBase', true],
+    ['ip', 'aliq_value', 'ipiAliq', true], ['ip', 'tag_value', 'ipiValue', true], ['ip', 'unit_qtty', 'ipiUnitQtty', true], ['ip', 'unit_value', 'ipiUnitValue', true],
+    ['pi', 'cst', 'pisCst', false], ['pi', 'base_value', 'pisBase', true], ['pi', 'aliq_value', 'pisAliq', true], ['pi', 'tag_value', 'pisValue', true],
+    ['pi', 'qt_sale_qtty', 'pisQtty', true], ['pi', 'qt_aliq_value', 'pisQtAliq', true],
+    ['co', 'cst', 'cofinsCst', false], ['co', 'base_value', 'cofinsBase', true], ['co', 'aliq_value', 'cofinsAliq', true], ['co', 'tag_value', 'cofinsValue', true],
+    ['co', 'qt_sale_qtty', 'cofinsQtty', true], ['co', 'qt_aliq_value', 'cofinsQtAliq', true],
+  ]
+  const v = (alias: string) => `v:${alias}`
+  const row: Row = {
+    itemId: 10, kind: 'Sale', productId: 501, merchandiseId: 902, description: 'v:description', ncm: 'v:ncm', cest: 'v:cest', source: 'v:source',
+    saleLevel: 3, taxLevel: 4, discharge: 77, icmsItem: 10, ipiItem: 10, pisItem: 10, cofinsItem: 10,
+    ...Object.fromEntries(COLS.map(([, , alias]) => [alias, v(alias)])),
+  }
+  const db = () => fakeDb([
+    ['tb_order_item_icms_fcp', [
+      { itemId: 10, vbcfcp: 'velha', pfcp: 'velha', vfcp: 'velha' },
+      { itemId: 10, vbcfcp: 'v:vbcfcp', pfcp: 'v:pfcp', vfcp: 'v:vfcp', vbcfcpst: 'v:vbcfcpst', pfcpst: 'v:pfcpst', vfcpst: 'v:vfcpst', pst: 'v:pst', vbcfcpstret: 'v:vbcfcpstret', pfcpstret: 'v:pfcpstret', vfcpstret: 'v:vfcpstret' },
+    ]],
+    ['tb_order_item_tax_rule', [{ itemId: 10, kind: 'Service', approxTaxAliq: 'errada' }, { itemId: 10, kind: 'Sale', approxTaxAliq: 'v:approxTaxAliq' }]],
+    ['tb_order_item', [row]],
+  ])
+
+  it('o SQL liga cada alias à coluna certa (decimal sempre por CAST … AS CHAR) e cada tabela pelo JOIN certo', async () => {
+    const d = db()
+    await listMerchandiseItems(d, SCHEMA, REF)
+    const sql = norm(d.calls[0].sql)
+    for (const [t, col, alias, dec] of COLS) {
+      const expr = dec ? `CAST(${t}.${col} AS CHAR)` : `${t}.${col}`
+      expect(sql).toContain(alias === col ? (dec ? `${expr} AS ${alias}` : expr) : `${expr} AS ${alias}`)
+    }
+    for (const frag of [
+      'oi.id AS itemId', 'p.id AS productId', 'p.description', 'm.id AS merchandiseId', 'm.ncm', 'm.cest', 'm.source', 'su.level AS saleLevel', 'tu.level AS taxLevel', 'ic.discharge',
+      'ic.tb_order_item_id AS icmsItem', 'ip.tb_order_item_id AS ipiItem', 'pi.tb_order_item_id AS pisItem', 'co.tb_order_item_id AS cofinsItem',
+      'LEFT JOIN `setes_cliente_x`.tb_merchandise m ON m.id = p.id AND m.tb_institution_id = p.tb_institution_id',
+      "LEFT JOIN `setes_cliente_x`.tb_merchandise_factory mf ON mf.tb_institution_id = m.tb_institution_id AND mf.tb_merchandise_id = m.id AND mf.deleted = 'N'",
+      "tb_merchandise_trade_unit su ON su.tb_institution_id = m.tb_institution_id AND su.tb_merchandise_id = m.id AND su.deleted = 'N' AND su.level =",
+      "tb_merchandise_trade_unit tu ON tu.tb_institution_id = m.tb_institution_id AND tu.tb_merchandise_id = m.id AND tu.deleted = 'N' AND tu.level =",
+      'LEFT JOIN setes_central.tb_measure sm ON sm.id = su.tb_measure_id', 'LEFT JOIN setes_central.tb_measure tm ON tm.id = tu.tb_measure_id',
+      'LEFT JOIN `setes_cliente_x`.tb_order_item_icms ic ON ic.tb_order_id = oi.tb_order_id', 'LEFT JOIN `setes_cliente_x`.tb_order_item_ipi ip ON ip.tb_order_id',
+      'LEFT JOIN `setes_cliente_x`.tb_order_item_pis pi ON pi.tb_order_id', 'LEFT JOIN `setes_cliente_x`.tb_order_item_cofins co ON co.tb_order_id',
+    ]) expect(sql).toContain(frag)
+    expect(norm(d.calls[1].sql)).toContain("CAST(approx_tax_aliq AS CHAR) AS approxTaxAliq FROM `setes_cliente_x`.tb_order_item_tax_rule WHERE tb_order_id = ? AND tb_institution_id = ? AND terminal = ? AND deleted = 'N'")
+    expect(norm(d.calls[2].sql)).toContain("FROM `setes_cliente_x`.tb_order_item_icms_fcp WHERE tb_order_id = ? AND tb_institution_id = ? AND terminal = ? AND deleted = 'N' ORDER BY tb_order_item_id, created_at")
+  })
+
+  it('o fato inteiro, campo a campo — a regra do MESMO kind e o FCP da linha mais recente', async () => {
+    const [item] = await listMerchandiseItems(db(), SCHEMA, REF)
+    expect(item).toEqual({
+      itemId: 10, kind: 'Sale', merchandiseId: 902, description: 'v:description', ncm: 'v:ncm', cest: 'v:cest', source: 'v:source',
+      manufScale: v('manufScale'), factoryCnpj: v('factoryCnpj'),
+      saleUnit:    { level: 3, measureAbbreviation: v('saleAbbr'), factor: v('saleFactor'), gtin: v('saleGtin') },
+      taxableUnit: { level: 4, measureAbbreviation: v('taxAbbr'),  factor: v('taxFactor'),  gtin: v('taxGtin') },
+      quantity: v('quantity'), unitValue: v('unitValue'), discountValue: v('discountValue'), approxTaxAliq: 'v:approxTaxAliq',
+      icms: {
+        cst: v('icmsCst'), origin: v('icmsOrigin'), cfopId: v('cfopId'), determBase: v('determBase'), determBaseSt: v('determBaseSt'), discharge: 77,
+        aliqRdBase: v('aliqRdBase'), baseValue: v('icmsBase'), aliq: v('icmsAliq'), aliqRd: v('aliqRd'), value: v('icmsValue'),
+        aliqRdBaseSt: v('aliqRdBaseSt'), baseValueSt: v('baseValueSt'), aliqSt: v('aliqSt'), aliqRdSt: v('aliqRdSt'), valueSt: v('valueSt'), mva: v('mva'),
+        withheldBaseValue: v('withheldBaseValue'), withheldValue: v('withheldValue'), withheldBaseValueSt: v('withheldBaseValueSt'), withheldValueSt: v('withheldValueSt'),
+        credCalcAliq: v('credCalcAliq'), credExplValue: v('credExplValue'), freightValue: v('freightValue'), insuranceValue: v('insuranceValue'),
+        expensesValue: v('expensesValue'), approximateTax: v('approximateTax'), operationValue: v('operationValue'), deferredAliq: v('deferredAliq'), deferredValue: v('deferredValue'),
+      },
+      fcp: { vbcfcp: 'v:vbcfcp', pfcp: 'v:pfcp', vfcp: 'v:vfcp', vbcfcpst: 'v:vbcfcpst', pfcpst: 'v:pfcpst', vfcpst: 'v:vfcpst', pst: 'v:pst', vbcfcpstret: 'v:vbcfcpstret', pfcpstret: 'v:pfcpstret', vfcpstret: 'v:vfcpstret' },
+      ipi: { cst: v('ipiCst'), classFrameCode: v('classFrameCode'), baseValue: v('ipiBase'), aliqValue: v('ipiAliq'), tagValue: v('ipiValue'), unitQtty: v('ipiUnitQtty'), unitValue: v('ipiUnitValue') },
+      pis:    { cst: v('pisCst'), baseValue: v('pisBase'), aliqValue: v('pisAliq'), tagValue: v('pisValue'), qtSaleQtty: v('pisQtty'), qtAliqValue: v('pisQtAliq') },
+      cofins: { cst: v('cofinsCst'), baseValue: v('cofinsBase'), aliqValue: v('cofinsAliq'), tagValue: v('cofinsValue'), qtSaleQtty: v('cofinsQtty'), qtAliqValue: v('cofinsQtAliq') },
+    })
+  })
+})
+
+describe('G3 [FIXED] — escopo e vida no texto do SQL das outras leituras (mutações de escopo e de deleted sobreviviam)', () => {
+  it('nota, ramo, pagamento, transporte, devolução, partes e natOp', async () => {
+    const db = fakeDb([
+      ['tb_order_item_return', []], ['tb_order_billing', []], ['tb_financial', []], ['tb_order_shipping', []], ['tb_invoice', [invoiceRow]],
+      ['setes_central.tb_cfop', [{ concise: 'Venda' }]], ['setes_central.tb_entity', [{ nameCompany: 'X', nickTrade: null }]],
+      ['setes_central.tb_company', []], ['setes_central.tb_person', []], ['setes_central.tb_address', []], ['tb_entity_tax', []],
+    ])
+    await readMerchandiseInvoice(db, SCHEMA, REF)
+    await readPayments(db, SCHEMA, REF)
+    await readShipping(db, SCHEMA, REF)
+    await readReturnOrigins(db, SCHEMA, REF)
+    await readRecipient(db, SCHEMA, INST, 321)
+    await readOperationNature(db, [{ itemId: 1, icms: { cfopId: '5101' } }] as any)
+    const all = db.calls.map(c => norm(c.sql))
+    const has = (frag: string) => expect(all.filter(sql => sql.includes(frag))).toHaveLength(1)
+    has("LEFT JOIN `setes_cliente_x`.tb_invoice_merchandise mb ON mb.id = i.id AND mb.tb_institution_id = i.tb_institution_id AND mb.terminal = i.terminal AND mb.deleted = 'N' WHERE i.id = ? AND i.tb_institution_id = ? AND i.terminal = ? AND i.deleted = 'N' AND i.issuer = i.tb_institution_id")
+    has('CAST(mb.total_value AS CHAR) AS totalValue, mb.indPres AS indPres')
+    has("LEFT JOIN setes_central.tb_payment_types pt ON pt.id = b.tb_payment_types_id WHERE b.id = ? AND b.tb_institution_id = ? AND b.terminal = ? AND b.deleted = 'N'")
+    has("CAST(f.tag_value AS CHAR) AS value, f.tb_payment_types_id AS paymentTypeId, pt.id_nfce AS nfePaymentCode FROM `setes_cliente_x`.tb_financial f LEFT JOIN setes_central.tb_payment_types pt ON pt.id = f.tb_payment_types_id")
+    has("sh.tb_carrier_id AS orderCarrierId, ca.id AS carrierId FROM `setes_cliente_x`.tb_order_shipping sh LEFT JOIN `setes_cliente_x`.tb_carrier ca ON ca.id = sh.tb_carrier_id AND ca.tb_institution_id = sh.tb_institution_id AND ca.deleted = 'N' WHERE sh.id = ? AND sh.tb_institution_id = ? AND sh.terminal = ? AND sh.deleted = 'N'")
+    has("r.tb_order_id_ori AS originInvoiceId, r.terminal_ori AS originTerminal, r.tb_order_item_id_ori AS originItemId, r.kind_ori AS originKind FROM `setes_cliente_x`.tb_order_item_return r WHERE r.tb_order_id = ? AND r.tb_institution_id = ? AND r.terminal = ? AND r.deleted = 'N' ORDER BY r.id")
+    has("SELECT ie FROM setes_central.tb_company WHERE id = ? AND deleted = 'N'")
+    has("st.abbreviation AS stateCode FROM setes_central.tb_address a LEFT JOIN setes_central.tb_state st ON st.id = a.tb_state_id LEFT JOIN setes_central.tb_city ci ON ci.id = a.tb_city_id WHERE a.id = ? AND a.deleted = 'N' ORDER BY a.kind")
+    has("SELECT tax_regime AS taxRegime, ind_ie_dest AS indIeDest, consumer FROM `setes_cliente_x`.tb_entity_tax WHERE id = ? AND tb_institution_id = ? AND deleted = 'N'")
+    has('SELECT concise FROM setes_central.tb_cfop WHERE id = ?')
+  })
+
+  it('devolução e parcelas: cada coluna no campo certo', async () => {
+    const db = fakeDb([
+      ['tb_order_item_return', [{ itemId: 1, kind: 'Adjust', originInvoiceId: 4000, originTerminal: 9, originItemId: 3, originKind: 'Sale' }]],
+      ['tb_order_billing', [{ paymentTypeId: 4, nfePaymentCode: '15', plots: '2', deadline: '028/056' }]],
+      ['tb_financial', [{ parcel: 2, dueDate: '2027-01-18', value: '1999.99', paymentTypeId: 5, nfePaymentCode: '17' }]],
+    ])
+    expect(await readReturnOrigins(db, SCHEMA, REF)).toEqual([{ itemId: 1, kind: 'Adjust', originInvoiceId: 4000, originTerminal: 9, originItemId: 3, originKind: 'Sale' }])
+    expect((await readPayments(db, SCHEMA, REF)).installments).toEqual([{ parcel: 2, dueDate: '2027-01-18', value: '1999.99', paymentTypeId: 5, nfePaymentCode: '17' }])
+  })
+})
+
+describe('G3 [FIXED] — transportadora gravada no pedido e sem cadastro não vira "sem transportadora" em silêncio', () => {
+  it('o id gravado no pedido sai cru em carrierId, mesmo com carrier nulo', async () => {
+    const db = fakeDb([['tb_order_shipping', [{ freightMode: '1', orderCarrierId: 77, carrierId: null }]]])
+    expect(await readShipping(db, SCHEMA, REF)).toEqual({ freightMode: '1', carrierId: 77, carrier: null })
   })
 })

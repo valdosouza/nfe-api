@@ -299,14 +299,18 @@ describe('CERCAS do código (D-F31, D-F10, D-NE10)', () => {
   const root = path.resolve(__dirname, '..', '..')
   const files = (dir: string): string[] => (!fs.existsSync(dir) ? [] : fs.readdirSync(dir, { withFileTypes: true }).flatMap(d =>
     d.isDirectory() ? (d.name === '__tests__' || d.name === 'node_modules' ? [] : files(path.join(dir, d.name))) : d.name.endsWith('.ts') ? [path.join(dir, d.name)] : []))
-  const clean = (f: string) => fs.readFileSync(f, 'utf8').replace(/\/\*[\s\S]*?\*\/|\/\/[^\n]*/g, '')
+  // `(?<!:)` — o `//` de uma URL dentro de texto não é comentário (gate adversarial da NFE.E5.P2: escondia o resto da linha das cercas).
+  const clean = (f: string) => fs.readFileSync(f, 'utf8').replace(/\/\*[\s\S]*?\*\/|(?<!:)\/\/[^\n]*/g, '')
   it('D-F31: NENHUMA escrita de dado no ERP em src/ e scripts/ (escrita qualificada por schema de cliente ou pelo central)', () => {
     const ERP_WRITE = /(INSERT\s+(?:IGNORE\s+)?INTO|REPLACE\s+INTO|UPDATE|DELETE\s+FROM)\s+(?:\\`\$\{\w+\}\\`|`?setes_\w*`?)\./g
     const writes = [path.join(root, 'src'), path.join(root, 'scripts')].flatMap(files).flatMap(f => (clean(f).match(ERP_WRITE) ?? []).map(m => `${path.relative(root, f)}: ${m}`))
     expect(writes).toEqual([])
   })
-  it('D-F10: nenhum tb_invoice / tb_order / tb_entity* nem tabela de cadastro do ERP lida pela fonte de fatos (produto, mercadoria, estoque, financeiro, transportadora, CFOP, medida, forma de pagamento) fora de src/facts/ (as tabelas da FAMÍLIA no fiscal_api não contam)', () => {
-    const ERP_TABLE = /\btb_(invoice|order|entity|product|merchandise|stock|financial|carrier|cfop|measure|payment_types)(?!_id\b)(?!_merchandise_transmission\w*)(?!_number_void\b)\w*/
+  // Limites conhecidos (gate adversarial da NFE.E5.P2): a cadeia central da entidade (`tb_company`, `tb_address`, `tb_state`, `tb_city`,
+  // `tb_person`) e `tb_institution` NÃO estão na lista — o núcleo e o health as leem fora de `facts/`; nome de tabela MONTADO em tempo de
+  // execução não é visto por regex. A flag `i` fecha as maiúsculas.
+  it('D-F10: nenhum tb_invoice / tb_order / tb_entity* nem tabela de produto, mercadoria, estoque, financeiro, transportadora, CFOP, medida ou forma de pagamento do ERP fora de src/facts/ (as tabelas da FAMÍLIA no fiscal_api não contam)', () => {
+    const ERP_TABLE = /\btb_(invoice|order|entity|product|merchandise|stock|financial|carrier|cfop|measure|payment_types)(?!_id\b)(?!_merchandise_transmission\w*)(?!_number_void\b)\w*/i
     const offenders = files(path.join(root, 'src')).filter(f => !f.includes(`${path.sep}facts${path.sep}`) && !f.includes(`${path.sep}migrations${path.sep}`))
       .filter(f => ERP_TABLE.test(clean(f))).map(f => path.relative(root, f))
     expect(offenders).toEqual([])

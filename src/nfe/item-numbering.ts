@@ -19,7 +19,8 @@ export type ItemNumberingErrorCode = 'EMPTY' | 'DUPLICATE_ID' | 'INVALID_ID'
 
 export class ItemNumberingError extends Error {
   constructor(readonly code: ItemNumberingErrorCode, readonly itemIds: readonly number[]) {
-    super(`nItem: ${code}${itemIds.length ? ` (${itemIds.join(', ')})` : ''}`)
+    // A mensagem mostra no máximo 20 ids (gate adversarial: 200 mil ids inválidos davam uma mensagem de 800 mil caracteres); a lista inteira fica em `itemIds`.
+    super(`nItem: ${code}${itemIds.length ? ` (${itemIds.slice(0, 20).join(', ')}${itemIds.length > 20 ? `, … ${itemIds.length} no total` : ''})` : ''}`)
     this.name = 'ItemNumberingError'
   }
 }
@@ -37,10 +38,12 @@ export interface ItemNumbering {
 }
 
 export function numberItems(itemIds: readonly number[]): ItemNumbering {
-  if (itemIds.length === 0) throw new ItemNumberingError('EMPTY', [])
-  const invalid = itemIds.filter(id => !Number.isSafeInteger(id) || id <= 0)
+  // Copia ANTES de validar: valida-se o que será numerado (array esparso — o `filter` pula o buraco e o spread o vira `undefined`).
+  const ids: number[] = Array.from(itemIds)
+  if (ids.length === 0) throw new ItemNumberingError('EMPTY', [])
+  const invalid = ids.filter(id => !Number.isSafeInteger(id) || id <= 0)
   if (invalid.length) throw new ItemNumberingError('INVALID_ID', invalid)
-  const sorted = [...itemIds].sort((a, b) => a - b)
+  const sorted = ids.sort((a, b) => a - b)
   const repeated = [...new Set(sorted.filter((id, i) => i > 0 && id === sorted[i - 1]))]
   if (repeated.length) throw new ItemNumberingError('DUPLICATE_ID', repeated)
   const items: readonly NumberedItem[] = Object.freeze(sorted.map((itemId, i) => Object.freeze({ itemId, nItem: i + 1 })))

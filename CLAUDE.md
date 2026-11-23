@@ -26,6 +26,18 @@ Prova: `src/__tests__/acesso-e1-p1-sessao-viva.test.ts` (lê o vetor da auth-api
 `vw_invoice_merchandise_transmission`, `vw_invoice_number_void` e `vw_establishment_issuer` (esta é do núcleo, mas a linha fica aqui: quem a lê é
 o leitor da NF-e); cerca `src/__tests__/deploy-e1-p10.test.ts` (os comandos vivos do arquivo são exatamente os três; linha nova = decisão). O
 script é rodado por um administrador na implantação, depois das migrations e antes de reiniciar o setes-api com o núcleo 5.0.0.
+**Fonte de fatos da mercadoria e a peça do nItem** (NFE.E5.P2, NE-4 — ficha no Vault: `projetos/nfe-api/SUBJECT/NFE_SEFAZ/ficha-nfe-e5-p2-fonte-de-fatos-mercadoria.md`):
+`src/facts/merchandise-facts.ts` é o ÚNICO arquivo que conhece as tabelas do ERP (cerca D-F10 em `app.test.ts`, ampliada a produto, mercadoria,
+estoque, financeiro, transportadora, CFOP, medida e forma de pagamento). Só SELECT; escopo pelo `InvoiceRef` (o terminal nunca é literal). Cadastro
+lido AO VIVO e cálculo por item REGISTRADO pelo faturamento (D-NE248); do `ICMSTot` só o vNF (D-NE178); cProd = `tb_merchandise.id` (D-NE269); natOp =
+`setes_central.tb_cfop.concise` do item de nItem 1 (D-NE268); unidade vendida/tributável pelos níveis da D-PR16. Devolve FATOS CRUS: nulo onde o
+cadastro não tem e decimal como TEXTO EXATO (`CAST … AS CHAR` — o pool entrega ponto flutuante); recusa só o que impede a leitura fiel: nota inexistente (404); e, com 422, nota sem ramo, sem item de mercadoria, item sem produto no cadastro, id de item repetido entre `kind`, item sem cálculo de ICMS, e emitente ou destinatário sem entidade. ⚠️ Conhecimento negativo (provado no banco do dev): `tb_order_item_tax_rule` NUNCA num JOIN pelo
+`kind` com `tb_order_item` (colações diferentes → "Illegal mix of collations"; é lida à parte); PIS/COFINS podem não estar registrados (o faturamento
+só grava quando o motor calcula) — saem nulos e a camada 1 (NFE.E5.P5) recusa (rej. 745/748); tabela nova de `setes_central` lida aqui = linha nova de
+GRANT no `nfse-api/ops/grants.sql` (cerca `acesso-e1-p1-sessao-viva.test.ts`) — no dev a conta é `'fiscal_api'@'%'` (GRANT a `@localhost` cria conta sem
+senha e derruba o login). `src/nfe/item-numbering.ts` (`numberItems`, `nItemOf`, `NFE_MAX_ITEMS`) é a ÚNICA peça que atribui nItem (D-NE103/D-NE220 —
+ordem do id do item; o serviço da conjugada fica fora; o teto de 990 é da camada 1); cerca em `item-numbering.test.ts`. Leitura real, só SELECT:
+`npm run explain:leituras -- <institution> <notaId>` (2º argumento novo).
 Ao concluir tarefa que gere conhecimento novo, siga `Infra-IA/skills-genericas/atualizar-infra-ia.md`.
 
 ## Estado (2026-10-20) — NE-2 EXECUTADA em worktree (`D:\Gestao2027\ne2\{fiscal-api,nfe-api}`, branch `ne2`) — `prompt_onda_nfe_sefaz.md` §15.9
@@ -59,7 +71,7 @@ cerca por AST sem `eval`/`Function`/nome montado/`erp` sombreado, sonda do boot 
 estrito, eco do modelo cortado, leitor das faixas pelo índice. Q-NE169 (UNIQUE da prova sem institution) aberta — rec. manter.
 
 **Scripts**: `npm run dev` (porta 3003; `.env` a partir do `.env.example` — o MESMO usuário `fiscal_api` e a MESMA `FISCAL_MASTER_KEYS` da
-nfse-api) · `npm test` (22 suítes / 334 — 2026-11-22) · `npm run typecheck` · `npm run db:migrate` (aplica núcleo 001–007 + nfe-api 001 — na publicação, no `fiscal_api`
+nfse-api) · `npm test` (24 suítes / 377 — 2026-11-23) · `npm run typecheck` · `npm run db:migrate` (aplica núcleo 001–007 + nfe-api 001 — na publicação, no `fiscal_api`
 do dev; D-NE168) · `npm run prove:001` (SÓ em `FISCAL_DB_NAME=fiscal_api_adv*` — recusa o real) · `npm run explain:leituras` · `npm run token:dev`.
 ⚠️ A nfe-api **não fica no ar** (D-NE168 — sobe só para o passeio); nenhuma rota de NF-e é servida antes da NE-3/NE-5.
 

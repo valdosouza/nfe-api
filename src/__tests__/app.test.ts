@@ -305,8 +305,8 @@ describe('CERCAS do código (D-F31, D-F10, D-NE10)', () => {
     const writes = [path.join(root, 'src'), path.join(root, 'scripts')].flatMap(files).flatMap(f => (clean(f).match(ERP_WRITE) ?? []).map(m => `${path.relative(root, f)}: ${m}`))
     expect(writes).toEqual([])
   })
-  it('D-F10: nenhum tb_invoice / tb_order / tb_entity* fora de src/facts/ (as tabelas da FAMÍLIA no fiscal_api não contam)', () => {
-    const ERP_TABLE = /\btb_(invoice|order|entity)(?!_id\b)(?!_merchandise_transmission\w*)(?!_number_void\b)\w*/
+  it('D-F10: nenhum tb_invoice / tb_order / tb_entity* nem tabela de cadastro do ERP lida pela fonte de fatos (produto, mercadoria, estoque, financeiro, transportadora, CFOP, medida, forma de pagamento) fora de src/facts/ (as tabelas da FAMÍLIA no fiscal_api não contam)', () => {
+    const ERP_TABLE = /\btb_(invoice|order|entity|product|merchandise|stock|financial|carrier|cfop|measure|payment_types)(?!_id\b)(?!_merchandise_transmission\w*)(?!_number_void\b)\w*/
     const offenders = files(path.join(root, 'src')).filter(f => !f.includes(`${path.sep}facts${path.sep}`) && !f.includes(`${path.sep}migrations${path.sep}`))
       .filter(f => ERP_TABLE.test(clean(f))).map(f => path.relative(root, f))
     expect(offenders).toEqual([])

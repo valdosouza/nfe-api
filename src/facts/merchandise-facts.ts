@@ -18,7 +18,8 @@ import { numberItems } from '../nfe/item-numbering'
  *  - unidade vendida = nível `default_sale_trade_level` (NULL = unidade-base, nível 1); unidade tributável = `taxable_trade_level` (NULL = a
  *    própria unidade vendida) — D-PR16.
  *
- * Devolve FATOS CRUS: nulo onde o cadastro não tem; valores decimais como TEXTO, como o banco os entrega (somar em centavos é do builder).
+ * Devolve FATOS CRUS: nulo onde o cadastro não tem; valores decimais como TEXTO EXATO (`CAST(... AS CHAR)` no SQL — o pool do núcleo
+ * entregaria número de ponto flutuante); somar em centavos inteiros é do builder.
  * Não valida conteúdo (camada 1 — NFE.E5.P5) nem monta a entrada do leiaute (builder — NFE.E5.P3). Só recusa o que impede a leitura fiel.
  */
 
@@ -62,7 +63,7 @@ export async function readMerchandiseInvoice(q: Queryable, schemaName: string, r
   const s = assertSchema(schemaName)
   const [rows] = await q.query(
     `SELECT i.id, i.number, i.serie, i.model, DATE_FORMAT(i.dt_emission, '%Y-%m-%d') AS dtEmission, i.tb_entity_id AS entityId, i.status,
-            CONVERT(i.note USING utf8mb4) AS note, mb.id AS branchId, mb.total_value AS totalValue, mb.indPres AS indPres
+            CONVERT(i.note USING utf8mb4) AS note, mb.id AS branchId, CAST(mb.total_value AS CHAR) AS totalValue, mb.indPres AS indPres
        FROM \`${s}\`.tb_invoice i
        LEFT JOIN \`${s}\`.tb_invoice_merchandise mb
          ON mb.id = i.id AND mb.tb_institution_id = i.tb_institution_id AND mb.terminal = i.terminal AND mb.deleted = 'N'
@@ -140,14 +141,17 @@ export interface MerchandiseItemFact {
   icms:   ItemIcmsRecord
   fcp:    ItemFcpRecord | null
   ipi:    ItemIpiRecord | null
-  pis:    ItemContributionRecord
-  cofins: ItemContributionRecord
+  /** null = o faturamento não registrou PIS para o item (hoje ele só grava quando o motor calcula a contribuição). */
+  pis:    ItemContributionRecord | null
+  /** null = idem, COFINS. */
+  cofins: ItemContributionRecord | null
 }
 
 /**
- * Os itens da NF-e, na ordem do id. Recusa (422, com os ids) a nota sem item de mercadoria e o item de mercadoria sem cálculo registrado
- * de ICMS, PIS ou COFINS: ele entrou no vNF do faturamento e ficaria fora do `det`, e PIS e COFINS são obrigatórios em todo item do 55
- * (rej. 745 e 748 — RF-NFE-63).
+ * Os itens da NF-e, na ordem do id. Recusa (422, com os ids) a nota sem item de mercadoria e o item de mercadoria SEM o cálculo registrado
+ * de ICMS: o faturamento não registrou imposto nenhum para ele, e o item entrou no vNF. PIS e COFINS ausentes NÃO recusam aqui — saem
+ * nulos: os grupos são obrigatórios em todo item do 55 (rej. 745 e 748 — RF-NFE-63) e quem recusa o candidato é a camada 1 (NFE.E5.P5).
+ * (Provado no banco do dev em 2026-11-23: o faturamento do ERP só grava PIS/COFINS quando o motor calcula a contribuição.)
  */
 export async function listMerchandiseItems(q: Queryable, schemaName: string, ref: InvoiceRef): Promise<MerchandiseItemFact[]> {
   const s = assertSchema(schemaName)
@@ -157,26 +161,25 @@ export async function listMerchandiseItems(q: Queryable, schemaName: string, ref
             AND ${alias}.terminal = oi.terminal AND ${alias}.deleted = 'N'`
   const unit = (alias: string) => `${alias}.tb_institution_id = m.tb_institution_id AND ${alias}.tb_merchandise_id = m.id AND ${alias}.deleted = 'N'`
   const [rows] = await q.query(
-    `SELECT oi.id AS itemId, oi.kind, oi.quantity, oi.unit_value AS unitValue, oi.discount_value AS discountValue,
+    `SELECT oi.id AS itemId, oi.kind, CAST(oi.quantity AS CHAR) AS quantity, CAST(oi.unit_value AS CHAR) AS unitValue, CAST(oi.discount_value AS CHAR) AS discountValue,
             p.description, m.id AS merchandiseId, m.ncm, m.cest, m.source, m.manuf_sign_ind_scale AS manufScale, mf.cnpj AS factoryCnpj,
-            su.level AS saleLevel, sm.abbreviation AS saleAbbr, su.factor AS saleFactor, su.gtin AS saleGtin,
-            tu.level AS taxLevel, tm.abbreviation AS taxAbbr, tu.factor AS taxFactor, tu.gtin AS taxGtin,
-            tr.approx_tax_aliq AS approxTaxAliq,
+            su.level AS saleLevel, sm.abbreviation AS saleAbbr, CAST(su.factor AS CHAR) AS saleFactor, su.gtin AS saleGtin,
+            tu.level AS taxLevel, tm.abbreviation AS taxAbbr, CAST(tu.factor AS CHAR) AS taxFactor, tu.gtin AS taxGtin,
             ic.tb_order_item_id AS icmsItem, ic.cst AS icmsCst, ic.origem AS icmsOrigin, ic.tb_cfop_id AS cfopId,
-            ic.determ_base AS determBase, ic.determ_base_st AS determBaseSt, ic.discharge, ic.aliq_rd_base AS aliqRdBase,
-            ic.base_value AS icmsBase, ic.aliq AS icmsAliq, ic.aliq_rd AS aliqRd, ic.value AS icmsValue,
-            ic.aliq_rd_base_st AS aliqRdBaseSt, ic.base_value_st AS baseValueSt, ic.aliq_st AS aliqSt, ic.aliq_rd_st AS aliqRdSt,
-            ic.value_st AS valueSt, ic.mva, ic.withheld_base_value AS withheldBaseValue, ic.withheld_value AS withheldValue,
-            ic.withheld_base_value_st AS withheldBaseValueSt, ic.withheld_value_st AS withheldValueSt,
-            ic.cred_calc_aliq AS credCalcAliq, ic.cred_expl_value AS credExplValue, ic.freight_value AS freightValue,
-            ic.insurance_Value AS insuranceValue, ic.expenses_value AS expensesValue, ic.approximate_tax AS approximateTax,
-            ic.operation_value AS operationValue, ic.deferred_aliq AS deferredAliq, ic.deferred_value AS deferredValue,
-            ip.tb_order_item_id AS ipiItem, ip.cst AS ipiCst, ip.class_frame_code AS classFrameCode, ip.base_value AS ipiBase,
-            ip.aliq_value AS ipiAliq, ip.tag_value AS ipiValue, ip.unit_qtty AS ipiUnitQtty, ip.unit_value AS ipiUnitValue,
-            pi.tb_order_item_id AS pisItem, pi.cst AS pisCst, pi.base_value AS pisBase, pi.aliq_value AS pisAliq, pi.tag_value AS pisValue,
-            pi.qt_sale_qtty AS pisQtty, pi.qt_aliq_value AS pisQtAliq,
-            co.tb_order_item_id AS cofinsItem, co.cst AS cofinsCst, co.base_value AS cofinsBase, co.aliq_value AS cofinsAliq,
-            co.tag_value AS cofinsValue, co.qt_sale_qtty AS cofinsQtty, co.qt_aliq_value AS cofinsQtAliq
+            ic.determ_base AS determBase, ic.determ_base_st AS determBaseSt, ic.discharge, CAST(ic.aliq_rd_base AS CHAR) AS aliqRdBase,
+            CAST(ic.base_value AS CHAR) AS icmsBase, CAST(ic.aliq AS CHAR) AS icmsAliq, CAST(ic.aliq_rd AS CHAR) AS aliqRd, CAST(ic.value AS CHAR) AS icmsValue,
+            CAST(ic.aliq_rd_base_st AS CHAR) AS aliqRdBaseSt, CAST(ic.base_value_st AS CHAR) AS baseValueSt, CAST(ic.aliq_st AS CHAR) AS aliqSt, CAST(ic.aliq_rd_st AS CHAR) AS aliqRdSt,
+            CAST(ic.value_st AS CHAR) AS valueSt, CAST(ic.mva AS CHAR) AS mva, CAST(ic.withheld_base_value AS CHAR) AS withheldBaseValue, CAST(ic.withheld_value AS CHAR) AS withheldValue,
+            CAST(ic.withheld_base_value_st AS CHAR) AS withheldBaseValueSt, CAST(ic.withheld_value_st AS CHAR) AS withheldValueSt,
+            CAST(ic.cred_calc_aliq AS CHAR) AS credCalcAliq, CAST(ic.cred_expl_value AS CHAR) AS credExplValue, CAST(ic.freight_value AS CHAR) AS freightValue,
+            CAST(ic.insurance_Value AS CHAR) AS insuranceValue, CAST(ic.expenses_value AS CHAR) AS expensesValue, CAST(ic.approximate_tax AS CHAR) AS approximateTax,
+            CAST(ic.operation_value AS CHAR) AS operationValue, CAST(ic.deferred_aliq AS CHAR) AS deferredAliq, CAST(ic.deferred_value AS CHAR) AS deferredValue,
+            ip.tb_order_item_id AS ipiItem, ip.cst AS ipiCst, ip.class_frame_code AS classFrameCode, CAST(ip.base_value AS CHAR) AS ipiBase,
+            CAST(ip.aliq_value AS CHAR) AS ipiAliq, CAST(ip.tag_value AS CHAR) AS ipiValue, CAST(ip.unit_qtty AS CHAR) AS ipiUnitQtty, CAST(ip.unit_value AS CHAR) AS ipiUnitValue,
+            pi.tb_order_item_id AS pisItem, pi.cst AS pisCst, CAST(pi.base_value AS CHAR) AS pisBase, CAST(pi.aliq_value AS CHAR) AS pisAliq, CAST(pi.tag_value AS CHAR) AS pisValue,
+            CAST(pi.qt_sale_qtty AS CHAR) AS pisQtty, CAST(pi.qt_aliq_value AS CHAR) AS pisQtAliq,
+            co.tb_order_item_id AS cofinsItem, co.cst AS cofinsCst, CAST(co.base_value AS CHAR) AS cofinsBase, CAST(co.aliq_value AS CHAR) AS cofinsAliq,
+            CAST(co.tag_value AS CHAR) AS cofinsValue, CAST(co.qt_sale_qtty AS CHAR) AS cofinsQtty, CAST(co.qt_aliq_value AS CHAR) AS cofinsQtAliq
        FROM \`${s}\`.tb_order_item oi
        JOIN \`${s}\`.tb_product p ON p.id = oi.tb_product_id AND p.tb_institution_id = oi.tb_institution_id
        LEFT JOIN \`${s}\`.tb_merchandise m ON m.id = p.id AND m.tb_institution_id = p.tb_institution_id
@@ -186,7 +189,6 @@ export async function listMerchandiseItems(q: Queryable, schemaName: string, ref
        LEFT JOIN \`${s}\`.tb_merchandise_trade_unit tu
          ON ${unit('tu')} AND tu.level = COALESCE(m.taxable_trade_level, m.default_sale_trade_level, ${BASE_TRADE_LEVEL})
        LEFT JOIN setes_central.tb_measure tm ON tm.id = tu.tb_measure_id
-       LEFT JOIN \`${s}\`.tb_order_item_tax_rule tr ON ${tax('tr')} AND tr.kind = oi.kind
        LEFT JOIN \`${s}\`.tb_order_item_icms ic ON ${tax('ic')}
        LEFT JOIN \`${s}\`.tb_order_item_ipi ip ON ${tax('ip')}
        LEFT JOIN \`${s}\`.tb_order_item_pis pi ON ${tax('pi')}
@@ -197,17 +199,24 @@ export async function listMerchandiseItems(q: Queryable, schemaName: string, ref
     throw new HttpError(422, `Nota ${ref.invoiceId} não tem item de mercadoria`,
       [{ field: 'items', message: 'Nenhum item de mercadoria vivo no pedido' }], MerchandiseFactsErrors.ITEMS_MISSING)
   }
-  const missing = (rows as any[]).filter(r => r.icmsItem == null || r.pisItem == null || r.cofinsItem == null)
+  const missing = (rows as any[]).filter(r => r.icmsItem == null)
   if (missing.length) {
     throw new HttpError(422, `Nota ${ref.invoiceId}: item de mercadoria sem cálculo de imposto registrado pelo faturamento`,
       missing.map(r => ({
         field: `items[${Number(r.itemId)}]`,
-        message: `Sem cálculo registrado de ${[r.icmsItem == null && 'ICMS', r.pisItem == null && 'PIS', r.cofinsItem == null && 'COFINS'].filter(Boolean).join(', ')}`,
+        message: 'Sem cálculo registrado de ICMS',
       })), MerchandiseFactsErrors.ITEM_TAX_RECORD_MISSING)
   }
+  // A regra aplicada é por (item, kind) e a tabela dela tem colação diferente da do item (provado no banco real: comparar os dois `kind`
+  // num JOIN dá "Illegal mix of collations"): lida à parte e casada aqui, como o faturamento do ERP faz.
+  const [ruleRows] = await q.query(
+    `SELECT tb_order_item_id AS itemId, kind, CAST(approx_tax_aliq AS CHAR) AS approxTaxAliq
+       FROM \`${s}\`.tb_order_item_tax_rule
+      WHERE tb_order_id = ? AND tb_institution_id = ? AND terminal = ? AND deleted = 'N'`, key)
+  const approx = new Map<string, string | null>((ruleRows as any[]).map(r => [`${Number(r.itemId)}|${String(r.kind)}`, txt(r.approxTaxAliq)]))
   // O FCP não tem chave no banco (o faturamento apaga e reinsere): lido à parte; a linha mais recente de cada item vale.
   const [fcpRows] = await q.query(
-    `SELECT tb_order_item_id AS itemId, vbcfcp, pfcp, vfcp, vbcfcpst, pfcpst, vfcpst, pst, vbcfcpstret, pfcpstret, vfcpstret
+    `SELECT tb_order_item_id AS itemId, CAST(vbcfcp AS CHAR) AS vbcfcp, CAST(pfcp AS CHAR) AS pfcp, CAST(vfcp AS CHAR) AS vfcp, CAST(vbcfcpst AS CHAR) AS vbcfcpst, CAST(pfcpst AS CHAR) AS pfcpst, CAST(vfcpst AS CHAR) AS vfcpst, CAST(pst AS CHAR) AS pst, CAST(vbcfcpstret AS CHAR) AS vbcfcpstret, CAST(pfcpstret AS CHAR) AS pfcpstret, CAST(vfcpstret AS CHAR) AS vfcpstret
        FROM \`${s}\`.tb_order_item_icms_fcp
       WHERE tb_order_id = ? AND tb_institution_id = ? AND terminal = ? AND deleted = 'N'
       ORDER BY tb_order_item_id, created_at`, key)
@@ -223,7 +232,8 @@ export async function listMerchandiseItems(q: Queryable, schemaName: string, ref
     ncm: txt(r.ncm), cest: txt(r.cest), source: txt(r.source), manufScale: txt(r.manufScale), factoryCnpj: txt(r.factoryCnpj),
     saleUnit:    { level: int(r.saleLevel), measureAbbreviation: txt(r.saleAbbr), factor: txt(r.saleFactor), gtin: txt(r.saleGtin) },
     taxableUnit: { level: int(r.taxLevel),  measureAbbreviation: txt(r.taxAbbr),  factor: txt(r.taxFactor),  gtin: txt(r.taxGtin) },
-    quantity: txt(r.quantity), unitValue: txt(r.unitValue), discountValue: txt(r.discountValue), approxTaxAliq: txt(r.approxTaxAliq),
+    quantity: txt(r.quantity), unitValue: txt(r.unitValue), discountValue: txt(r.discountValue),
+    approxTaxAliq: approx.get(`${Number(r.itemId)}|${String(r.kind)}`) ?? null,
     icms: {
       cst: txt(r.icmsCst), origin: txt(r.icmsOrigin), cfopId: txt(r.cfopId), determBase: txt(r.determBase), determBaseSt: txt(r.determBaseSt),
       discharge: int(r.discharge), aliqRdBase: txt(r.aliqRdBase), baseValue: txt(r.icmsBase), aliq: txt(r.icmsAliq), aliqRd: txt(r.aliqRd),
@@ -239,8 +249,8 @@ export async function listMerchandiseItems(q: Queryable, schemaName: string, ref
       cst: txt(r.ipiCst), classFrameCode: txt(r.classFrameCode), baseValue: txt(r.ipiBase), aliqValue: txt(r.ipiAliq), tagValue: txt(r.ipiValue),
       unitQtty: txt(r.ipiUnitQtty), unitValue: txt(r.ipiUnitValue),
     },
-    pis:    { cst: txt(r.pisCst), baseValue: txt(r.pisBase), aliqValue: txt(r.pisAliq), tagValue: txt(r.pisValue), qtSaleQtty: txt(r.pisQtty), qtAliqValue: txt(r.pisQtAliq) },
-    cofins: { cst: txt(r.cofinsCst), baseValue: txt(r.cofinsBase), aliqValue: txt(r.cofinsAliq), tagValue: txt(r.cofinsValue), qtSaleQtty: txt(r.cofinsQtty), qtAliqValue: txt(r.cofinsQtAliq) },
+    pis:    r.pisItem == null ? null : { cst: txt(r.pisCst), baseValue: txt(r.pisBase), aliqValue: txt(r.pisAliq), tagValue: txt(r.pisValue), qtSaleQtty: txt(r.pisQtty), qtAliqValue: txt(r.pisQtAliq) },
+    cofins: r.cofinsItem == null ? null : { cst: txt(r.cofinsCst), baseValue: txt(r.cofinsBase), aliqValue: txt(r.cofinsAliq), tagValue: txt(r.cofinsValue), qtSaleQtty: txt(r.cofinsQtty), qtAliqValue: txt(r.cofinsQtAliq) },
   }))
 }
 
@@ -366,7 +376,7 @@ export async function readPayments(q: Queryable, schemaName: string, ref: Invoic
        LEFT JOIN setes_central.tb_payment_types pt ON pt.id = b.tb_payment_types_id
       WHERE b.id = ? AND b.tb_institution_id = ? AND b.terminal = ? AND b.deleted = 'N'`, key)
   const [fin] = await q.query(
-    `SELECT f.parcel, DATE_FORMAT(f.dt_expiration, '%Y-%m-%d') AS dueDate, f.tag_value AS value, f.tb_payment_types_id AS paymentTypeId,
+    `SELECT f.parcel, DATE_FORMAT(f.dt_expiration, '%Y-%m-%d') AS dueDate, CAST(f.tag_value AS CHAR) AS value, f.tb_payment_types_id AS paymentTypeId,
             pt.id_nfce AS nfePaymentCode
        FROM \`${s}\`.tb_financial f
        LEFT JOIN setes_central.tb_payment_types pt ON pt.id = f.tb_payment_types_id

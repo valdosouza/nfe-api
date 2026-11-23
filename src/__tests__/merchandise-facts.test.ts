@@ -41,7 +41,6 @@ const itemRow = (itemId: number, over: Row = {}): Row => ({
   itemId, kind: 'Sale', quantity: '2.0000', unitValue: '10.000000', discountValue: '0.000000',
   description: 'Flange usinada', merchandiseId: 900 + itemId, ncm: '73259990', cest: null, source: '0', manufScale: 'S', factoryCnpj: null,
   saleLevel: 1, saleAbbr: 'PC', saleFactor: '1.000000', saleGtin: null, taxLevel: 1, taxAbbr: 'PC', taxFactor: '1.000000', taxGtin: null,
-  approxTaxAliq: '13.4500',
   icmsItem: itemId, icmsCst: '101', icmsOrigin: '0', cfopId: '5101', credCalcAliq: '0.00', credExplValue: '0.000000', freightValue: '0.00',
   ipiItem: null,
   pisItem: itemId, pisCst: '07', pisBase: '0.00', pisAliq: '0.00', pisValue: '0.0000',
@@ -83,7 +82,8 @@ describe('NFE.E5.P2.T1 — nota e ramo de mercadoria', () => {
 })
 
 describe('NFE.E5.P2.T1 — itens: cadastro ao vivo + cálculo registrado', () => {
-  const dbItems = (rows: Row[], fcp: Row[] = []) => fakeDb([['tb_order_item_icms_fcp', fcp], ['tb_order_item', rows]])
+  const dbItems = (rows: Row[], fcp: Row[] = [], rules: Row[] = [{ itemId: 10, kind: 'Sale', approxTaxAliq: '13.4500' }, { itemId: 10, kind: 'Service', approxTaxAliq: '99.0000' }]) =>
+    fakeDb([['tb_order_item_icms_fcp', fcp], ['tb_order_item_tax_rule', rules], ['tb_order_item', rows]])
 
   it('devolve os itens com o cProd = id da mercadoria (D-NE269), unidade, GTIN e o cálculo registrado, decimais como texto', async () => {
     const db = dbItems([itemRow(10), itemRow(30, { ipiItem: 30, ipiCst: '99', classFrameCode: '999', ipiBase: '20.00', ipiAliq: '5.00', ipiValue: '1.00' })],
@@ -103,18 +103,23 @@ describe('NFE.E5.P2.T1 — itens: cadastro ao vivo + cálculo registrado', () =>
   it('o SQL dos itens: escopo pelo ref, só item vivo, serviço fora, ordem do id, cálculo com deleted = N e a regra pelo kind do item', async () => {
     const db = dbItems([itemRow(10)])
     await listMerchandiseItems(db, SCHEMA, REF)
-    const [items, fcp] = db.calls
+    const [items, rule, fcp] = db.calls
     expect(items.params).toEqual([5001, INST, TERMINAL])
+    expect(rule.params).toEqual([5001, INST, TERMINAL])
     expect(fcp.params).toEqual([5001, INST, TERMINAL])
+    expect(rule.sql).toContain('tb_order_item_tax_rule')
+    expect(items.sql).not.toContain('tb_order_item_tax_rule')                                                    // colação diferente: nunca no JOIN (provado no banco real)
     const sql = items.sql.replace(/\s+/g, ' ')
     expect(sql).toContain("WHERE oi.tb_order_id = ? AND oi.tb_institution_id = ? AND oi.terminal = ? AND oi.deleted = 'N' AND p.kind <> 'S' ORDER BY oi.id")
-    for (const alias of ['tr', 'ic', 'ip', 'pi', 'co']) {
+    for (const alias of ['ic', 'ip', 'pi', 'co']) {
       expect(sql).toContain(`${alias}.tb_order_item_id = oi.id AND ${alias}.tb_institution_id = oi.tb_institution_id AND ${alias}.terminal = oi.terminal AND ${alias}.deleted = 'N'`)
     }
-    expect(sql).toContain('tr.kind = oi.kind')
     expect(sql).toContain('su.level = COALESCE(m.default_sale_trade_level, 1)')                                  // D-PR16: NULL = unidade-base
     expect(sql).toContain('tu.level = COALESCE(m.taxable_trade_level, m.default_sale_trade_level, 1)')           // D-PR16: NULL = a vendida
     expect(sql).toContain('p.tb_institution_id = oi.tb_institution_id')
+    for (const col of ['oi.quantity', 'oi.unit_value', 'ic.base_value', 'ic.value', 'ic.cred_expl_value', 'pi.tag_value', 'co.tag_value', 'ip.tag_value']) {
+      expect(sql).toContain(`CAST(${col} AS CHAR)`)                                                               // decimal como texto exato, nunca ponto flutuante
+    }
     expect(sql).not.toMatch(/identifier|id_internal/)                                                            // D-NE269: nem um nem outro
   })
 
@@ -122,12 +127,11 @@ describe('NFE.E5.P2.T1 — itens: cadastro ao vivo + cálculo registrado', () =>
     expect(await refused(listMerchandiseItems(dbItems([]), SCHEMA, REF))).toMatchObject({ status: 422, code: MerchandiseFactsErrors.ITEMS_MISSING })
   })
 
-  it('item de mercadoria sem cálculo registrado de ICMS, PIS ou COFINS → 422 com os ids e o que falta (RF-NFE-63: rej. 745/748)', async () => {
+  it('item de mercadoria sem cálculo registrado de ICMS → 422 com os ids; PIS/COFINS ausentes não recusam aqui (camada 1 — RF-NFE-63)', async () => {
     const db = dbItems([itemRow(10), itemRow(20, { pisItem: null, cofinsItem: null }), itemRow(30, { icmsItem: null })])
     const r = await refused(listMerchandiseItems(db, SCHEMA, REF))
     expect(r).toMatchObject({ status: 422, code: MerchandiseFactsErrors.ITEM_TAX_RECORD_MISSING })
     expect(r.fields).toEqual([
-      { field: 'items[20]', message: 'Sem cálculo registrado de PIS, COFINS' },
       { field: 'items[30]', message: 'Sem cálculo registrado de ICMS' },
     ])
     expect(db.calls).toHaveLength(1)                                                                             // recusou antes de ler o FCP
@@ -135,6 +139,12 @@ describe('NFE.E5.P2.T1 — itens: cadastro ao vivo + cálculo registrado', () =>
 
   it('IPI ausente não recusa (o grupo é condicional): ipi = null', async () => {
     expect((await listMerchandiseItems(dbItems([itemRow(10)]), SCHEMA, REF))[0].ipi).toBeNull()
+  })
+
+  it('PIS e COFINS não registrados pelo faturamento → pis e cofins nulos, sem inventar CST (a camada 1 recusa — rej. 745/748)', async () => {
+    const [item] = await listMerchandiseItems(dbItems([itemRow(10, { pisItem: null, cofinsItem: null, pisCst: null, cofinsCst: null })]), SCHEMA, REF)
+    expect([item.pis, item.cofins]).toEqual([null, null])
+    expect(item.icms.cst).toBe('101')
   })
 })
 
@@ -254,7 +264,7 @@ describe('NFE.E5.P2.T1 — a fonte SÓ LÊ e o terminal nunca é literal', () =>
     const run = async (terminal: number) => {
       const ref = invoiceRef(INST, 5001, terminal)
       const db = fakeDb([
-        ['tb_order_item_icms_fcp', []], ['tb_order_item_return', []], ['tb_order_item', [itemRow(10)]], ['tb_order_billing', []], ['tb_financial', []],
+        ['tb_order_item_icms_fcp', []], ['tb_order_item_tax_rule', []], ['tb_order_item_return', []], ['tb_order_item', [itemRow(10)]], ['tb_order_billing', []], ['tb_financial', []],
         ['tb_order_shipping', []], ['tb_invoice', [invoiceRow]], ['setes_central.tb_cfop', [{ concise: 'Venda' }]],
         ['setes_central.tb_entity', [{ nameCompany: 'X', nickTrade: null }]], ['setes_central.tb_company', []], ['setes_central.tb_person', []],
         ['setes_central.tb_address', []], ['tb_entity_tax', []],
@@ -276,7 +286,7 @@ describe('NFE.E5.P2.T1 — a fonte SÓ LÊ e o terminal nunca é literal', () =>
       expect(c.sql).not.toMatch(/terminal\s*=\s*\d/)
     }
     const scoped = (calls: Call[]) => calls.filter(c => /\bterminal = \?/.test(c.sql))
-    expect(scoped(a)).toHaveLength(7)                               // nota, itens, FCP, condição, parcelas, transporte, devolução
+    expect(scoped(a)).toHaveLength(8)                               // nota, itens, regra, FCP, condição, parcelas, transporte, devolução
     expect(scoped(a).every(c => c.params[1] === INST && c.params[2] === 0)).toBe(true)
     expect(scoped(b).every(c => c.params[1] === INST && c.params[2] === 7)).toBe(true)
   })

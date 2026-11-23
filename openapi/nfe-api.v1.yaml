@@ -724,8 +724,8 @@ components:
               authority: { type: string, enum: [ADN, SEFAZ] }
         stateRegistration:
           type: object
-          x-onda: NE-4/NE-5
-          description: 'D-NE96 — o emitente tem IE no ERP? sem IE = contribuinte exclusivo do IBS/CBS → SVRS (NT 2026.007, H 26/10 · P 16/11/2026); o autorizador sai do authorizers.ts (D-NE162, NE-3) e a IE da fonte de fatos da NE-4 (prompt_onda_nfe_sefaz.md §16.3-4); hoje o GET devolve só issuers + certificate'
+          x-onda: NE-5
+          description: 'D-NE96 — o emitente tem IE no ERP? sem IE = contribuinte exclusivo do IBS/CBS → SVRS (NT 2026.007, H 26/10 · P 16/11/2026); o autorizador sai do authorizers.ts (D-NE162, NE-3) a IE é lida pela fonte de fatos (NE-4) e o campo é servido com as rotas da NE-5 (D-NE252; prompt_onda_nfe_sefaz.md §16.3-4 e §24.10); hoje o GET devolve só issuers + certificate'
           properties:
             present: { type: boolean }
             authorizer55: { type: string, nullable: true, description: 'autorizador derivado para o 55 neste ambiente (AUTORIZADORES.md)' }

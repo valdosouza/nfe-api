@@ -9,7 +9,11 @@
  * (D-NE158, núcleo 5.0.0 — DEPLOY.E1.P9) e passou a ser contada; este script ainda não a captura da função real (a forma é a mesma
  * WHERE, provada em `prove-001-descartavel.ts`).
  * Regra (cerca M5): subconsulta DEPENDENTE por ALL/index = FALHA; MATERIALIZED varrendo = FALHA; a tabela que dirige pode varrer no dev — AVISO.
- *   npx tsx --require tsconfig-paths/register scripts/explain-leituras.ts [institutionId=1]
+ * Desde a NE-4 (NFE.E5.P2): com o 2º argumento (o id de uma nota 55 FATURADA do estabelecimento), entram as leituras da FONTE DE FATOS da
+ * mercadoria (`src/facts/merchandise-facts.ts`) — nota e ramo, itens com o cálculo registrado, FCP, natOp, emitente, destinatário,
+ * pagamento, transporte e o elo da devolução. Elas provam contra o banco real que as colunas e os JOINs existem; uma recusa da fonte
+ * (nota sem item, item sem cálculo) ou a falta de SELECT numa tabela central é FALHA aqui.
+ *   npx tsx --require tsconfig-paths/register scripts/explain-leituras.ts [institutionId=1] [invoiceId]
  * EXPLAIN de VIEW exige `SHOW VIEW` — rode com um usuário de diagnóstico em EXPLAIN_DB_USER / EXPLAIN_DB_PASSWORD se o do serviço não tiver.
  */
 import 'dotenv/config'
@@ -17,8 +21,12 @@ import {
   createFiscalPool, dbConfigFromEnv, MERCHANDISE_VOICE_READING, readFamilyTransmissions, readFamilyTransmissionsMany, readWithdrawnRanges,
   invoiceRef, WEB_TERMINAL,
 } from 'fiscal-api'
+import {
+  listMerchandiseItems, readEmitter, readMerchandiseInvoice, readOperationNature, readPayments, readRecipient, readReturnOrigins, readShipping,
+} from '../src/facts/merchandise-facts'
 
 const INST = Number(process.argv[2] ?? 1)
+const FACTS_INVOICE = process.argv[3] ? Number(process.argv[3]) : null
 const RUNS = 7
 type Plan = { id: number; select_type: string; table: string; type: string; key: string | null; rows: number; Extra: string | null }
 
@@ -33,6 +41,24 @@ async function main(): Promise<void> {
     await readFamilyTransmissions(capture('tentativas da nota (vida)'), MERCHANDISE_VOICE_READING, cfg.database, invoiceRef(INST, 1, WEB_TERMINAL), 1)
     await readFamilyTransmissionsMany(capture('tentativas em lote'), MERCHANDISE_VOICE_READING, cfg.database, { institutionId: INST, terminal: WEB_TERMINAL }, [{ invoiceId: 1, lifeEvent: 1 }, { invoiceId: 2, lifeEvent: 1 }])
     await readWithdrawnRanges(capture('faixas retiradas (55, série 1, P)'), cfg.database, { institutionId: INST, model: '55', serie: 1, environment: 'P' })
+    if (FACTS_INVOICE != null) {
+      const [inst] = await pool.query(`SELECT schema_name AS schemaName FROM setes_central.tb_institution WHERE id = ?`, [INST]) as unknown as [{ schemaName: string }[]]
+      if (!inst[0]) throw new Error(`estabelecimento ${INST} não encontrado`)
+      const schema = inst[0].schemaName, ref = invoiceRef(INST, FACTS_INVOICE, WEB_TERMINAL)
+      const fact = async (label: string, fn: (q: any) => Promise<unknown>): Promise<any> => {
+        try { return await fn(capture(`fatos: ${label}`)) } catch (e: any) { failures.push(`fatos: ${label}: ${e?.code ?? ''} ${e?.message ?? e}`); return null }
+      }
+      const header = await fact('nota e ramo', q => readMerchandiseInvoice(q, schema, ref))
+      const items = await fact('itens + FCP', q => listMerchandiseItems(q, schema, ref))
+      if (items) await fact('natOp', q => readOperationNature(q, items))
+      await fact('emitente', q => readEmitter(q, schema, INST))
+      if (header) await fact('destinatário', q => readRecipient(q, schema, INST, header.entityId))
+      await fact('pagamento', q => readPayments(q, schema, ref))
+      await fact('transporte', q => readShipping(q, schema, ref))
+      await fact('elo da devolução', q => readReturnOrigins(q, schema, ref))
+      console.log(`
+FATOS da nota ${FACTS_INVOICE} (${schema}): ${header ? `modelo ${header.model}, série ${header.serie}, vNF ${header.totalValue}, indPres ${header.indPres}` : 'não lida'}; ${items ? `${items.length} item(ns)` : 'itens não lidos'}`)
+    }
     for (const c of captured) {
       const [plan] = await pool.query(`EXPLAIN ${c.sql}`, c.params) as unknown as [Plan[]]
       const times: number[] = []

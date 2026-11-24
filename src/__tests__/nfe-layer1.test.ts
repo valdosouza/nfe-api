@@ -16,7 +16,7 @@ import { returnKey, returnSaleInput, SETES_CNPJ, saleInput, saleItem, saleKey } 
 jest.setTimeout(120_000)
 
 const SALE_KEY = saleKey()
-const SALE: Layer1Context = { environment: 'H', emitterUf: 'PR', authorizerUf: 'PR', now: new Date('2026-11-24T10:20:00-03:00'), erpTotalCents: 400000, csrtRequired: true }
+const SALE: Layer1Context = { environment: 'H', emitterUf: 'PR', emitterCnpj: SETES_CNPJ, authorizerUf: 'PR', now: new Date('2026-11-24T10:20:00-03:00'), erpTotalCents: 400000, csrtRequired: true }
 const RETURN: Layer1Context = { ...SALE, now: new Date('2026-11-25T09:05:00-03:00'), erpTotalCents: 250000 }
 const sale = (): string => buildNfeXml(saleInput(), SALE_KEY).xml
 const ret = (): string => buildNfeXml(returnSaleInput(), returnKey()).xml
@@ -290,6 +290,21 @@ describe('R12 — tamanho (rej. 214)', () => {
   it('logo abaixo do limite não é recusada pelo tamanho', async () => {
     const v = await run('R12', swap(sale(), '</infNFe>', `<x>${'a'.repeat(400_000)}</x></infNFe>`))
     expect(rules(v)).not.toContain('R12')
+  })
+})
+
+describe('contexto completo (NFE.E6.P1 mudança 5): o emitente é o estabelecimento e a venda confere o NFref', () => {
+  it('emitente com DV válido mas diferente do CNPJ do estabelecimento → só a R3, sem número (escolha nossa)', async () => {
+    const v = await run('R3', sale(), { ...SALE, emitterCnpj: '11222333000181' })
+    expect([rules(v), rejs(v), of(v, 'R3').map(x => x.field)]).toEqual([['R3'], [], ['emit/CNPJ']])
+  })
+
+  it('NFref de cabeçalho na venda: chave da própria nota (316) e DV errado (236) acendem a R14; chave de outra nota de modelo 55 passa', async () => {
+    const own = /Id="NFe(\d{44})"/.exec(sale())![1]
+    const withRef = (k: string): string => swap(sale(), '</verProc>', `</verProc><NFref><refNFe>${k}</refNFe></NFref>`)
+    expect(rejs(await run('R14', withRef(own)), 'R14')).toEqual([316])
+    expect(rejs(await run('R14', withRef(own.slice(0, 43) + ((Number(own[43]) + 1) % 10))), 'R14')).toEqual([236])
+    expect(of(await run('R14', withRef(returnKey())), 'R14')).toEqual([])
   })
 })
 

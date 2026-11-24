@@ -17,6 +17,8 @@ export interface Layer1Context {
   environment: Environment
   /** UF do emitente (a do estabelecimento). */
   emitterUf: Uf
+  /** O CNPJ do ESTABELECIMENTO (`establishmentCnpj` do núcleo): o emitente do XML tem de ser ele (NFE.E6.P1 — gate do P5: emitente trocado com DV válido passava). */
+  emitterCnpj: string
   /** UF servida pelo autorizador da tentativa. */
   authorizerUf: Uf
   /** O relógio, injetado: a função é pura. */
@@ -222,6 +224,8 @@ function rulesR3(doc: Doc, ctx: Layer1Context, c: Collector): void {
   const cUF = val(doc.ide, 'cUF'), tpAmb = val(doc.ide, 'tpAmb')
   if (cUF === null) c.missing('R3', 'ide/cUF')
   else if (cUF !== CUF[ctx.emitterUf] || cUF !== CUF[ctx.authorizerUf]) c.add('R3', 226, 'ide/cUF', 'A UF do documento difere da UF do emitente ou da UF do autorizador')
+  const emitCnpj = val(doc.emit, 'CNPJ')
+  if (emitCnpj !== null && emitCnpj !== ctx.emitterCnpj) c.add('R3', null, 'emit/CNPJ', 'O CNPJ do emitente difere do CNPJ do estabelecimento (escolha nossa)')
   const ender = child(doc.emit, 'enderEmit')
   const uf = val(ender, 'UF')
   if (uf === null) c.missing('R3', 'emit/enderEmit/UF')
@@ -400,6 +404,8 @@ function rulesR13R14(doc: Doc, c: Collector): void {
     refs.forEach((r, i) => { if (r !== null) checkRefKey(val(r, 'chaveAcesso'), own, `det[${i + 1}]/DFeReferenciado/chaveAcesso`, c) })
   } else {
     if (anyRef) c.add('R14', null, 'det/DFeReferenciado', 'Nota que não é devolução com item referenciado (escolha nossa)')
+    // `NFref` de cabeçalho em venda (escolha nossa: o 1º release não referencia na venda): a chave referenciada tem de estar bem formada, ser de modelo 55 e não ser a da própria nota
+    nfref.forEach((n, i) => { const k = val(n, 'refNFe'); if (k !== null) checkRefKey(k, own, `ide/NFref[${i + 1}]/refNFe`, c) })
     // venda: a soma dos pagamentos (menos o troco) cobre o vNF (865); o excesso não é rejeição numerada (escolha nossa)
     const vnf = centsOf(val(child(doc.tot, 'ICMSTot'), 'vNF'))
     const paid = pags.map(d => centsOf(val(d, 'vPag')))

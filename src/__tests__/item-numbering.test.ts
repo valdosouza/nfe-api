@@ -4,7 +4,7 @@
  */
 import fs from 'fs'
 import path from 'path'
-import { ItemNumberingError, NFE_MAX_ITEMS, numberItems } from '../nfe/item-numbering'
+import { ItemNumberingError, NFE_MAX_ITEMS, nItemAttribute, numberItems } from '../nfe/item-numbering'
 
 const code = (fn: () => unknown): unknown => {
   try { fn() } catch (e) { return e instanceof ItemNumberingError ? { code: e.code, itemIds: e.itemIds } : e }
@@ -44,6 +44,12 @@ describe('nItem — a peça única (RF-NFE-31)', () => {
     expect(code(() => numberItems([]))).toEqual({ code: 'EMPTY', itemIds: [] })
     expect(code(() => numberItems([10, 20, 10, 20, 30]))).toEqual({ code: 'DUPLICATE_ID', itemIds: [10, 20] })
     expect(code(() => numberItems([1, 0, -2, 1.5, NaN]))).toEqual({ code: 'INVALID_ID', itemIds: [0, -2, 1.5, NaN] })
+  })
+
+  it('nItemAttribute: o atributo do det de um item numerado, como texto (o builder não escreve nItem por conta própria)', () => {
+    const [first, second] = numberItems([30, 10]).items
+    expect([nItemAttribute(first), nItemAttribute(second)]).toEqual([{ nItem: '1' }, { nItem: '2' }])
+    expect(Object.isFrozen(nItemAttribute(first))).toBe(true)
   })
 
   it('o resultado é imutável e a entrada não é alterada', () => {

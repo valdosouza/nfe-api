@@ -50,3 +50,11 @@ export function numberItems(itemIds: readonly number[]): ItemNumbering {
   const byId = new Map(items.map(it => [it.itemId, it.nItem]))
   return Object.freeze({ items, nItemOf: (itemId: number) => byId.get(itemId) })
 }
+
+/**
+ * O atributo do `det` (`<det nItem="…">`) de um item JÁ numerado por esta peça. O builder e a ponte carregam o `NumberedItem` e pedem o
+ * atributo aqui: fora deste arquivo ninguém escreve `nItem: valor` (cerca em `item-numbering.test.ts`).
+ */
+export function nItemAttribute(item: NumberedItem): Readonly<Record<string, string>> {
+  return Object.freeze({ nItem: String(item.nItem) })
+}

@@ -38,6 +38,22 @@ GRANT no `nfse-api/ops/grants.sql` (cerca `acesso-e1-p1-sessao-viva.test.ts`) �
 senha e derruba o login). `src/nfe/item-numbering.ts` (`numberItems`, `nItemOf`, `NFE_MAX_ITEMS`) é a ÚNICA peça que atribui nItem (D-NE103/D-NE220 —
 ordem do id do item; o serviço da conjugada fica fora; o teto de 990 é da camada 1); cerca em `item-numbering.test.ts`. Leitura real, só SELECT:
 `npm run explain:leituras -- <institution> <notaId>` (2º argumento novo).
+**Builder da NF-e 4.00** (NFE.E5.P3, NE-4 — ficha no Vault: `projetos/nfe-api/SUBJECT/NFE_SEFAZ/ficha-nfe-e5-p3-builder-nfe.md`). Peças PURAS em `src/nfe/`:
+`access-key.ts` (`buildAccessKey` por partes + cDV pelo `mod11Ascii48` do núcleo, CNPJ numérico e alfanumérico; confere o cNF — o cNF e o número são
+RECEBIDOS, nunca sorteados aqui — D-NE7/D-NE257); `formats.ts` (decimal EXATO em BigInt → tipos do leiaute; `TDec_1302Opc` zero = elemento omitido; `nfeText`
+= D-NE28: mantém acento, colapsa espaços e RECUSA o que o `isXsdTString` do núcleo não aceita — nunca corta); `totals.ts` (`ICMSTot` = soma dos itens em
+centavos; o vNF do ERP conferido contra `fiscal-api/merchandise-total`, tolerância zero → 422 `FISCAL_TOTALS_MOTOR_DEFECT`); `homologation.ts` (D-NE216);
+`simples-text.ts` (D-NE271: dizeres do Simples pelo CRT e pela data — os do art. 59 § 4º da CGSN 140 só até 31/12/2026); `tech-responsible.ts`
+(`infRespTec` + `hashCsrt`; o VALOR do CSRT nunca em XML, log, erro ou teste — o único em teste é o exemplo público da NT 2018.005); `nfe-builder.ts`
+(`buildNfeXml(input, chave)` → `NFe` SEM assinatura + o `Id` para o `signXml`; cUF, cNF, série, número, tpEmis e cDV saem DA CHAVE; recusa = 422
+`FISCAL_DOCUMENT_INVALID` com a lista INTEIRA de campos, nunca XML incompleto); `return-reference.ts` (devolução × procNFe da origem, pelo `parseXml` do
+núcleo — D-NE103); `nfe-input.ts` (a PONTE pura fatos do P2 → entrada do builder: finNFe/tpNF/idDest pelo elo da devolução e pelo CFOP, valores do item pela
+fórmula do faturamento, unidade tributável pelo fator, pagamento e `cobr` das parcelas — D-NE272); `errors.ts` (códigos). **Perfil do 1º release**: modelo
+55, emissão normal, venda (finNFe 1, saída) e devolução de venda PRÓPRIA (finNFe 4, nota de ENTRADA do mesmo emitente, referência POR ITEM, tPag 90, sem
+cobrança), Simples (CSOSN 101, 102, 103, 300, 400), PIS/COFINS CST 04 a 09 e os do grupo `Outr` que o XSD enumera (49 a 56, 60 a 67, 70 a 75, 98, 99); o resto = recusa `fora-do-primeiro-release`. ⚠️ Conhecimento negativo:
+o `TNFe` EXIGE a `Signature` — só a NF-e assinada passa no `validateMessage('NFe', …)` (raiz `nfe_v4.00.xsd` do PL_010f; a `enviNFe` é da NFE.E6.P1); as
+rej. da devolução por item são a 1193 e a 1194 (esta só na devolução de SAÍDA), não a 1039/1048; o builder exige o CST de PIS/COFINS e NÃO assume o 07
+(o faturamento do ERP web ainda não o registra no Simples); fora de `item-numbering.ts` ninguém escreve `nItem: valor` — o `det` usa `nItemAttribute`.
 Ao concluir tarefa que gere conhecimento novo, siga `Infra-IA/skills-genericas/atualizar-infra-ia.md`.
 
 ## Estado (2026-10-20) — NE-2 EXECUTADA em worktree (`D:\Gestao2027\ne2\{fiscal-api,nfe-api}`, branch `ne2`) — `prompt_onda_nfe_sefaz.md` §15.9
@@ -71,7 +87,7 @@ cerca por AST sem `eval`/`Function`/nome montado/`erp` sombreado, sonda do boot 
 estrito, eco do modelo cortado, leitor das faixas pelo índice. Q-NE169 (UNIQUE da prova sem institution) aberta — rec. manter.
 
 **Scripts**: `npm run dev` (porta 3003; `.env` a partir do `.env.example` — o MESMO usuário `fiscal_api` e a MESMA `FISCAL_MASTER_KEYS` da
-nfse-api) · `npm test` (24 suítes / 377 — 2026-11-23) · `npm run typecheck` · `npm run db:migrate` (aplica núcleo 001–007 + nfe-api 001 — na publicação, no `fiscal_api`
+nfse-api) · `npm test` (31 suítes / 541 — 2026-11-24) · `npm run typecheck` · `npm run db:migrate` (aplica núcleo 001–007 + nfe-api 001 — na publicação, no `fiscal_api`
 do dev; D-NE168) · `npm run prove:001` (SÓ em `FISCAL_DB_NAME=fiscal_api_adv*` — recusa o real) · `npm run explain:leituras` · `npm run token:dev`.
 ⚠️ A nfe-api **não fica no ar** (D-NE168 — sobe só para o passeio); nenhuma rota de NF-e é servida antes da NE-3/NE-5.
 

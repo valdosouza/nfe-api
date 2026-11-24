@@ -1,10 +1,10 @@
-import { isValidCnpj, isValidCpf, xmlElement, xmlGroup, xmlOptionalElement, XmlUnwritableError, type TechnicalResponsible } from 'fiscal-api'
+import { HttpError, isValidCnpj, isValidCpf, xmlElement, xmlGroup, xmlOptionalElement, XmlUnwritableError, type TechnicalResponsible } from 'fiscal-api'
 import { assertAccessKey } from '../authority/messages'
 import { infNFeId } from './access-key'
 import { documentInvalid, OUT_OF_FIRST_RELEASE } from './errors'
 import { dec0302a04, dec1104v, dec1110v, dec1302, dec1302Opc, digits, FormatError, nfeText, toCents } from './formats'
 import { productDescriptionFor, recipientNameFor, type TpAmbCode } from './homologation'
-import { nItemAttribute, type NumberedItem } from './item-numbering'
+import { NFE_MAX_ITEMS, nItemAttribute, type NumberedItem } from './item-numbering'
 import { complementaryInfo, simplesTexts } from './simples-text'
 import { infRespTecXml, type CsrtProof } from './tech-responsible'
 import { icmsTotOf, type ItemTotalsCents } from './totals'
@@ -37,7 +37,18 @@ export const VER_PROC = 'SETES-NFE-API-1.0'
 const SN101 = '101'
 const SN102_GROUP = ['102', '103', '300', '400']
 const NT_CST = ['04', '05', '06', '07', '08', '09']
-const isOutrCst = (cst: string): boolean => /^[0-9]{2}$/.test(cst) && Number(cst) >= 49 && Number(cst) <= 99
+/** Os CST do grupo `PISOutr`/`COFINSOutr`, como o XSD os enumera (49 a 56, 60 a 67, 70 a 75, 98 e 99) — não é a faixa corrida 49 a 99. */
+const OUTR_CST = ['49', '50', '51', '52', '53', '54', '55', '56', '60', '61', '62', '63', '64', '65', '66', '67', '70', '71', '72', '73', '74', '75', '98', '99']
+const isOutrCst = (cst: string): boolean => OUTR_CST.includes(cst)
+/** Tetos de ocorrência do leiaute. */
+const MAX_PAYMENTS = 100
+/** `AAAA-MM-DD` que existe no calendário. */
+const isRealDate = (date: string): boolean => {
+  const m = /^([0-9]{4})-([0-9]{2})-([0-9]{2})$/.exec(date)
+  if (!m) return false
+  const d = new Date(Date.UTC(Number(m[1]), Number(m[2]) - 1, Number(m[3])))
+  return d.getUTCFullYear() === Number(m[1]) && d.getUTCMonth() === Number(m[2]) - 1 && d.getUTCDate() === Number(m[3])
+}
 /** `indPres` que obriga o `indIntermed` (rej. 434); nos demais ele não vai (rej. 435). */
 const PRES_WITH_INTERMED = ['2', '3', '4', '9']
 const UF_CODES = ['AC', 'AL', 'AM', 'AP', 'BA', 'CE', 'DF', 'ES', 'GO', 'MA', 'MG', 'MS', 'MT', 'PA', 'PB', 'PE', 'PI', 'PR', 'RJ', 'RN', 'RO', 'RR', 'RS', 'SC', 'SE', 'SP', 'TO']
@@ -126,7 +137,8 @@ class Writer {
   req(field: string, tag: string, fn: () => string | null | undefined): string { return this.try(field, () => xmlElement(tag, fn())) }
   /** Elemento opcional: `null`/vazio na entrada = não vai; preenchido passa pelo formatador. */
   opt(field: string, tag: string, value: unknown, fn: () => string | null): string {
-    return value === null || value === undefined || value === '' ? '' : this.try(field, () => xmlOptionalElement(tag, fn()))
+    // Opcional em branco (nulo, vazio ou só espaços) = ausente: complemento em branco não bloqueia a nota.
+    return value === null || value === undefined || (typeof value === 'string' && value.trim() === '') ? '' : this.try(field, () => xmlOptionalElement(tag, fn()))
   }
   oneOf(field: string, value: string | null | undefined, allowed: readonly string[], tag: string): string {
     if (value === null || value === undefined || value === '') return this.fail(field, 'Campo obrigatório vazio')
@@ -160,11 +172,10 @@ function pisCofinsXml(w: Writer, path: string, kind: 'PIS' | 'COFINS', v: NfePis
   if (NT_CST.includes(cst)) return { xml: xmlGroup(kind, xmlGroup(`${kind}NT`, xmlElement('CST', cst))), cents: 0 }
   if (!isOutrCst(cst)) return { xml: w.fail(`${path}.CST`, `CST ${cst.slice(0, 2)} — ${OUT_OF_FIRST_RELEASE}`), cents: 0 }
   let cents = 0
-  const money = (field: string, text: string | null | undefined): string => w.try(`${path}.${field}`, () => { const c = toCents(text ?? '0'); if (field === 'value') cents = c; return dec1302(c) })
   const inner = xmlElement('CST', cst)
-    + w.try(`${path}.vBC`, () => xmlElement('vBC', money('vBC', v.vBC)))
+    + w.try(`${path}.vBC`, () => xmlElement('vBC', dec1302(toCents(v.vBC ?? '0'))))
     + w.try(`${path}.pAliq`, () => xmlElement(kind === 'PIS' ? 'pPIS' : 'pCOFINS', dec0302a04(v.pAliq ?? '0')))
-    + w.try(`${path}.value`, () => xmlElement(kind === 'PIS' ? 'vPIS' : 'vCOFINS', money('value', v.value)))
+    + w.try(`${path}.value`, () => { cents = toCents(v.value ?? '0'); return xmlElement(kind === 'PIS' ? 'vPIS' : 'vCOFINS', dec1302(cents)) })
   return { xml: xmlGroup(kind, xmlGroup(`${kind}Outr`, inner)), cents }
 }
 
@@ -185,7 +196,7 @@ function itemXml(w: Writer, input: NfeInput, it: NfeItemInput): { xml: string; t
     + (withCest ? w.req(`${p}.CEST`, 'CEST', () => digits(it.CEST, 7))
       + w.opt(`${p}.indEscala`, 'indEscala', it.indEscala, () => (it.indEscala === 'S' || it.indEscala === 'N' ? it.indEscala : (() => { throw new FormatError('texto-invalido', 'indEscala S ou N') })()))
       + w.opt(`${p}.CNPJFab`, 'CNPJFab', it.CNPJFab, () => (isValidCnpj(it.CNPJFab as string) ? it.CNPJFab as string : (() => { throw new FormatError('texto-invalido', 'CNPJ do fabricante inválido') })())) : '')
-    + w.req(`${p}.CFOP`, 'CFOP', () => digits(it.CFOP, 4))
+    + w.req(`${p}.CFOP`, 'CFOP', () => { const c = digits(it.CFOP, 4); if (!/^[123567]/.test(c)) throw new FormatError('texto-invalido', 'CFOP começa por 1, 2, 3, 5, 6 ou 7'); return c })
     + w.req(`${p}.uCom`, 'uCom', () => nfeText(it.uCom, 1, 6))
     + w.req(`${p}.qCom`, 'qCom', () => dec1104v(it.qCom))
     + w.req(`${p}.vUnCom`, 'vUnCom', () => dec1110v(it.vUnCom))
@@ -226,6 +237,8 @@ function itemXml(w: Writer, input: NfeInput, it: NfeItemInput): { xml: string; t
       const origin = it.origin
       reference = w.try(`${p}.origin`, () => {
         try { assertAccessKey(origin.accessKey) } catch { throw new FormatError('texto-invalido', 'chave da nota de origem fora da forma') }
+        const n = origin.numbered?.nItem
+        if (!Number.isInteger(n) || n < 1 || n > NFE_MAX_ITEMS) throw new FormatError('texto-invalido', 'item da nota de origem fora de 1 a 990')
         return xmlGroup('DFeReferenciado', xmlElement('chaveAcesso', origin.accessKey) + xmlElement('nItem', String(origin.numbered.nItem)))
       })
     }
@@ -241,9 +254,52 @@ function itemXml(w: Writer, input: NfeInput, it: NfeItemInput): { xml: string; t
   }
 }
 
+const isObject = (v: unknown): v is Record<string, unknown> => typeof v === 'object' && v !== null && !Array.isArray(v)
+const isText = (v: unknown): boolean => v === null || v === undefined || typeof v === 'string'
+
+/**
+ * A FORMA da entrada (gate adversarial: `emit: null`, `items: null`, CST numérico… estouravam como `TypeError`): quem chama por engano com a
+ * forma errada recebe a recusa tipada com o caminho, nunca um erro interno. Não confere conteúdo — isso é dos campos.
+ */
+function assertShape(input: NfeInput): void {
+  const bad: { field: string; message: string }[] = []
+  const need = (ok: boolean, field: string): boolean => { if (!ok) bad.push({ field, message: 'Entrada malformada' }); return ok }
+  const texts = (o: Record<string, unknown>, path: string, keys: readonly string[]): void => { for (const k of keys) need(isText(o[k]), `${path}.${k}`) }
+  if (!need(isObject(input), 'entrada')) throw documentInvalid('A entrada do builder está malformada', bad)
+  const i = input as unknown as Record<string, any>
+  texts(i, 'ide', ['natOp', 'dhEmi', 'indPres', 'note'])
+  for (const side of ['emit', 'dest'] as const) {
+    if (need(isObject(i[side]), side)) {
+      texts(i[side], side, ['CNPJ', 'CPF', 'xNome', 'xFant', 'IE', 'CRT', 'indIEDest'])
+      if (need(isObject(i[side].ender), `${side}.ender`)) texts(i[side].ender, `${side}.ender`, ['xLgr', 'nro', 'xCpl', 'xBairro', 'cMun', 'xMun', 'UF', 'CEP'])
+    }
+  }
+  if (need(Array.isArray(i.items), 'det')) {
+    (i.items as any[]).slice(0, NFE_MAX_ITEMS + 1).forEach((it, n) => {
+      const p = `det[#${n + 1}]`
+      if (!need(isObject(it), p)) return
+      need(isObject(it.numbered) && Number.isInteger(it.numbered.itemId) && Number.isInteger(it.numbered.nItem), `${p}.numbered`)
+      texts(it, p, ['cProd', 'cEAN', 'xProd', 'NCM', 'CEST', 'indEscala', 'CNPJFab', 'CFOP', 'uCom', 'qCom', 'vUnCom', 'cEANTrib', 'uTrib', 'qTrib', 'vUnTrib'])
+      if (need(isObject(it.icms), `${p}.icms`)) texts(it.icms, `${p}.icms`, ['orig', 'CSOSN', 'pCredSN', 'vCredICMSSN'])
+      for (const tax of ['pis', 'cofins'] as const) if (need(isObject(it[tax]), `${p}.${tax}`)) texts(it[tax], `${p}.${tax}`, ['CST', 'vBC', 'pAliq', 'value'])
+      if (it.origin !== null && it.origin !== undefined && need(isObject(it.origin), `${p}.origin`)) need(typeof it.origin.accessKey === 'string' && isObject(it.origin.numbered), `${p}.origin`)
+    })
+  }
+  if (need(isObject(i.transp), 'transp')) {
+    texts(i.transp, 'transp', ['modFrete'])
+    if (i.transp.carrier !== null && i.transp.carrier !== undefined && need(isObject(i.transp.carrier), 'transp.carrier')) texts(i.transp.carrier, 'transp.carrier', ['CNPJ', 'CPF', 'xNome', 'IE', 'xEnder', 'xMun', 'UF'])
+  }
+  if (need(Array.isArray(i.installments), 'cobr')) (i.installments as any[]).slice(0, 121).forEach((d, n) => { if (need(isObject(d), `cobr.dup[${n + 1}]`)) texts(d, `cobr.dup[${n + 1}]`, ['dueDate']) })
+  if (need(Array.isArray(i.payments), 'pag')) (i.payments as any[]).slice(0, MAX_PAYMENTS + 1).forEach((d, n) => { if (need(isObject(d), `pag.detPag[${n + 1}]`)) texts(d, `pag.detPag[${n + 1}]`, ['tPag']) })
+  need(isObject(i.techResponsible), 'infRespTec')
+  if (i.csrt !== null && i.csrt !== undefined) need(isObject(i.csrt) && typeof i.csrt.idCSRT === 'string' && typeof i.csrt.hashCSRT === 'string', 'infRespTec.csrt')
+  if (bad.length) throw documentInvalid('A entrada do builder está malformada', bad)
+}
+
 /** A `NFe` sem assinatura, com o `Id` do `infNFe` para o `signXml`. Recusa: `HttpError` 422 com a lista inteira. */
 export function buildNfeXml(input: NfeInput, accessKey: string): { xml: string; id: string } {
   assertAccessKey(accessKey)                                              // erro de quem chama, não recusa de nota
+  assertShape(input)
   const w = new Writer()
   const key = {
     cUF: accessKey.slice(0, 2), yymm: accessKey.slice(2, 6), cnpj: accessKey.slice(6, 20), serie: String(Number(accessKey.slice(22, 25))),
@@ -257,7 +313,8 @@ export function buildNfeXml(input: NfeInput, accessKey: string): { xml: string; 
   if (input.dhEmi === null || input.dhEmi === undefined || input.dhEmi === '') w.fail('ide.dhEmi', 'Campo obrigatório vazio')
   else if (!dh) w.fail('ide.dhEmi', 'Data e hora fora da forma do leiaute (AAAA-MM-DDThh:mm:ss±hh:00)')
   else if (`${dh[1].slice(2)}${dh[2]}` !== key.yymm) w.fail('ide.dhEmi', 'Ano e mês da emissão diferentes dos da chave de acesso')
-  const emissionDate = dh ? `${dh[1]}-${dh[2]}-${dh[3]}` : ''
+  if (dh && !isRealDate(`${dh[1]}-${dh[2]}-${dh[3]}`)) w.fail('ide.dhEmi', 'Data da emissão inexistente no calendário')
+  const emissionDate = dh && isRealDate(`${dh[1]}-${dh[2]}-${dh[3]}`) ? `${dh[1]}-${dh[2]}-${dh[3]}` : ''
   if (input.emit.CNPJ !== key.cnpj) w.fail('emit.CNPJ', input.emit.CNPJ ? 'CNPJ do emitente diferente do da chave de acesso' : 'Campo obrigatório vazio')
   if (input.finNFe !== '1' && input.finNFe !== '4') w.fail('ide.finNFe', `Finalidade ${String(input.finNFe).slice(0, 1)} — ${OUT_OF_FIRST_RELEASE}`)
   if (input.idDest === '3') w.fail('ide.idDest', `Operação com o exterior — ${OUT_OF_FIRST_RELEASE}`)
@@ -265,6 +322,7 @@ export function buildNfeXml(input: NfeInput, accessKey: string): { xml: string; 
   if (input.finNFe === '1' && input.tpNF !== '1') w.fail('ide.tpNF', `Nota de entrada que não é devolução — ${OUT_OF_FIRST_RELEASE}`)
   if (input.finNFe === '4' && input.tpNF !== '0') w.fail('ide.tpNF', `Devolução de saída (a fornecedor) — ${OUT_OF_FIRST_RELEASE}`)
   if (input.items.length === 0) w.fail('det', 'Nota sem item')
+  if (input.items.length > NFE_MAX_ITEMS) w.fail('det', `Mais de ${NFE_MAX_ITEMS} itens (rej. 927)`)
   const positions = input.items.map(it => it.numbered.nItem)
   if (positions.some((n, i) => n !== i + 1)) w.fail('det', 'Itens fora da ordem do nItem (1, 2, 3…)')
   if (input.emit.ender.UF && key.cUF && input.emit.ender.cMun && !String(input.emit.ender.cMun).startsWith(key.cUF)) {
@@ -311,7 +369,7 @@ export function buildNfeXml(input: NfeInput, accessKey: string): { xml: string; 
 
   // ---- det --------------------------------------------------------------------------------------------------------------------------
   const built = input.items.map(it => itemXml(w, input, it))
-  if (ieDest === '9' && input.items.some(it => it.icms.CSOSN === SN101)) w.fail('dest.indIEDest', 'CSOSN 101 não é aceito para destinatário não contribuinte (rej. 600)')
+  if (ieDest === '9' && input.tpNF === '1' && input.items.some(it => it.icms.CSOSN === SN101)) w.fail('dest.indIEDest', 'CSOSN 101 não é aceito para destinatário não contribuinte (rej. 600)')
 
   // ---- pagamento e cobrança ---------------------------------------------------------------------------------------------------------
   const isReturn = input.finNFe === '4'
@@ -324,8 +382,8 @@ export function buildNfeXml(input: NfeInput, accessKey: string): { xml: string; 
         const dp = `cobr.dup[${i + 1}]`
         if (!Number.isSafeInteger(d.cents) || d.cents <= 0) { w.fail(`${dp}.vDup`, 'Parcela com valor zero ou inválido'); return '' }
         total += d.cents
-        const due = typeof d.dueDate === 'string' && /^[0-9]{4}-[0-9]{2}-[0-9]{2}$/.test(d.dueDate) ? d.dueDate : null
-        if (!due) { w.fail(`${dp}.dVenc`, d.dueDate ? 'Vencimento fora da forma AAAA-MM-DD' : 'Campo obrigatório vazio'); return '' }
+        const due = typeof d.dueDate === 'string' && isRealDate(d.dueDate) ? d.dueDate : null
+        if (!due) { w.fail(`${dp}.dVenc`, d.dueDate ? 'Vencimento fora da forma AAAA-MM-DD ou inexistente no calendário' : 'Campo obrigatório vazio'); return '' }
         if (emissionDate && due < emissionDate) w.fail(`${dp}.dVenc`, 'Vencimento anterior à emissão (rej. 900)')
         if (i > 0 && typeof input.installments[i - 1].dueDate === 'string' && due < (input.installments[i - 1].dueDate as string)) w.fail(`${dp}.dVenc`, 'Vencimentos fora de ordem (rej. 850)')
         return xmlGroup('dup', xmlElement('nDup', String(i + 1).padStart(3, '0')) + xmlElement('dVenc', due) + xmlElement('vDup', dec1302(d.cents)))
@@ -337,6 +395,7 @@ export function buildNfeXml(input: NfeInput, accessKey: string): { xml: string; 
   }
   let paid = 0
   if (input.payments.length === 0) w.fail('pag', 'Nota sem forma de pagamento')
+  if (input.payments.length > MAX_PAYMENTS) w.fail('pag', `Mais de ${MAX_PAYMENTS} formas de pagamento`)
   const detPag = input.payments.map((pg, i) => {
     const pp = `pag.detPag[${i + 1}]`
     paid += Number.isSafeInteger(pg.cents) && pg.cents >= 0 ? pg.cents : 0
@@ -350,7 +409,11 @@ export function buildNfeXml(input: NfeInput, accessKey: string): { xml: string; 
   // Só com os dados da nota já escritos sem recusa: com campo inválido os valores não são confiáveis e a lista de campos vem primeiro.
   let total = ''
   if (input.items.length && w.fields.length === 0) {
-    const t = icmsTotOf(built.map(b => b.totals), input.erpTotalCents, emissionDate)
+    let t: ReturnType<typeof icmsTotOf>
+    try { t = icmsTotOf(built.map(b => b.totals), input.erpTotalCents, emissionDate) } catch (e) {
+      if (e instanceof HttpError) throw e                                // vNF que não confere: defeito do motor, com o código próprio
+      throw documentInvalid('A NF-e não pode ser montada: os totais da nota não puderam ser somados', [{ field: 'total', message: 'Soma dos itens fora do limite' }])
+    }
     if (!isReturn && paid !== t.vNF) w.fail('pag', 'A soma das formas de pagamento é diferente do total da nota (sem troco no 1º release)')
     const ORDER = ['vBC', 'vICMS', 'vICMSDeson', 'vFCP', 'vBCST', 'vST', 'vFCPST', 'vFCPSTRet', 'vProd', 'vFrete', 'vSeg', 'vDesc', 'vII', 'vIPI', 'vIPIDevol', 'vPIS', 'vCOFINS', 'vOutro', 'vNF'] as const
     total = xmlGroup('total', xmlGroup('ICMSTot', ORDER.map(f => w.try(`total.${f}`, () => xmlElement(f, dec1302(t[f])))).join('')
@@ -367,7 +430,7 @@ export function buildNfeXml(input: NfeInput, accessKey: string): { xml: string; 
       + w.opt('transp.carrier.IE', 'IE', c.IE, () => digits(c.IE, 2, 14))
       + w.opt('transp.carrier.xEnder', 'xEnder', c.xEnder, () => nfeText(c.xEnder, 1, 60))
       + w.opt('transp.carrier.xMun', 'xMun', c.xMun, () => nfeText(c.xMun, 1, 60))
-      + (c.UF ? w.oneOf('transp.carrier.UF', c.UF, UF_CODES, 'UF') : '')) : ''))
+      + (c.UF ? w.oneOf('transp.carrier.UF', c.UF, UF_CODES, 'UF') : (c.IE && c.IE.trim() !== '' ? w.fail('transp.carrier.UF', 'Transportadora com IE exige a UF (rej. 559)') : ''))) : ''))
 
   // ---- infAdic e responsável técnico ------------------------------------------------------------------------------------------------
   let infAdic = ''
@@ -381,7 +444,7 @@ export function buildNfeXml(input: NfeInput, accessKey: string): { xml: string; 
   const respTec = w.try('infRespTec', () => {
     try { return infRespTecXml(input.techResponsible, input.csrt ?? null) } catch (e) {
       if (e instanceof FormatError || e instanceof XmlUnwritableError) throw e
-      throw new FormatError('texto-invalido', e instanceof Error ? e.message : 'responsável técnico inválido')
+      throw new FormatError('texto-invalido', 'dados do responsável técnico inválidos')
     }
   })
 

@@ -38,11 +38,14 @@ export interface NfeInputSources {
   payments: PaymentFacts
   shipping: ShippingFacts
   returnOrigins: readonly ReturnOriginFact[]
-  /** Devolução: por nota de origem (id da nota = id do pedido de origem), a chave AUTORIZADA e a numeração dos itens dela. */
-  origins?: ReadonlyMap<number, { accessKey: string; numbering: ItemNumbering }>
+  /** Devolução: por nota de origem — chave `originRef(id da nota, terminal)` —, a chave AUTORIZADA e a numeração dos itens dela. */
+  origins?: ReadonlyMap<string, { accessKey: string; numbering: ItemNumbering }>
   techResponsible: TechnicalResponsible
   csrt?: CsrtProof | null
 }
+
+/** A identidade de uma nota de origem: o id sozinho não basta (o mesmo id pode existir em dois terminais). */
+export const originRef = (invoiceId: number, terminal: number): string => `${invoiceId}|${terminal}`
 
 const mainAddress = (party: PartyFact): PartyAddressFact | null => party.addresses.find(a => a.main === 'S') ?? party.addresses[0] ?? null
 
@@ -99,7 +102,11 @@ export function nfeInputFromFacts(src: NfeInputSources): NfeInput {
     v.add('det', e.code === 'EMPTY' ? 'Nota sem item' : 'Itens com id repetido ou inválido')
   }
   const isReturn = src.returnOrigins.length > 0
-  const originOf = new Map(src.returnOrigins.map(r => [r.itemId, r]))
+  const originOf = new Map<number, ReturnOriginFact>()
+  for (const r of src.returnOrigins) {
+    if (originOf.has(r.itemId)) v.add(`det[${r.itemId}].origin`, 'Item de devolução com mais de um elo de origem')
+    originOf.set(r.itemId, r)
+  }
 
   // ---- itens ------------------------------------------------------------------------------------------------------------------------
   const directions = new Set<string>(), destinations = new Set<string>()
@@ -131,7 +138,7 @@ export function nfeInputFromFacts(src: NfeInputSources): NfeInput {
     let origin: NfeItemInput['origin'] = null
     if (isReturn) {
       const link = originOf.get(it.itemId)
-      const source = link ? src.origins?.get(link.originInvoiceId) : undefined
+      const source = link ? src.origins?.get(originRef(link.originInvoiceId, link.originTerminal)) : undefined
       const originNumbered = source?.numbering.items.find(n => n.itemId === link!.originItemId)
       if (!link) v.add(`${p}.origin`, 'Item de devolução sem o elo com o item de origem')
       else if (!source) v.add(`${p}.origin`, 'A nota de origem do item não tem NF-e autorizada conhecida')
@@ -154,6 +161,10 @@ export function nfeInputFromFacts(src: NfeInputSources): NfeInput {
       origin,
     })
   }
+  // GTIN: quem tem o da unidade comercial tem de ter o da tributável, e o inverso (rej. 885, 886).
+  for (const it of items) {
+    if ((it.cEAN === null || it.cEAN === '') !== (it.cEANTrib === null || it.cEANTrib === '')) v.add(`det[${it.numbered.itemId}].cEANTrib`, 'GTIN informado só numa das unidades, comercial ou tributável (rej. 885, 886)')
+  }
   if (directions.size > 1) v.add('ide.tpNF', 'Itens com CFOP de entrada e de saída na mesma nota')
   if (destinations.size > 1) v.add('ide.idDest', 'Itens com CFOP interno e interestadual na mesma nota')
   const tpNF = ([...directions][0] ?? (isReturn ? '0' : '1')) as '0' | '1'
@@ -161,11 +172,14 @@ export function nfeInputFromFacts(src: NfeInputSources): NfeInput {
 
   // ---- pagamento e cobrança ---------------------------------------------------------------------------------------------------------
   const erpTotalCents = cents(v, 'total.vNF', src.header.totalValue, 'Total da nota')
-  if (src.header.totalValue === null) v.add('total.vNF', 'O faturamento não gravou o total da nota')
+  if (src.header.totalValue === null || src.header.totalValue === '') v.add('total.vNF', 'O faturamento não gravou o total da nota')
   let payments: NfeInput['payments'] = [{ tPag: '90', cents: 0 }]
   let installments: NfeInput['installments'] = []
   if (!isReturn) {
-    const parcels = src.payments.installments.map((i, n) => ({ dueDate: i.dueDate, cents: cents(v, `cobr.dup[${n + 1}].vDup`, i.value, 'Parcela'), code: i.nfePaymentCode }))
+    const parcels = src.payments.installments.map((i, n) => {
+      if (i.value === null || i.value === '') v.add(`cobr.dup[${n + 1}].vDup`, 'Parcela sem valor')
+      return { dueDate: i.dueDate, cents: cents(v, `cobr.dup[${n + 1}].vDup`, i.value, 'Parcela'), code: i.nfePaymentCode }
+    })
     if (parcels.length) {
       const byCode = new Map<string, number>()
       parcels.forEach((pc, n) => {
@@ -188,6 +202,12 @@ export function nfeInputFromFacts(src: NfeInputSources): NfeInput {
   const ca = carrier ? mainAddress(carrier) : null
 
   const emitAddr = mainAddress(src.emitter), destAddr = mainAddress(src.recipient)
+  // O `idDest` saiu do CFOP; a UF real do destinatário tem de concordar (rej. 772, 773) — dois fatos que podem discordar não se escolhem calados.
+  if (emitAddr?.stateCode && destAddr?.stateCode && destinations.size === 1) {
+    const sameState = emitAddr.stateCode === destAddr.stateCode
+    if (idDest === '1' && !sameState) v.add('ide.idDest', 'CFOP de operação interna com destinatário de outra UF (rej. 773)')
+    if (idDest === '2' && sameState) v.add('ide.idDest', 'CFOP de operação interestadual com destinatário da mesma UF (rej. 772)')
+  }
   const indIEDest = src.recipient.tax?.indIeDest ?? null
   v.throwIfAny(`A NF-e não pode ser montada: os dados da nota ${src.header.invoiceId} têm problema(s)`)
 

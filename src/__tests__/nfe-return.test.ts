@@ -128,7 +128,7 @@ describe('NFE.E5.P3.T3 — a devolução confere com o procNFe da origem (D-NE10
   it('origem sem protocolo, com protocolo de outra chave, rejeitada, ilegível ou vazia → recusa', () => {
     const signed = signNfe(buildNfeXml(saleInput(), ORIGIN_KEY))
     const noProt = /^origin: A nota de origem não tem o protocolo de autorização dela/
-    expect(mismatch(() => assertReturnMatchesOrigin(checks(), signed, SETES_CNPJ)).fields[0]).toMatch(noProt)
+    expect(mismatch(() => assertReturnMatchesOrigin(checks(), signed, SETES_CNPJ)).fields).toEqual(['origin: O XML da origem deve ser um procNFe com exatamente uma NF-e'])
     expect(mismatch(() => assertReturnMatchesOrigin(checks(), procNfe(signed, RETURN_KEY), SETES_CNPJ)).fields[0]).toMatch(noProt)
     expect(mismatch(() => assertReturnMatchesOrigin(checks(), procNfe(signed, ORIGIN_KEY, '110'), SETES_CNPJ)).fields[0]).toMatch(noProt)
     expect(mismatch(() => assertReturnMatchesOrigin(checks(), procNfe(signed, ORIGIN_KEY, '150'), SETES_CNPJ)).fields).toEqual(['(não recusou)'])

@@ -6,7 +6,7 @@ import type { MerchandiseItemFact, PartyFact } from '../facts/merchandise-facts'
 import { validateMessage } from '../authority/xsd'
 import { numberItems } from '../nfe/item-numbering'
 import { buildNfeXml } from '../nfe/nfe-builder'
-import { nfeInputFromFacts, type NfeInputSources } from '../nfe/nfe-input'
+import { nfeInputFromFacts, originRef, type NfeInputSources } from '../nfe/nfe-input'
 import { CLIENT_CNPJ, saleKey, signNfe, SETES_CNPJ } from './nfe-fixtures'
 
 jest.setTimeout(60_000)
@@ -79,7 +79,7 @@ describe('ponte fatos → entrada: a venda', () => {
   it('S10: venda = finNFe 1; tpNF e idDest pelo 1º dígito do CFOP; indFinal e indIEDest do cadastro; indPres do ramo', () => {
     expect(nfeInputFromFacts(sources())).toMatchObject({ finNFe: '1', tpNF: '1', idDest: '1', indFinal: '0', indPres: '3', natOp: 'Venda de produção do estabelecimento' })
     const inter = sources({ items: [item(10, { icms: { ...item(10).icms, cfopId: '6101' } })], header: { ...sources().header, totalValue: '3000.00' }, payments: { billing: null, installments: [{ parcel: 1, dueDate: '2026-11-24', value: '3000.00', paymentTypeId: 1, nfePaymentCode: '01' }] } })
-    expect(nfeInputFromFacts(inter)).toMatchObject({ tpNF: '1', idDest: '2' })
+    expect(nfeInputFromFacts({ ...inter, recipient: { ...recipient, addresses: [address('3550308', 'São Paulo', 'SP')] } })).toMatchObject({ tpNF: '1', idDest: '2' })
     expect(nfeInputFromFacts(sources({ recipient: { ...recipient, tax: { ...recipient.tax!, consumer: 'S' } } })).indFinal).toBe('1')
     expect(violations(sources({ items: [item(10), item(30, { icms: { ...item(30).icms, cfopId: '6101' } })] }))).toContain('ide.idDest: Itens com CFOP interno e interestadual na mesma nota')
     expect(violations(sources({ items: [item(10), item(30, { icms: { ...item(30).icms, cfopId: '1201' } })] }))).toContain('ide.tpNF: Itens com CFOP de entrada e de saída na mesma nota')
@@ -186,7 +186,7 @@ describe('ponte fatos → entrada: violações, TODAS de uma vez', () => {
 
 describe('ponte fatos → entrada: a devolução', () => {
   const ORIGIN_KEY = saleKey()
-  const origins = new Map([[4000, { accessKey: ORIGIN_KEY, numbering: numberItems([10, 30]) }]])
+  const origins = new Map([[originRef(4000, 0), { accessKey: ORIGIN_KEY, numbering: numberItems([10, 30]) }]])
   const returned = (itemId: number, originItemId: number, q: string, u: string) => item(itemId, { kind: 'Adjust', quantity: q, unitValue: u, icms: { ...item(itemId).icms, cfopId: '1201', credCalcAliq: '0.00', credExplValue: '0.00', approximateTax: '0.00' } })
   const src = (over: Partial<NfeInputSources> = {}) => sources({
     dhEmi: '2026-11-25T09:00:00-03:00', header: { ...sources().header, invoiceId: 5002, totalValue: '2500.00', note: null },

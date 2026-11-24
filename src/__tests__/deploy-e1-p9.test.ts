@@ -139,7 +139,9 @@ describe('o boot segue passando a PRÓPRIA leitura (D-NE76) — cerca do server.
     for (const file of files) {
       const rel = path.relative(SRC, file).split(path.sep).join('/')
       const code = printer.printFile(ts.createSourceFile(rel, fs.readFileSync(file, 'utf8'), ts.ScriptTarget.Latest, true))
-      expect([rel, /\bVOICE_READINGS\b/.test(code)]).toEqual([rel, false])
+      // NFE.E6.P1.T3 (D-NE158): a única exceção é a CONFERÊNCIA de que a própria leitura está no catálogo, em `nfe/transmission.ts` — o catálogo nunca vai a
+      // `assertFamilyViewsReadable` (a cerca logo abaixo o proíbe fora do `server.ts`, e o `server.ts` passa só a própria leitura)
+      expect([rel, rel !== 'nfe/transmission.ts' && /\bVOICE_READINGS\b/.test(code)]).toEqual([rel, false])
       expect([rel, /\bSERVICE_VOICE_READING\b/.test(code)]).toEqual([rel, false])
       // a conferência das views da família só é chamada no boot
       expect([rel, /\bassertFamilyViewsReadable\b/.test(code) && rel !== 'server.ts']).toEqual([rel, false])

@@ -1,5 +1,5 @@
 import {
-  ErrorCodes, HttpError, recordVoiceOnce, signXml, toUtcDb, MERCHANDISE_VOICE_READING, withInvoiceTx,
+  ErrorCodes, HttpError, recordVoiceOnce, signXml, toUtcDb, MERCHANDISE_VOICE_READING, VOICE_READINGS, withInvoiceTx,
   type InvoiceRef, type InvoiceTx, type openIssuer, type Queryable, type FiscalStorage, type HttpsCall, type HttpsResult,
 } from 'fiscal-api'
 import { endpointOf, resolveAuthorizer, soapBindingOf, type Environment, type Uf } from '../authority/authorizers'
@@ -54,7 +54,7 @@ export interface NfeDeps {
   readonly pool: Parameters<typeof withInvoiceTx>[0]
   readonly storage: FiscalStorage
   /** O catálogo de leituras de família do núcleo (`VOICE_READINGS`) — T3. */
-  readonly catalog: Readonly<Record<string, { readonly transmissionView: string }>>
+  readonly catalog?: Readonly<Record<string, { readonly transmissionView: string }>>
   readonly now: () => Date
   /** Abre o emissor (A1) travando a habilitação: a implementação real é `openIssuer(…, { conn, forUpdate: true, schemaName })`. */
   readonly openIssuer: (conn: ConnLike, actor: NfeActor) => Promise<Opened>
@@ -71,7 +71,7 @@ export interface NfeDeps {
 }
 
 /** T3 — a nfe-api NÃO monta a reserva enquanto a família não estiver no catálogo de leituras do núcleo (D-NE158). */
-export function assertFamilyInCatalog(catalog: NfeDeps['catalog']): void {
+export function assertFamilyInCatalog(catalog: Readonly<Record<string, { readonly transmissionView: string }>>): void {
   const ok = Object.values(catalog).some(r => r.transmissionView === MERCHANDISE_VOICE_READING.transmissionView)
   if (!ok) {
     throw new HttpError(503, 'A família da NF-e não está no catálogo de leituras do núcleo — nada foi montado nem enviado',
@@ -114,7 +114,7 @@ interface Reserved {
 
 /** Transmite UMA NF-e (venda ou devolução): reserva → fisco → voz. Nada de rede em teste; o fisco só com o `request` real e o "vai" do Valdo. */
 export async function transmitInvoice(deps: NfeDeps, actor: NfeActor, ref: InvoiceRef): Promise<TransmitResult> {
-  assertFamilyInCatalog(deps.catalog)                                           // T3 — antes de tudo, sem tocar banco
+  assertFamilyInCatalog(deps.catalog ?? VOICE_READINGS)                                          // T3 — antes de tudo, sem tocar banco
 
   // TRANSAÇÃO 1 — reserva
   const reserved = await withInvoiceTx(deps.pool, actor, ref, { label: 'reserva da transmissão da NF-e', requireAlive: true }, async (itx): Promise<Reserved> => {

@@ -65,13 +65,15 @@ describe('recordNfeNotRegistered — write-once e "a última voz ainda é a que 
     }
   })
 
-  it('é o ÚNICO escritor da coluna: nenhum outro arquivo de src (fora dos testes) a nomeia', () => {
+  it('é o ÚNICO escritor da coluna: só `not-registered.ts` a ATRIBUI (o SQL de leitura em `attempt.ts` só a seleciona), fora dos testes e sem contar comentário', () => {
     const walk = (dir: string): string[] => fs.readdirSync(dir, { withFileTypes: true }).flatMap(e => {
       const full = path.join(dir, e.name)
-      return e.isDirectory() ? (e.name === '__tests__' ? [] : walk(full)) : /\.(ts|sql)$/.test(e.name) ? [full] : []
+      return e.isDirectory() ? (e.name === '__tests__' ? [] : walk(full)) : /\.ts$/.test(e.name) ? [full] : []
     })
-    const named = walk(SRC).filter(f => fs.readFileSync(f, 'utf8').includes('nfe_not_registered_at')).map(f => path.relative(SRC, f).replace(/\\/g, '/')).sort()
-    expect(named).toEqual(['migrations/sql/002_nfe_reconfirm.sql', 'nfe/not-registered.ts'])
+    const code = (f: string) => fs.readFileSync(f, 'utf8').replace(/\/\*[\s\S]*?\*\/|(?<!:)\/\/[^\n]*/g, '')
+    const rel = (f: string) => path.relative(SRC, f).replace(/\\/g, '/')
+    expect(walk(SRC).filter(f => /\bnfe_not_registered_at\s*=/.test(code(f))).map(rel).sort()).toEqual(['nfe/not-registered.ts'])
+    expect(walk(SRC).filter(f => code(f).includes('nfe_not_registered_at')).map(rel).sort()).toEqual(['nfe/attempt.ts', 'nfe/not-registered.ts'])
   })
 })
 

@@ -10,7 +10,7 @@ import { HOMOLOGATION_TEXT } from './homologation'
  * CAMADA 1 DA PRÉ-VALIDAÇÃO (NFE.E5.P5 — D-NE43, D-NE253; ficha-nfe-e5-p5-camada1.md). Um SEGUNDO olhar, independente do builder, sobre o XML
  * CANDIDATO (pré-assinatura): as 14 regras do 1º release (emitente do PR, CRT 1, modelo 55, `tpEmis` 1) que a nfe-api DERIVA, mais o XSD. Violação =
  * 422 com a lista INTEIRA, sem abrir tentativa. PURA: não toca banco, rede, relógio nem segredo — o relógio e os dados de fora entram pelo
- * `Layer1Context`; o XML é lido SÓ pelo leitor estrito do núcleo (nunca por recorte) e nada do builder é importado.
+ * `Layer1Context`; o XML é lido SÓ pelo leitor estrito do núcleo (nunca por recorte de valor) e nada do builder é importado; o único recorte de texto é o do R10, que apenas INSERE a `ds:Signature` de forma antes do fechamento da raiz (nome da raiz vindo do leitor, sem procurar tag por literal — cerca N17 do núcleo).
  */
 
 export interface Layer1Context {

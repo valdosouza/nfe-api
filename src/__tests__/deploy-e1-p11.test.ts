@@ -24,12 +24,14 @@ describe('núcleo 5.1.0 — o pacote instalado (DEPLOY.E1.P11, D-F237)', () => {
     for (const name of ['nextInvoiceNumber', 'lockNumberSequence', 'openNumberSequence', 'assertNumberSequenceDomainsEnforced']) {
       expect([name, typeof (core as Record<string, unknown>)[name]]).toEqual([name, 'function'])
     }
-    const callers = (dir: string): string[] => fs.readdirSync(dir, { withFileTypes: true }).flatMap(e => {
+    // varre `src/` (menos o `src/__tests__` da raiz) e `scripts/`, em todas as extensões de código: gerar e abrir número é da NFE.E6.P1, aqui só a sonda.
+    // Limite aceito (gate adversarial): acesso por elemento ao namespace do pacote (`core['next' + 'InvoiceNumber']`) não é visto por texto.
+    const callers = (dir: string, skip: string | null): string[] => !fs.existsSync(dir) ? [] : fs.readdirSync(dir, { withFileTypes: true }).flatMap(e => {
       const full = path.join(dir, e.name)
-      if (e.isDirectory()) return e.name === '__tests__' ? [] : callers(full)
-      return /\.ts$/.test(e.name) && /\b(nextInvoiceNumber|lockNumberSequence|openNumberSequence)\b/.test(fs.readFileSync(full, 'utf8')) ? [e.name] : []
+      if (e.isDirectory()) return full === skip || e.name === 'node_modules' ? [] : callers(full, skip)
+      return /\.(ts|tsx|mts|cts|js|mjs)$/.test(e.name) && /\b(nextInvoiceNumber|lockNumberSequence|openNumberSequence)\b/.test(fs.readFileSync(full, 'utf8')) ? [path.relative(SRC, full)] : []
     })
-    expect(callers(SRC)).toEqual([])                       // gerar e abrir número é da NFE.E6.P1: aqui só a sonda
+    expect([...callers(SRC, path.join(SRC, '__tests__')), ...callers(path.resolve(SRC, '..', 'scripts'), null)]).toEqual([])
   })
 
   it('a migration 008 do núcleo está no pacote com a tabela, a chave e as colunas decididas', () => {
@@ -70,6 +72,12 @@ describe('a sonda do último número no boot — cerca do server.ts (DEPLOY.E1.P
     // vizinhança exata: nada entre a sonda dos códigos, a nova e a conferência do CSRT (um `if` ou bloco em volta quebraria isto)
     const k = lines.indexOf(`${CALL};`)
     expect([lines[k - 1], lines[k + 1]]).toEqual(['await assertFiscalCodeDomainsEnforced(ctx.pool);', 'await assertRequiredProviderCodesPresent(ctx.pool);'])
+  })
+
+  it('o nome tem UMA só declaração (o import): nenhuma sombra local no server.ts', () => {
+    expect(server).not.toMatch(/\b(?:const|let|var|function|class)\s+assertNumberSequenceDomainsEnforced\b/)
+    expect(server).not.toMatch(/\bassertNumberSequenceDomainsEnforced\s*[:=]/)
+    expect(server.match(/\bassertNumberSequenceDomainsEnforced\b/g)?.length).toBe(2)       // o import e a chamada
   })
 
   it('o nome vem do import de fiscal-api, sem apelido', () => {

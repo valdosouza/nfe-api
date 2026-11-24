@@ -54,6 +54,7 @@ cobrança), Simples (CSOSN 101, 102, 103, 300, 400), PIS/COFINS CST 04 a 09 e os
 o `TNFe` EXIGE a `Signature` — só a NF-e assinada passa no `validateMessage('NFe', …)` (raiz `nfe_v4.00.xsd` do PL_010f; a `enviNFe` é da NFE.E6.P1); as
 rej. da devolução por item são a 1193 e a 1194 (esta só na devolução de SAÍDA), não a 1039/1048; o builder exige o CST de PIS/COFINS e NÃO assume o 07
 (o faturamento do ERP web ainda não o registra no Simples); fora de `item-numbering.ts` ninguém escreve `nItem: valor` — o `det` usa `nItemAttribute`.
+**IBS/CBS no builder** (NFE.E5.P4, D-NE277, PM-12 — ficha `projetos/nfe-api/SUBJECT/NFE_SEFAZ/ficha-nfe-e5-p4-ibscbs-2026.md`): em 2026 a NF-e do Simples (CRT 1) sai SEM o grupo `IBSCBS`, sem total de IBS/CBS e sem `vNFTot` (a rej. 1115 vale só para CRT 3; escrever CST + cClassTrib sem o `gIBSCBS` é a rej. 1022 quando o CST exige o grupo — NT 2025.002 v1.53 L2743-2801). De 01/01/2027 em diante (`IBSCBS_SIMPLES_FROM`) o `buildNfeXml` RECUSA toda nota (venda e devolução) com `ide.dhEmi … fora-do-primeiro-release`: o Simples passa a declarar `cAtivSN`, `gTribSN` e os totais (NT 2026.005), que não estão em XSD nenhum do acervo — a trava sai com o NFE.E5.P6. Prova: `nfe-ibscbs-2026.test.ts`.
 Ao concluir tarefa que gere conhecimento novo, siga `Infra-IA/skills-genericas/atualizar-infra-ia.md`.
 
 ## Estado (2026-10-20) — NE-2 EXECUTADA em worktree (`D:\Gestao2027\ne2\{fiscal-api,nfe-api}`, branch `ne2`) — `prompt_onda_nfe_sefaz.md` §15.9

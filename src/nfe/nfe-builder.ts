@@ -49,6 +49,8 @@ const isRealDate = (date: string): boolean => {
   const d = new Date(Date.UTC(Number(m[1]), Number(m[2]) - 1, Number(m[3])))
   return d.getUTCFullYear() === Number(m[1]) && d.getUTCMonth() === Number(m[2]) - 1 && d.getUTCDate() === Number(m[3])
 }
+/** A partir desta data o Simples Nacional declara IBS/CBS em todo documento (RF-CAL-04 — Ato Conjunto 4/2026); o builder do 1º release não escreve. */
+export const IBSCBS_SIMPLES_FROM = '2027-01-01'
 /** `indPres` que obriga o `indIntermed` (rej. 434); nos demais ele não vai (rej. 435). */
 const PRES_WITH_INTERMED = ['2', '3', '4', '9']
 const UF_CODES = ['AC', 'AL', 'AM', 'AP', 'BA', 'CE', 'DF', 'ES', 'GO', 'MA', 'MG', 'MS', 'MT', 'PA', 'PB', 'PE', 'PI', 'PR', 'RJ', 'RN', 'RO', 'RR', 'RS', 'SC', 'SE', 'SP', 'TO']
@@ -315,6 +317,10 @@ export function buildNfeXml(input: NfeInput, accessKey: string): { xml: string; 
   else if (`${dh[1].slice(2)}${dh[2]}` !== key.yymm) w.fail('ide.dhEmi', 'Ano e mês da emissão diferentes dos da chave de acesso')
   if (dh && !isRealDate(`${dh[1]}-${dh[2]}-${dh[3]}`)) w.fail('ide.dhEmi', 'Data da emissão inexistente no calendário')
   const emissionDate = dh && isRealDate(`${dh[1]}-${dh[2]}-${dh[3]}`) ? `${dh[1]}-${dh[2]}-${dh[3]}` : ''
+  // D-NE277 (NFE.E5.P4): de 01/01/2027 em diante o Simples declara IBS/CBS em todo documento (`cAtivSN` por item, `gTribSN` e totais — NT 2026.005),
+  // campos que ainda não estão em XSD nenhum do acervo nem na fonte de fatos: o builder RECUSA em vez de autorizar uma nota sem o que a norma
+  // passa a exigir. Vale para toda nota (venda e devolução). Sai com o NFE.E5.P6. Até 31/12/2026 o grupo IBSCBS NÃO vai para o CRT 1.
+  if (emissionDate >= IBSCBS_SIMPLES_FROM) w.fail('ide.dhEmi', `Emissão a partir de 01/01/2027 — IBS/CBS do Simples — ${OUT_OF_FIRST_RELEASE}`)
   if (input.emit.CNPJ !== key.cnpj) w.fail('emit.CNPJ', input.emit.CNPJ ? 'CNPJ do emitente diferente do da chave de acesso' : 'Campo obrigatório vazio')
   if (input.finNFe !== '1' && input.finNFe !== '4') w.fail('ide.finNFe', `Finalidade ${String(input.finNFe).slice(0, 1)} — ${OUT_OF_FIRST_RELEASE}`)
   if (input.idDest === '3') w.fail('ide.idDest', `Operação com o exterior — ${OUT_OF_FIRST_RELEASE}`)

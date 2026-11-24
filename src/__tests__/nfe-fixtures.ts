@@ -55,3 +55,20 @@ export const signNfe = (built: { xml: string; id: string }): string => {
   const a1 = testA1()
   return signXml(built.xml, { referenceId: built.id, cert: a1.cert, key: a1.key, algorithm: 'sha1' })
 }
+
+/** A devolução de 2026 do `nfe-return.test.ts` (nota de ENTRADA do mesmo emitente, referência por item), reusada pelos testes de IBS/CBS. */
+export const returnOriginKey = (): string => saleKey()
+export const returnKey = (over: { emissionDate?: string; number?: number; cnf?: string } = {}): string =>
+  saleKey({ number: over.number ?? 16, cnf: over.cnf ?? '70531942', emissionDate: over.emissionDate })
+export const returnSaleInput = (over: Partial<NfeInput> = {}): NfeInput => {
+  const numbered = numberItems([1, 2]).items
+  const origin = numberItems([10, 30]).items
+  const item = (i: 0 | 1): NfeItemInput => saleItem(i, {
+    numbered: numbered[i], CFOP: '1201', qCom: i === 0 ? '1' : '3', qTrib: i === 0 ? '1' : '3', vProdCents: i === 0 ? 150000 : 100000, vTotTribCents: 0,
+    icms: { orig: '0', CSOSN: '101', pCredSN: '0.00', vCredICMSSN: '0.00' }, origin: { accessKey: returnOriginKey(), numbered: origin[i] },
+  })
+  return saleInput({
+    natOp: 'Devolução de venda de produção do estabelecimento', dhEmi: '2026-11-25T09:00:00-03:00', tpNF: '0', finNFe: '4',
+    items: [item(0), item(1)], erpTotalCents: 250000, installments: [], payments: [{ tPag: '90', cents: 0 }], note: null, ...over,
+  })
+}

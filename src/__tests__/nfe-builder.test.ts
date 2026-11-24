@@ -113,11 +113,10 @@ describe('NFE.E5.P3.T2 — o que o XML leva e na ordem do leiaute', () => {
     expect(withCredit).toContain('<pCredSN>2.86</pCredSN><vCredICMSSN>85.80</vCredICMSSN>')
   })
 
-  it('a partir de 01/01/2027 a frase fixa deixa de ir: com observação, só ela; sem observação, sem infAdic', () => {
+  it('de 01/01/2027 em diante o builder RECUSA (D-NE277); a frase fixa deixar de ir em 2027 segue provada em nfe-texts.test.ts', () => {
     const key27 = saleKey({ emissionDate: '2027-01-04' })
-    const in27 = (note: string | null) => saleInput({ dhEmi: '2027-01-04T09:00:00-03:00', installments: [{ dueDate: '2027-02-04', cents: 400000 }], note })
-    expect(one(buildNfeXml(in27('Pedido 5001'), key27).xml, 'infCpl')).toBe('Pedido 5001')
-    expect(buildNfeXml(in27(null), key27).xml).not.toContain('<infAdic>')
+    const in27 = saleInput({ dhEmi: '2027-01-04T09:00:00-03:00', installments: [{ dueDate: '2027-02-04', cents: 400000 }], note: null })
+    expect(refused(in27, key27).fields.map(f => f.field)).toEqual(['ide.dhEmi'])
   })
 
   it('responsável técnico com o par idCSRT + hashCSRT; sem o CSRT o grupo vai sem o par', () => {

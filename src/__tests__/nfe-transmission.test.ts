@@ -7,7 +7,7 @@
 import type { HttpsCall, HttpsResult, InvoiceRef } from 'fiscal-api'
 import { invoiceRef, VOICE_READINGS } from 'fiscal-api'
 import { assertFamilyInCatalog, transmitInvoice, type ComposedFacts, type NfeActor, type NfeDeps } from '../nfe/transmission'
-import { SOAP12_NS } from '../authority/soap'
+import { MemDb, memStorage, ok, type Reply } from './nfe-memdb'
 import { NS } from './xsd-fixtures'
 import { saleInput } from './nfe-fixtures'
 import { testA1 } from './test-a1'
@@ -23,65 +23,7 @@ const DH = '2026-11-24T10:20:00-03:00'
 const NOW = new Date('2026-11-24T10:20:00-03:00')
 const SECRET_CSRT = 'CSRT-DE-TESTE-NAO-USAR-EM-PRODUCAO'
 
-// ---------------------------------------------------------------------------------------------------------------------------------------
-// o banco em memória: só o SQL que a transmissão usa
-// ---------------------------------------------------------------------------------------------------------------------------------------
-class MemDb {
-  attempts: any[] = []
-  events: any[] = []
-  inserted = 0
-  async query(sql: string, params: unknown[] = []): Promise<[any, any]> {
-    await new Promise(r => setImmediate(r))
-    const s = sql.replace(/\s+/g, ' ').trim()
-    if (/FROM `setes_x`\.tb_invoice WHERE/.test(s)) return [[{ deleted: 'N' }], []]
-    if (/FROM `setes_x`\.vw_invoice_life/.test(s)) return [[{ lifeEvent: 1, lastEvent: 1, lastKind: 'E' }], []]
-    if (/^SELECT COALESCE\(MAX\(attempt\)/.test(s)) return [[{ next: this.attempts.length + 1 }], []]
-    if (/^SELECT COALESCE\(MAX\(event\)/.test(s)) return [[{ next: this.events.filter(e => e.attempt === params[3]).length + 1 }], []]
-    if (/^INSERT INTO tb_invoice_merchandise_transmission_event/.test(s)) {
-      this.events.push({ attempt: params[3], event: params[4], kind: params[5], authority_code: params[6], message: params[7], dh: params[8], source: params[9] })
-      return [{ affectedRows: 1 }, []]
-    }
-    if (/^INSERT INTO tb_invoice_merchandise_transmission /.test(s)) {
-      if (this.attempts.some(a => a.accessKey === params[7])) throw Object.assign(new Error("Duplicate entry for key 'uk_invoice_merchandise_transmission_key'"), { errno: 1062, code: 'ER_DUP_ENTRY' })
-      this.inserted++
-      this.attempts.push({ attempt: params[3], lifeEvent: params[4], environment: params[5], authorizer: params[6], accessKey: params[7], dhEmission: params[8], digestValue: params[9],
-        receipt: null, protocol: null, dhRecbto: null, lastQueriedAt: null, nfeNotRegisteredAt: null })
-      return [{ affectedRows: 1 }, []]
-    }
-    if (/^UPDATE tb_invoice_merchandise_transmission SET/.test(s)) {
-      const row = this.attempts.find(a => a.attempt === params[params.length - 1])
-      if (!row) return [{ affectedRows: 0 }, []]
-      if (s.includes('receipt = ?') && row.receipt === null) { row.receipt = params[0]; return [{ affectedRows: 1 }, []] }
-      if (s.includes('protocol = ?') && row.protocol === null) { row.protocol = params[0]; row.dhRecbto = params[1]; return [{ affectedRows: 1 }, []] }
-      return [{ affectedRows: 0 }, []]
-    }
-    if (/^SELECT COUNT\(\*\) AS n FROM tb_invoice_merchandise_transmission_event/.test(s)) {
-      const n = this.events.filter(e => e.attempt === params[3] && e.kind === params[4] && (params.length === 5 ? e.dh === null : [params[5], params[6]].includes(e.dh))).length
-      return [[{ n }], []]
-    }
-    if (/FROM tb_invoice_merchandise_transmission t/.test(s)) {
-      const last = [...this.attempts].reverse()[0]
-      if (!last) return [[], []]
-      const evs = this.events.filter(e => e.attempt === last.attempt)
-      const e = evs[evs.length - 1]
-      return [[{ ...last, lastEvent: e?.event ?? null, lastKind: e?.kind ?? null, lastCode: e?.authority_code ?? null }], []]
-    }
-    return [{ affectedRows: 1 }, []]
-  }
-}
-
-function memStorage() {
-  const files = new Map<string, string>()
-  return {
-    files,
-    save: (key: any, name: string, xml: string) => { files.set(`${key.cnpj}/${key.environment}/${key.serie}/${name}`, xml); return name },
-    find: (key: any, name: string) => (files.has(`${key.cnpj}/${key.environment}/${key.serie}/${name}`) ? name : null),
-    read: (ref: string) => String([...files.entries()].find(([k]) => k.endsWith(ref))?.[1]),
-    probe: () => true,
-  }
-}
-
-const envelope = (inner: string) => `<?xml version="1.0" encoding="utf-8"?><soap:Envelope xmlns:soap="${SOAP12_NS}"><soap:Body><nfeResultMsg xmlns="urn:x">${inner}</nfeResultMsg></soap:Body></soap:Envelope>`
+const envelope = (inner: string) => `<?xml version="1.0" encoding="utf-8"?><soap:Envelope xmlns:soap="http://www.w3.org/2003/05/soap-envelope"><soap:Body><nfeResultMsg xmlns="urn:x">${inner}</nfeResultMsg></soap:Body></soap:Envelope>`
 const keyOf = (c: HttpsCall): string => /Id="NFe(\d{44})"/.exec(String(c.body))![1]
 const prot = (chave: string, cStat: string, withProt = true) =>
   `<protNFe versao="4.00"><infProt><tpAmb>2</tpAmb><verAplic>PR</verAplic><chNFe>${chave}</chNFe><dhRecbto>${DH}</dhRecbto>${withProt ? '<nProt>141260000000001</nProt>' : ''}`
@@ -89,8 +31,6 @@ const prot = (chave: string, cStat: string, withProt = true) =>
 const ret = (inner: string, cStat = '104') =>
   envelope(`<retEnviNFe xmlns="${NS}" versao="4.00"><tpAmb>2</tpAmb><verAplic>PR</verAplic><cStat>${cStat}</cStat><xMotivo>Lote</xMotivo><cUF>41</cUF><dhRecbto>${DH}</dhRecbto>${inner}</retEnviNFe>`)
 
-type Reply = (c: HttpsCall) => HttpsResult | Promise<HttpsResult>
-const ok = (text: string): HttpsResult => ({ status: 200, headers: {}, text })
 
 function setup(over: Partial<NfeDeps> = {}, facts: Partial<ComposedFacts> = {}) {
   const db = new MemDb()
@@ -98,7 +38,8 @@ function setup(over: Partial<NfeDeps> = {}, facts: Partial<ComposedFacts> = {}) 
   const calls: HttpsCall[] = []
   let reply: Reply = () => { throw new Error('nenhuma resposta combinada') }
   const a1 = testA1()
-  const conn = { query: db.query.bind(db), beginTransaction: jest.fn(async () => {}), commit: jest.fn(async () => {}), rollback: jest.fn(async () => {}), release: jest.fn(() => {}) }
+  const base = db.connection()
+  const conn = { ...base, rollback: jest.fn(base.rollback) }
   const composed: ComposedFacts = {
     serie: 1, cnpj: '07742094000113', uf: 'PR', hasStateRegistration: true, dtEmission: '2026-11-24', createdAt: '2026-11-24 13:15:30',
     buildInput: ({ dhEmi, csrt }) => saleInput({ dhEmi, csrt }), ...facts,
@@ -143,7 +84,7 @@ describe('autorizada (104 com protNFe 100)', () => {
     expect(r.outcome).toEqual({ kind: 'A', authorityCode: '100', message: 'Autorizado o uso da NF-e' })
     expect(r.accessKey).toMatch(/^41261107742094000113550010000000151[0-9]{8}[0-9]$/)            // cUF AAMM CNPJ mod serie nNF tpEmis cNF cDV
     expect(t.db.attempts[0]).toMatchObject({ authorizer: 'PR', environment: 'H', protocol: '141260000000001', dhEmission: '2026-11-24 13:15:30' })
-    expect(t.db.events).toEqual([{ attempt: 1, event: 1, kind: 'A', authority_code: '100', message: 'Autorizado o uso da NF-e', dh: '2026-11-24 13:20:00', source: 'P' }])
+    expect(t.db.events).toMatchObject([{ attempt: 1, event: 1, kind: 'A', authority_code: '100', message: 'Autorizado o uso da NF-e', dh: '2026-11-24 13:20:00', source: 'P' }])
     const names = [...t.storage.files.keys()].map(k => k.split('/').pop()).sort()
     expect(names).toEqual([`${r.accessKey}-nfe.xml`, `${r.accessKey}-procNFe.xml`])
     expect(nextInvoiceNumber).toHaveBeenCalledTimes(1)

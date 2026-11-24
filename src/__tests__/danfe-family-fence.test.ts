@@ -20,7 +20,7 @@ function tsFilesUnder(dir: string): string[] {
   for (const entry of fs.readdirSync(dir, { withFileTypes: true }).sort((a, b) => a.name.localeCompare(b.name))) {
     const full = path.join(dir, entry.name)
     if (entry.isDirectory()) out.push(...tsFilesUnder(full))
-    else if (entry.name.endsWith('.ts')) out.push(full)
+    else if (/\.(ts|tsx|mts|cts|js|mjs|cjs)$/.test(entry.name)) out.push(full)           // qualquer fonte: um `.mts` não escapa da varredura
   }
   return out
 }
@@ -91,6 +91,38 @@ describe('NFE.E6.P3.T3 — o alcance novo da D-NE228 (gate A6 do núcleo)', () =
     expect(cases.map(([c]) => [c, rules(c)])).toEqual(cases)
   })
 
+  it('o resto das APIs do pdfkit que escrevem texto ou conteúdo fora das portas (M1 do gate adversarial): anotações, formulários, `continueOnNewPage` e os internos', () => {
+    const cases = [
+      "doc.annotate(10, 10, 20, 20, { Subtype: 'FreeText', Contents: 'x' })",
+      "doc.formAnnotation('campo', 'text', 10, 10, 20, 20)",
+      "doc.formField('campo')",
+      "doc.formCombo('campo', 10, 10, 20, 20)",
+      "doc.formList('campo', 10, 10, 20, 20)",
+      "doc.formPushButton('campo', 10, 10, 20, 20)",
+      "doc.formRadioButton('campo', 10, 10, 20, 20)",
+      "doc.formCheckbox('campo', 10, 10, 20, 20)",
+      'doc.continueOnNewPage()',
+      "doc._fragment('x', 1, 2, {})",
+      "doc._text('x', 1, 2, {}, () => {})",
+      "doc._line('x', {}, () => {})",
+      "doc.annotate.call(doc, 1, 2, 3, 4, {})",
+    ]
+    expect(cases.map(c => [c, rules(c)])).toEqual(cases.map(c => [c, ['a']]))
+  })
+
+  it('`doc.page.write(…)` e `doc.page.content.write(…)` (o que o `addContent` faz por dentro) e `doc[chave]` com chave que não é texto literal', () => {
+    const cases: [string, FenceRule[]][] = [
+      ["doc.page.write('BT (x) Tj ET')", ['b']],
+      ["doc.page.content.write('BT (x) Tj ET')", ['b']],
+      ["const k = 'text'; doc[k]('x')", ['c']],
+      ['doc[`te${sufixo}`](\'x\')', ['c']],
+      ['doc[nome()](1)', ['c']],
+    ]
+    expect(cases.map(([c]) => [c, rules(c)])).toEqual(cases)
+    // o que NÃO é acusado: escrever em outro objeto, ler `doc.page.height`, índice de lista com identificador que não é `doc`
+    for (const c of ['stream.write(chunk)', 'const h = doc.page.height', 'const linha = linhas[i]']) expect([c, pdfFamilyViolations(c)]).toEqual([c, []])
+  })
+
   it('o EMBRULHO e a chamada do `addPage`: referência, atribuição, colchete, `Object.defineProperty` e o texto solto', () => {
     const cases: [string, FenceRule[]][] = [
       ['doc.addPage()', ['b']],
@@ -142,6 +174,15 @@ describe('NFE.E6.P3.T3 — o varredor de pasta (código novo desta cópia)', () 
     expect(r.violations).toEqual([expect.stringContaining('helpers')])
     expect(r.violations[0]).toMatch(/\(a\)/)
     expect(r.strays).toEqual([])
+  })
+
+  it('varre também `.mts`, `.cts`, `.tsx` e `.js` da pasta do DANFE (um auxiliar com outra extensão não escapa)', () => {
+    for (const ext of ['mts', 'cts', 'tsx', 'js', 'mjs']) {
+      put(`nfe/danfe/aux.${ext}`, "export const t = (doc) => doc.text('escapou')")
+    }
+    const r = scanFamily(tmp, path.join(tmp, 'nfe', 'danfe'))
+    expect(r.scanned).toBe(5)
+    expect(r.violations).toHaveLength(5)
   })
 
   it('acusa o arquivo da família FORA da pasta (fora de `__tests__`) e ignora `__tests__`', () => {

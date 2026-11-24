@@ -14,11 +14,13 @@ export interface ProcOptions {
   readonly nProt?: string | null
   /** A chave que o `protNFe` declara (padrão: a da nota) — para provar a recusa de protocolo de outra chave. */
   readonly protKey?: string
+  /** O ambiente que o `protNFe` declara (padrão: o da nota). */
+  readonly protTpAmb?: '1' | '2'
 }
 
 /** `protNFe` de teste (o `digVal` é um exemplo de 28 caracteres, sem valor). */
 export const protNFe = (key: string, o: ProcOptions = {}): string =>
-  `<protNFe versao="4.00"><infProt><tpAmb>2</tpAmb><verAplic>PR-v4_0_0</verAplic><chNFe>${o.protKey ?? key}</chNFe>`
+  `<protNFe versao="4.00"><infProt><tpAmb>${o.protTpAmb ?? '2'}</tpAmb><verAplic>PR-v4_0_0</verAplic><chNFe>${o.protKey ?? key}</chNFe>`
   + `<dhRecbto>${TEST_RECEIVED_AT}</dhRecbto>${o.nProt === null ? '' : `<nProt>${o.nProt ?? TEST_PROTOCOL}</nProt>`}`
   + `<digVal>AAAAAAAAAAAAAAAAAAAAAAAAAAA=</digVal><cStat>${o.cStat ?? '100'}</cStat><xMotivo>Autorizado o uso da NF-e</xMotivo></infProt></protNFe>`
 
@@ -32,7 +34,7 @@ export function procOf(signedNfe: string, key: string, o: ProcOptions = {}): str
 /** O `nfeProc` de uma venda do builder (padrão: `saleInput()` em homologação). */
 export function authorizedProc(input: NfeInput = saleInput(), o: ProcOptions = {}): { xml: string; key: string; input: NfeInput } {
   const key = o.key ?? saleKey()
-  return { xml: procOf(signNfe(buildNfeXml(input, key)), key, o), key, input }
+  return { xml: procOf(signNfe(buildNfeXml(input, key)), key, { protTpAmb: input.environment, ...o }), key, input }
 }
 
 /** Insere um trecho de XML logo ANTES da primeira ocorrência de `marker` (grupos que o builder do 1º release não escreve: `vol`, `infAdProd`, `ISSQNtot`). */

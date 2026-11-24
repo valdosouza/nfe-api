@@ -19,9 +19,9 @@ jest.mock('fiscal-api/pdf', () => {
 })
 
 import { renderDanfe } from '../nfe/danfe/danfe'
-import { DANFE_FONT_ROLES, DANFE_TEXT_PARTS, FIT_MIN_PT } from '../nfe/danfe/danfe-layout'
+import { DANFE_FONT_ROLES, DANFE_TEXT_PARTS, WATERMARKS } from '../nfe/danfe/danfe-layout'
 import { danfeMarksOf } from '../nfe/danfe/danfe-marks'
-import { authorizedProc, emptyOptionalsInput, insertBefore } from './danfe-fixtures'
+import { authorizedProc, emptyOptionalsInput, insertBefore, longInput } from './danfe-fixtures'
 import { pdfContentOps, pdfTextRuns, type TextRun } from './pdf-text'
 
 jest.setTimeout(120_000)
@@ -43,7 +43,9 @@ describe('NFE.E6.P3.T2 — a tabela de trechos: cada trecho diz o papel, o corpo
       expect([name, Object.keys(DANFE_FONT_ROLES)]).toEqual([name, expect.arrayContaining([p.role])])
       expect(Number.isFinite(p.sizePt) && p.sizePt > 0).toBe(true)
       expect(ALIGNS).toContain(p.align)
-      expect(Object.keys(p).sort()).toEqual(['align', 'role', 'sizePt'])             // nenhum trecho carrega opção a mais herdável
+      expect(Object.keys(p).sort()).toEqual(['align', 'minSizePt', 'role', 'sizePt'])   // nenhum trecho carrega opção a mais herdável
+      expect(p.minSizePt).toBeGreaterThan(0)
+      expect(p.minSizePt).toBeLessThanOrEqual(p.sizePt)
     }
   })
 
@@ -55,7 +57,12 @@ describe('NFE.E6.P3.T2 — a tabela de trechos: cada trecho diz o papel, o corpo
     expect(DANFE_TEXT_PARTS.documentName.sizePt).toBe(12)
     expect(DANFE_TEXT_PARTS.issuerName.sizePt).toBe(12)
     expect(DANFE_TEXT_PARTS.identification.sizePt).toBe(10)
-    expect(FIT_MIN_PT).toBe(6)
+    // AII 3.7: "DOCUMENTO AUXILIAR…" 8 pt; valor de campo ("demais campos") 10 pt SEM encolher; razão social 12 pt SEM encolher
+    expect(DANFE_TEXT_PARTS.documentSubtitle).toMatchObject({ sizePt: 8, minSizePt: 8 })
+    for (const part of ['fieldValue', 'fieldNumber', 'fieldCentered'] as const) expect(DANFE_TEXT_PARTS[part]).toMatchObject({ sizePt: 10, minSizePt: 10 })
+    expect(DANFE_TEXT_PARTS.issuerName).toMatchObject({ sizePt: 12, minSizePt: 12 })
+    expect(DANFE_TEXT_PARTS.issuerData).toMatchObject({ sizePt: 8, minSizePt: 8 })
+    expect(DANFE_TEXT_PARTS.itemText).toMatchObject({ sizePt: 6, minSizePt: 6 })
   })
 
   it('o desenho só escreve texto por UMA função: há uma única chamada de `writeText` em `danfe.ts`', () => {
@@ -83,10 +90,34 @@ describe('NFE.E6.P3.T2 — cada chamada de texto traz o corpo e as opções de l
     }
   })
 
-  it('só a quebra de folha escreve em modo de quebra; todo o resto é linha única', () => {
-    const wrapped = full.calls.filter(call => call.opts.lineBreak === true)
-    expect(wrapped).toHaveLength(0)                                                   // uma folha só: nenhuma quebra
+  it('uma folha só: todo texto é linha única (nenhuma quebra de folha escreve em modo de quebra)', () => {
     expect(full.calls.every(call => call.opts.lineBreak === false)).toBe(true)
+  })
+
+  it('várias folhas: só a quebra de folha (um espaço no pé) escreve em modo de quebra — uma por folha nova — e também com opções completas', async () => {
+    const long = await runsOf(authorizedProc(longInput(90)).xml)
+    const wrapped = long.calls.filter(call => call.opts.lineBreak === true)
+    expect(long.runs.length).toBeGreaterThanOrEqual(2)
+    expect(wrapped.length).toBe(long.runs.length - 1)
+    for (const call of wrapped) {
+      expect(call.text).toBe(' ')
+      for (const key of ['x', 'y', 'width', 'sizePt', 'align', 'lineBreak']) expect([key, call.opts[key] !== undefined]).toEqual([key, true])
+    }
+    expect(long.calls.filter(call => call.opts.lineBreak === false).length).toBeGreaterThan(wrapped.length)
+  })
+
+  it('o que vai para o PDF obedece a tabela: todo corpo escrito cai na faixa [minSizePt, sizePt] de um trecho (ou é uma marca d\'água)', async () => {
+    const r = await runsOf(authorizedProc().xml.replace('<infCpl>', '<infCpl>Texto ao fisco e complementar '))
+    const ranges = Object.values(DANFE_TEXT_PARTS).map(p => [p.minSizePt, p.sizePt] as const)
+    const marks: number[] = [WATERMARKS.homologation.sizePt, WATERMARKS.cancelled.sizePt]
+    for (const run of r.runs[0]) {
+      const inTable = ranges.some(([lo, hi]) => run.size >= lo && run.size <= hi)
+      expect([run.text, inTable || marks.includes(run.size)]).toEqual([run.text, true])
+    }
+    // e a chamada de `writeText` e o corpo do PDF dizem o MESMO número (a tabela não é só enfeite)
+    const sizesCalled = new Set(r.calls.map(call => call.opts.sizePt as number))
+    const sizesWritten = new Set(r.runs[0].filter(run => !marks.includes(run.size)).map(run => run.size))
+    expect([...sizesWritten].sort()).toEqual([...sizesCalled].sort())
   })
 })
 
@@ -105,8 +136,9 @@ describe('NFE.E6.P3.T2 — o documento com TODOS os opcionais vazios', () => {
     expect(texts.every(t => t.trim() !== '')).toBe(true)
     expect(texts).not.toContain('FATURA / DUPLICATAS')                                // sem cobrança no XML
     expect(texts).not.toContain('CÁLCULO DO ISSQN')
-    expect(texts).toEqual(expect.arrayContaining(['DANFE', 'FOLHA 1/1', 'DESTINATÁRIO / REMETENTE', 'CÁLCULO DO IMPOSTO', 'TRANSPORTADOR / VOLUMES TRANSPORTADOS', 'DADOS DOS PRODUTOS / SERVIÇOS']))
-    expect(texts).toContain('9 - Sem Ocorrência de Transporte')
+    expect(texts).not.toContain('TRANSPORTADOR / VOLUMES TRANSPORTADOS')           // modFrete 9 sem transportador, veículo nem volume: sem dado, sem quadro (NT 4.4)
+    expect(texts).not.toContain('9 - Sem Ocorrência de Transporte')
+    expect(texts).toEqual(expect.arrayContaining(['DANFE', 'FOLHA 1/1', 'DESTINATÁRIO / REMETENTE', 'CÁLCULO DO IMPOSTO', 'DADOS DOS PRODUTOS / SERVIÇOS']))
   })
 
   it('os campos opcionais ausentes ficam em branco: o quadro existe e o valor não aparece (fantasia, complemento, IE do destinatário, EAN)', () => {
@@ -121,7 +153,7 @@ describe('NFE.E6.P3.T2 — o documento com TODOS os opcionais vazios', () => {
   it('o trecho de um campo vazio não muda o corpo nem a posição dos rótulos vizinhos (nada herdado — D-NE157)', () => {
     const labelRuns = (runs: TextRun[]): Map<string, string> => {
       const map = new Map<string, string>()
-      for (const r of runs) if (r.size === 6 && /^[A-ZÀ-Ý \/.]+$/.test(r.text) && r.text.length > 3) map.set(r.text, `${r.size}|${r.x.toFixed(2)}|${r.yPdf.toFixed(2)}`)
+      for (const r of runs) if (r.size === 6 && /^[A-ZÀ-Ý \/.]+$/.test(r.text) && r.text.length > 3) if (!map.has(r.text)) map.set(r.text, `${r.size}|${r.x.toFixed(2)}|${r.yPdf.toFixed(2)}`)
       return map
     }
     const a = labelRuns(full.runs[0])

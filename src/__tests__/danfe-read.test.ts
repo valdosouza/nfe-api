@@ -105,12 +105,26 @@ describe('NFE.E6.P3.T1 — a forma errada é 422 FISCAL_DOCUMENT_INVALID no camp
     ['tpAmb fora do domínio', ok.xml.replace('<tpAmb>2</tpAmb>', '<tpAmb>7</tpAmb>')],
     ['sem item', ok.xml.replace(/<det [\s\S]*<\/det>/, '')],
     ['chave do Id fora da forma', ok.xml.replace(`Id="NFe${saleKey()}"`, 'Id="NFe123"')],
+    ['cStat repetido no protocolo (204 e depois 100)', ok.xml.replace('<cStat>100</cStat>', '<cStat>204</cStat><cStat>100</cStat>')],
+    ['tpAmb do protocolo diferente do da nota', authorizedProc(saleInput(), { protTpAmb: '1' }).xml],
+    ['dois infNFe na NFe', ok.xml.replace(/<infNFe[\s\S]*<\/infNFe>/, m => m + m)],
+    ['série do ide diferente da chave', ok.xml.replace('<serie>1</serie>', '<serie>2</serie>')],
+    ['número do ide diferente da chave', ok.xml.replace('<nNF>15</nNF>', '<nNF>16</nNF>')],
+    ['tpNF fora de 0 e 1', ok.xml.replace('<tpNF>1</tpNF>', '<tpNF>7</tpNF>')],
+    ['elemento repetido no ide (dois natOp)', ok.xml.replace('<mod>55</mod>', '<natOp>outra</natOp><mod>55</mod>')],
   ])('%s', (_name, xml) => {
     const e = refusal(xml)
     expect(e).toBeInstanceOf(HttpError)
     expect(e.statusCode).toBe(422)
     expect(e.code).toBe(NfeErrors.DOCUMENT_INVALID)
     expect(e.fields?.[0]?.field).toBe('procNfeXml')
+  })
+
+  it('controle em campo de linha única vira espaço no leitor; nos de várias linhas só a quebra é normalizada', () => {
+    const xml = authorizedProc().xml.replace('Venda de produção do estabelecimento', 'Venda&#13;&#10;de&#9;produção').replace('Pedido 5001', 'Pedido&#13;&#10;5001')
+    const d = readNfeProc(xml)
+    expect(d.ide.natOp).toBe('Venda de produção')
+    expect(d.infCpl).toContain('Pedido\n5001')
   })
 
   it('o cStat 150 (autorizada fora de prazo) é autorização e passa', () => {

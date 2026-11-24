@@ -76,20 +76,31 @@ function kids(parent: XmlNode, name?: string): XmlNode[] {
 }
 const child = (parent: XmlNode | null, name: string): XmlNode | null => (parent ? kids(parent, name)[0] ?? null : null)
 
-function text(node: XmlNode | null): string | null {
+/** Campos de VÁRIAS linhas (o DANFE os quebra em `\n`); o resto do XML vai para linha única, sem controle. */
+const MULTILINE = new Set(['infCpl', 'infAdFisco', 'infAdProd'])
+
+function text(node: XmlNode | null, multiline = false): string | null {
   if (!node) return null
   let value: string
   try { value = textOf(node) } catch { return null }
+  // CR, LF e TAB num campo de linha única derrubariam o desenho (M4 do gate adversarial): viram um espaço; nos de várias linhas só se normaliza a quebra
+  value = multiline ? value.replace(/\r\n?/g, '\n').replace(/\t/g, ' ') : value.replace(/[\t\r\n]+/g, ' ')
   return value === '' ? null : value
 }
-const textOfChild = (parent: XmlNode | null, name: string): string | null => text(child(parent, name))
+const textOfChild = (parent: XmlNode | null, name: string): string | null => text(child(parent, name), MULTILINE.has(name))
 
-/** Todos os filhos ELEMENTO com texto simples de um grupo, por nome (grupo ausente = `{}`). */
-function fieldsOf(group: XmlNode | null): DanfeFields {
+/**
+ * Todos os filhos ELEMENTO com texto simples de um grupo, por nome (grupo ausente = `{}`). `unique`: elemento simples REPETIDO no grupo é
+ * recusa (o XSD só admite um; `fieldsOf` ficaria com o último e `child` com o primeiro — L1 do gate adversarial).
+ */
+function fieldsOf(group: XmlNode | null, unique = false): DanfeFields {
   const out: Record<string, string | null> = {}
   if (!group) return out
   for (const c of kids(group)) {
-    if (kids(c).length === 0) out[c.localName ?? c.nodeName] = text(c)
+    if (kids(c).length !== 0) continue
+    const name = c.localName ?? c.nodeName
+    if (unique && name in out) throw bad(`O elemento ${name} aparece mais de uma vez`)
+    out[name] = text(c, MULTILINE.has(name))
   }
   return out
 }
@@ -115,20 +126,28 @@ export function readNfeProc(procNfeXml: string): DanfeData {
   const nfes = kids(rootEl, 'NFe')
   const prots = kids(rootEl, 'protNFe')
   if (nfes.length !== 1 || prots.length !== 1) throw bad('O nfeProc deve ter exatamente uma NFe e um protNFe')
+  if (kids(nfes[0], 'infNFe').length !== 1 || kids(prots[0], 'infProt').length !== 1) throw bad('A NFe e o protNFe devem ter exatamente um infNFe e um infProt')
   const inf = child(nfes[0], 'infNFe')
   const infProt = child(prots[0], 'infProt')
   if (!inf || !infProt) throw bad('Falta o infNFe ou o infProt')
   const id = attrOf(inf, 'Id') ?? ''
   const accessKey = id.startsWith('NFe') ? id.slice(3) : ''
   try { assertAccessKey(accessKey) } catch { throw bad('A chave de acesso do infNFe está fora da forma') }
-  const authorization = fieldsOf(infProt)
+  const authorization = fieldsOf(infProt, true)
   if (authorization.chNFe !== accessKey) throw bad('O protocolo é de outra chave de acesso')
   if (!AUTHORIZED.includes(authorization.cStat ?? '')) throw bad('O protocolo não é de autorização de uso (cStat 100 ou 150)')
   if (!authorization.nProt) throw bad('O protocolo não traz o número (nProt)')
 
-  const ideFields = fieldsOf(child(inf, 'ide'))
+  const ideFields = fieldsOf(child(inf, 'ide'), true)
   if (ideFields.mod !== '55') throw bad('O DANFE desta peça é do modelo 55')
   if (ideFields.tpAmb !== '1' && ideFields.tpAmb !== '2') throw bad('O ambiente (tpAmb) do XML está fora do domínio')
+  if (authorization.tpAmb !== undefined && authorization.tpAmb !== ideFields.tpAmb) throw bad('O ambiente do protocolo não é o da nota')
+  if (ideFields.tpNF !== '0' && ideFields.tpNF !== '1') throw bad('O tipo de operação (tpNF) do XML está fora do domínio')
+  // a chave carrega modelo (posições 21-22), série (23-25) e número (26-34): o `ide` tem de dizer o mesmo
+  const sameNumber = (a: string | null | undefined, b: string): boolean => a !== null && a !== undefined && /^\d+$/.test(a) && Number(a) === Number(b)
+  if (!sameNumber(ideFields.serie, accessKey.slice(22, 25)) || !sameNumber(ideFields.nNF, accessKey.slice(25, 34)) || ideFields.mod !== accessKey.slice(20, 22)) {
+    throw bad('O modelo, a série ou o número do ide não conferem com a chave de acesso')
+  }
 
   const items: DanfeItem[] = kids(inf, 'det').map(det => {
     const icmsWrap = child(child(det, 'imposto'), 'ICMS')

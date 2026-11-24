@@ -1,11 +1,19 @@
 // CÓPIA para a nfe-api (nfe-api:NFE.E6.P3.T3 — D-GP88, D-NE228, Valdo 2026-11-21 "Na nfe-api (cópia)"). ORIGEM: `fiscal-api/src/__tests__/pdf-family-fence.ts`
 // no commit 936f88b (fiscal-api:PDF.E2.P1). A REGRA mora no núcleo; esta cópia roda sobre a pasta do DANFE (`src/nfe/danfe/**`) e sobre o
-// resto de `src/` pelo `isPdfFamilyFile` (`danfe-family-fence.test.ts`). DIFERENÇA da origem, e só ela (D-NE228, gate A6 do núcleo): a lista
-// barra também `addContent`, `formText`, `note` e `textAnnotation` como CHAMADA (CALL_BANNED) e `addPage` em QUALQUER referência de propriedade
-// (PROPERTY_BANNED) — o embrulho do `addPage` (`const o = doc.addPage; doc.addPage = …`) e a chamada direta (a família não abre folha: o pdfkit
-// abre no transbordo e o `sheetStart` da base não pode abri-la); o texto `'addPage'` solto também é acusado (regra d, como o `'pageAdded'`).
-// LIMITE: a desestruturação de `note` de um objeto que não é resultado de chamada é acusada — a pasta do DANFE não usa campo com esse nome.
-// Mudou a regra no núcleo? Refaça esta cópia a partir dele e reaplique a diferença acima.
+// resto de `src/` pelo `isPdfFamilyFile` (`danfe-family-fence.test.ts`). DIFERENÇAS da origem, e só elas (D-NE228, gate A6 do núcleo; gate adversarial da
+// NFE.E6.P3, M1):
+//  1. `addContent`, `formText`, `note` e `textAnnotation` (D-NE228) mais o resto das APIs do pdfkit que escrevem texto ou conteúdo fora das portas —
+//     `annotate`, `formAnnotation`, `formField`, `formCombo`, `formList`, `formPushButton`, `formRadioButton`, `formCheckbox`, `continueOnNewPage`,
+//     `_fragment`, `_text`, `_line` — como CHAMADA (CALL_BANNED);
+//  2. `addPage` em QUALQUER referência de propriedade (PROPERTY_BANNED): o embrulho (`const o = doc.addPage; doc.addPage = …`) e a chamada direta
+//     (a família não abre folha: o pdfkit abre no transbordo e o `sheetStart` da base não pode abri-la); o texto `'addPage'` solto também é
+//     acusado (regra d, como o `'pageAdded'`);
+//  3. `write` chamado sobre `.page` ou `.content` (é o que o `addContent` faz por dentro: `doc.page.write('BT … Tj ET')`) — regra b;
+//  4. `doc[chave]` com chave que NÃO é texto literal (`const k = 'text'; doc[k](…)`) — regra c; só o objeto chamado `doc` (a convenção da família).
+// LIMITES: a desestruturação de `note` de um objeto que não é resultado de chamada é acusada — a pasta do DANFE não usa campo com esse nome; nome
+// montado em execução em outro objeto, `eval`, `Object(doc)` e `doc.on('page' + 'Added')` seguem como os limites do cabeçalho abaixo (a cerca
+// protege contra ENGANO, não contra fraude).
+// Mudou a regra no núcleo? Refaça esta cópia a partir dele e reaplique as diferenças acima.
 // CERCA DA FAMÍLIA DO DANFE (fiscal-api:PDF.E2.P1 — D-NE126, D-NE129, D-NE130, D-NE142; prompt da NF-e §14.9 a §14.19) — peça de TESTE pura,
 // por AST. A família escreve e mede texto SÓ pelas portas da base (`writeText`/`measureText` — WinAnsi, papel do registro DA BASE, linha
 // única, cadeia aberta, texto vazio) e desenha sem quebrar o contrato do `sheetStart` e da passada por folha. O que ela barra:
@@ -40,7 +48,11 @@
 import ts from 'typescript'
 
 /** (a) Barrados como CHAMADA. */
-export const CALL_BANNED = Object.freeze(['text', 'list', 'table', 'font', 'addContent', 'formText', 'note', 'textAnnotation'] as const)
+export const CALL_BANNED = Object.freeze([
+  'text', 'list', 'table', 'font', 'addContent', 'formText', 'note', 'textAnnotation',
+  'annotate', 'formAnnotation', 'formField', 'formCombo', 'formList', 'formPushButton', 'formRadioButton', 'formCheckbox',
+  'continueOnNewPage', '_fragment', '_text', '_line',
+] as const)
 /** (b) Barrados em qualquer referência de propriedade. */
 export const PROPERTY_BANNED = Object.freeze(['heightOfString', 'widthOfString', 'registerFont', 'addPage'] as const)
 /** (c) Barrados como TEXTO em colchete, chave computada ou `Reflect.*`. */
@@ -186,6 +198,8 @@ export function pdfFamilyViolations(code: string): FenceViolation[] {
       const name = n.name.text
       // (b) qualquer referência às medidas cruas e a `registerFont`
       if (has(PROPERTY_BANNED, name)) add('b', n)
+      // `doc.page.write(…)` / `doc.page.content.write(…)`: o que o `addContent` faz por dentro (gate adversarial M1)
+      else if (name === 'write' && ts.isPropertyAccessExpression(n.expression) && ['page', 'content'].includes(n.expression.name.text)) add('b', n)
       // (b) `clip` que NÃO é a chamada direta (a chamada é da regra (e))
       else if (name === 'clip' && !isDirectCallee(n)) add('b', n)
     }
@@ -203,6 +217,8 @@ export function pdfFamilyViolations(code: string): FenceViolation[] {
     }
     // (c) doc['text'], doc[`font`]
     if (ts.isElementAccessExpression(n) && isText(n.argumentExpression) && has(NAME_BANNED, n.argumentExpression.text)) add('c', n)
+    // (c) doc[chave] com chave que não é texto literal: `const k = 'text'; doc[k]('x')` (gate adversarial M1)
+    else if (ts.isElementAccessExpression(n) && ts.isIdentifier(n.expression) && n.expression.text === 'doc' && !isText(n.argumentExpression)) add('c', n)
     // (d) 'pageAdded' em qualquer lugar
     if (isText(n) && (n.text === 'pageAdded' || n.text === 'addPage')) add('d', n)
     ts.forEachChild(n, visit)

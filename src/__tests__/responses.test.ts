@@ -39,7 +39,7 @@ describe('consulta de protocolo (RF-NFE-21; D-NE42, D-NE209, D-NE210)', () => {
     env(`<retConsSitNFe xmlns="${NS}" versao="4.00"><tpAmb>2</tpAmb><verAplic>PR</verAplic><cStat>${cStat}</cStat><xMotivo>m</xMotivo><cUF>41</cUF><dhRecbto>2026-11-21T10:00:00-03:00</dhRecbto><chNFe>${chave}</chNFe>${inner}</retConsSitNFe>`)
   const q = { chNFe: CHAVE, tpAmb: '2' } as const
   it('100 com o protNFe da nossa chave → autorizada', () => {
-    expect(readProtocol(q, ret('100', CHAVE, prot('100')))).toEqual({ kind: 'fact', fact: { status: 'authorized', cStat: '100', nProt: '141260000000001' } })
+    expect(readProtocol(q, ret('100', CHAVE, prot('100')))).toEqual({ kind: 'fact', fact: { status: 'authorized', cStat: '100', nProt: '141260000000001', digVal: 'AAAAAAAAAAAAAAAAAAAAAAAAAAA=', dhRecbto: '2026-11-21T10:00:00-03:00' } })
   })
   it('chave do topo ou do protNFe diferente da nossa → ambíguo, NUNCA autorizada', () => {
     expect(readProtocol(q, ret('100', OUTRA, prot('100', OUTRA)))).toEqual({ kind: 'ambiguous', cause: 'nao-classificada' })
@@ -54,8 +54,8 @@ describe('consulta de protocolo (RF-NFE-21; D-NE42, D-NE209, D-NE210)', () => {
     expect(readProtocol(q, ret('100', CHAVE, prot('100', CHAVE, SIG)))).toEqual({ kind: 'ambiguous', cause: 'nao-classificada' })
   })
   it('denegada 110 (e 301/302/303 no protNFe) com a nossa chave → denegada', () => {
-    expect(readProtocol(q, ret('110', CHAVE, prot('110')))).toEqual({ kind: 'fact', fact: { status: 'denied', cStat: '110', nProt: '141260000000001' } })
-    expect(readProtocol(q, ret('110', CHAVE, prot('301')))).toEqual({ kind: 'fact', fact: { status: 'denied', cStat: '301', nProt: '141260000000001' } })
+    expect(readProtocol(q, ret('110', CHAVE, prot('110')))).toEqual({ kind: 'fact', fact: { status: 'denied', cStat: '110', nProt: '141260000000001', digVal: 'AAAAAAAAAAAAAAAAAAAAAAAAAAA=', dhRecbto: '2026-11-21T10:00:00-03:00' } })
+    expect(readProtocol(q, ret('110', CHAVE, prot('301')))).toEqual({ kind: 'fact', fact: { status: 'denied', cStat: '301', nProt: '141260000000001', digVal: 'AAAAAAAAAAAAAAAAAAAAAAAAAAA=', dhRecbto: '2026-11-21T10:00:00-03:00' } })
   })
   it('101/151 no topo → cancelada; 155 no topo → ambíguo (D-NE209: o 155 só vale dentro do evento)', () => {
     expect(readProtocol(q, ret('101'))).toEqual({ kind: 'fact', fact: { status: 'cancelled', cStat: '101' } })
@@ -75,7 +75,7 @@ describe('consulta de recibo (D-NE108, D-NE33)', () => {
   it('106 → não grava voz', () => expect(readReceipt(q, ret('106'))).toEqual({ kind: 'no-voice', cStat: '106' }))
   it('105 → em processamento', () => expect(readReceipt(q, ret('105'))).toEqual({ kind: 'fact', fact: { status: 'processing', cStat: '105' } }))
   it('104 com o protNFe da nossa chave → autorizada; de outra chave → ambíguo; recibo diferente → ambíguo', () => {
-    expect(readReceipt(q, ret('104', prot('100')))).toEqual({ kind: 'fact', fact: { status: 'authorized', cStat: '100', nProt: '141260000000001' } })
+    expect(readReceipt(q, ret('104', prot('100')))).toEqual({ kind: 'fact', fact: { status: 'authorized', cStat: '100', nProt: '141260000000001', digVal: 'AAAAAAAAAAAAAAAAAAAAAAAAAAA=', dhRecbto: '2026-11-21T10:00:00-03:00' } })
     expect(readReceipt(q, ret('104', prot('100', OUTRA)))).toEqual({ kind: 'ambiguous', cause: 'nao-classificada' })
     expect(readReceipt(q, ret('104', prot('100'), '411000000000002'))).toEqual({ kind: 'ambiguous', cause: 'nao-classificada' })
   })

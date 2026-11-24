@@ -78,6 +78,8 @@ function guarded<F>(fn: () => ReadResult<F>): ReadResult<F> {
   }
 }
 
+export type DuplicateCStat = '204' | '539' | '205' | '206' | '218' | '635'
+const DUPLICATE: ReadonlySet<string> = new Set<DuplicateCStat>(['204', '539', '205', '206', '218', '635'])
 const DENIED = new Set(['110', '301', '302', '303'])
 const AUTHORIZED = new Set(['100', '150'])
 
@@ -102,11 +104,17 @@ export function readStatus(q: StatusQuestion, xml: string): ReadResult<StatusFac
 
 export interface ProtocolQuestion { readonly chNFe: string; readonly tpAmb: '1' | '2' }
 export type ProtocolFact =
-  | { readonly status: 'authorized'; readonly cStat: string; readonly nProt: string }
-  | { readonly status: 'denied'; readonly cStat: string; readonly nProt: string | null }
+  /** `digVal` e `dhRecbto` do `protNFe` (NFE.E6.P1): a reconciliação confere o `digVal` (D-NE41) e o `dh_recbto` é gravado write-once. */
+  | { readonly status: 'authorized'; readonly cStat: string; readonly nProt: string; readonly digVal: string | null; readonly dhRecbto: string | null }
+  | { readonly status: 'denied'; readonly cStat: string; readonly nProt: string | null; readonly digVal: string | null; readonly dhRecbto: string | null }
   | { readonly status: 'cancelled'; readonly cStat: string }
   | { readonly status: 'not-found'; readonly cStat: '217' }
   | { readonly status: 'processing'; readonly cStat: '105' }
+  /**
+   * 204 (duplicidade, mesma chave) e 539 (chave diferente — D-NE36), mais 205 (denegada na base), 218 (cancelada), 206 (inutilizada) e 635 (mesmo número e série
+   * aguardando processamento — RF-NFE-73 proposta): NUNCA concluem como rejeição — o número pode já ser de uma nota; a saída é a consulta da chave.
+   */
+  | { readonly status: 'duplicate'; readonly cStat: DuplicateCStat }
 
 /** O `protNFe` da NOSSA chave (sem assinatura) → autorizada/denegada; senão ambíguo. Usado na consulta e no recibo. */
 function readProt(parent: XmlNode, chNFe: string, tpAmb: string): ReadResult<ProtocolFact> {
@@ -119,8 +127,11 @@ function readProt(parent: XmlNode, chNFe: string, tpAmb: string): ReadResult<Pro
   if (text(inf, 'chNFe') !== chNFe || text(inf, 'tpAmb') !== tpAmb) return ambiguous('nao-classificada')   // D-NE42, D-NE210
   const cStat = text(inf, 'cStat')
   const nProt = text(inf, 'nProt')
-  if (cStat && protStatusOf(cStat) === 'authorized' && nProt) return { kind: 'fact', fact: { status: 'authorized', cStat, nProt } }
-  if (cStat && protStatusOf(cStat) === 'denied') return { kind: 'fact', fact: { status: 'denied', cStat, nProt } }
+  const digVal = text(inf, 'digVal')
+  const dhRecbto = text(inf, 'dhRecbto')
+  if (cStat && protStatusOf(cStat) === 'authorized' && nProt) return { kind: 'fact', fact: { status: 'authorized', cStat, nProt, digVal, dhRecbto } }
+  if (cStat && protStatusOf(cStat) === 'denied') return { kind: 'fact', fact: { status: 'denied', cStat, nProt, digVal, dhRecbto } }
+  if (cStat && DUPLICATE.has(cStat)) return { kind: 'fact', fact: { status: 'duplicate', cStat: cStat as DuplicateCStat } }
   if (cStat) return rejection(cStat, text(inf, 'xMotivo'))
   return ambiguous('envelope-ilegivel')
 }
@@ -157,6 +168,34 @@ export function readReceipt(q: ReceiptQuestion, xml: string): ReadResult<Protoco
     if (cStat !== '104' && cStat !== '105') return rejection(cStat, text(ret, 'xMotivo'))
     if (text(ret, 'nRec') !== q.nRec || text(ret, 'tpAmb') !== q.tpAmb) return ambiguous('nao-classificada')
     if (cStat === '105') return { kind: 'fact', fact: { status: 'processing', cStat: '105' } }
+    return readProt(ret, q.chNFe, q.tpAmb)
+  })
+}
+
+// ---------------------------------------------------------------------------------------------------------------------------------------
+
+export interface SendQuestion { readonly chNFe: string; readonly tpAmb: '1' | '2' }
+export type SendFact = ProtocolFact | { readonly status: 'received'; readonly cStat: '103'; readonly nRec: string }
+
+/**
+ * Retorno do envio (`retEnviNFe`, NFE.E6.P1 — D-NE33, D-NE36, D-NE42, D-NE210): 104 → o `protNFe` da NOSSA chave (autorizada/denegada, ou 204/539 que
+ * mandam consultar a chave, ou a rejeição da nota); 103 → lote recebido com o `nRec` (voz P + consulta do recibo); 105 → em processamento (P);
+ * 204/539 no topo também só mandam consultar; qualquer outro cStat de topo é rejeição do LOTE (a nota não foi recebida). O eco de `tpAmb`
+ * tem de ser o perguntado. `protNFe` assinado, mais de um, chave diferente ou XML ilegível → ambíguo (nada grava).
+ */
+export function readSend(q: SendQuestion, xml: string): ReadResult<SendFact> {
+  return guarded<SendFact>(() => {
+    const ret = retOf(xml, 'retEnviNFe')
+    const cStat = text(ret, 'cStat')
+    if (!cStat) return ambiguous('envelope-ilegivel')
+    if (DUPLICATE.has(cStat)) return { kind: 'fact', fact: { status: 'duplicate', cStat: cStat as DuplicateCStat } }
+    if (cStat !== '103' && cStat !== '104' && cStat !== '105') return rejection(cStat, text(ret, 'xMotivo'))
+    if (text(ret, 'tpAmb') !== q.tpAmb) return ambiguous('nao-classificada')
+    if (cStat === '105') return { kind: 'fact', fact: { status: 'processing', cStat: '105' } }
+    if (cStat === '103') {
+      const nRec = text(child(ret, 'infRec'), 'nRec')
+      return nRec !== null && /^[0-9]{15}$/.test(nRec) ? { kind: 'fact', fact: { status: 'received', cStat: '103', nRec } } : ambiguous('nao-classificada')
+    }
     return readProt(ret, q.chNFe, q.tpAmb)
   })
 }

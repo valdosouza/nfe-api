@@ -300,7 +300,7 @@ paths:
             gravada — cStat de rejeição em `authorityCode`, 3 ou 4 dígitos; a nova tentativa sai com chave nova — D-NE7) ·
             FISCAL_RETURN_REFERENCE_MISSING (devolução cuja origem não tem NF-e AUTORIZADA nativa — o 1º release recusa a origem do legado, D-NE113) ·
             FISCAL_RETURN_REFERENCE_MISMATCH (o `det[nItem]` DERIVADO não confere com o procNFe arquivado da origem — cProd/qCom/vUnCom —, nunca
-            chute; D-NE103: devolução referencia POR ITEM — `DFeReferenciado` chave + nItem, `refNFe` proibido, rej. 321) · FISCAL_RETURN_DUPLICATED_ITEM
+            chute; D-NE103/D-NE219: devolução referencia POR ITEM — `DFeReferenciado` chave + nItem —, escolha nossa: a norma admite cabeçalho OU item) · FISCAL_RETURN_DUPLICATED_ITEM
             (duas linhas do mesmo item de origem — rej. 1072; a camada 2 do ERP recusa antes, D-NE112)
           content:
             application/json:

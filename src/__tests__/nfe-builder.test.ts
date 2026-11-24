@@ -102,9 +102,22 @@ describe('NFE.E5.P3.T2 — o que o XML leva e na ordem do leiaute', () => {
       + '<pag><detPag><tPag>15</tPag><vPag>4000.00</vPag></detPag></pag>')
   })
 
-  it('infCpl: os dizeres do Simples e o crédito de ICMS somado dos itens, depois a observação da nota (D-NE271)', () => {
-    expect(one(xml, 'infCpl')).toBe('DOCUMENTO EMITIDO POR ME OU EPP OPTANTE PELO SIMPLES NACIONAL. NÃO GERA DIREITO A CRÉDITO FISCAL DE IPI. | '
-      + 'PERMITE O APROVEITAMENTO DO CRÉDITO DE ICMS NO VALOR DE R$ 114,40; CORRESPONDENTE À ALÍQUOTA DE 2,86%, NOS TERMOS DO ART. 23 DA LEI COMPLEMENTAR Nº 123, DE 2006. | Pedido 5001')
+  it('infCpl: a frase FIXA do Simples e, depois, a observação da nota; a frase do crédito NÃO é escrita aqui (D-NE271, D-NE274)', () => {
+    expect(one(xml, 'infCpl')).toBe('DOCUMENTO EMITIDO POR ME OU EPP OPTANTE PELO SIMPLES NACIONAL. NÃO GERA DIREITO A CRÉDITO FISCAL DE IPI. | Pedido 5001')
+    // A frase do crédito vem pronta do ERP web, na observação: sai UMA vez, como veio.
+    const credit = 'PERMITE O APROVEITAMENTO DO CRÉDITO DE ICMS NO VALOR DE R$ 114,40; CORRESPONDENTE À ALÍQUOTA DE 2,86%, NOS TERMOS DO ART. 23 DA LEI COMPLEMENTAR Nº 123, DE 2006.'
+    const withCredit = buildNfeXml(saleInput({ note: credit }), KEY).xml
+    expect(withCredit.split('PERMITE O APROVEITAMENTO').length - 1).toBe(1)
+    expect(one(withCredit, 'infCpl')).toBe(`DOCUMENTO EMITIDO POR ME OU EPP OPTANTE PELO SIMPLES NACIONAL. NÃO GERA DIREITO A CRÉDITO FISCAL DE IPI. | ${credit}`)
+    // Os campos próprios do crédito seguem no item (art. 60 § 5º).
+    expect(withCredit).toContain('<pCredSN>2.86</pCredSN><vCredICMSSN>85.80</vCredICMSSN>')
+  })
+
+  it('a partir de 01/01/2027 a frase fixa deixa de ir: com observação, só ela; sem observação, sem infAdic', () => {
+    const key27 = saleKey({ emissionDate: '2027-01-04' })
+    const in27 = (note: string | null) => saleInput({ dhEmi: '2027-01-04T09:00:00-03:00', installments: [{ dueDate: '2027-02-04', cents: 400000 }], note })
+    expect(one(buildNfeXml(in27('Pedido 5001'), key27).xml, 'infCpl')).toBe('Pedido 5001')
+    expect(buildNfeXml(in27(null), key27).xml).not.toContain('<infAdic>')
   })
 
   it('responsável técnico com o par idCSRT + hashCSRT; sem o CSRT o grupo vai sem o par', () => {

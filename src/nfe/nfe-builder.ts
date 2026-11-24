@@ -436,7 +436,7 @@ export function buildNfeXml(input: NfeInput, accessKey: string): { xml: string; 
   let infAdic = ''
   if (emissionDate) {
     const text = w.try('infAdic.infCpl', () => {
-      const info = complementaryInfo(simplesTexts(input.emit.CRT, emissionDate, input.items.map(it => ({ csosn: it.icms.CSOSN, creditAliq: it.icms.pCredSN, creditValue: it.icms.vCredICMSSN }))), input.note ?? null)
+      const info = complementaryInfo(simplesTexts(input.emit.CRT, emissionDate), input.note ?? null)
       return info === null ? '' : nfeText(info, 1, 5000)
     })
     if (text) infAdic = xmlGroup('infAdic', xmlElement('infCpl', text))

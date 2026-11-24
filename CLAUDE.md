@@ -43,7 +43,7 @@ ordem do id do item; o serviço da conjugada fica fora; o teto de 990 é da cama
 RECEBIDOS, nunca sorteados aqui — D-NE7/D-NE257); `formats.ts` (decimal EXATO em BigInt → tipos do leiaute; `TDec_1302Opc` zero = elemento omitido; `nfeText`
 = D-NE28: mantém acento, colapsa espaços e RECUSA o que o `isXsdTString` do núcleo não aceita — nunca corta); `totals.ts` (`ICMSTot` = soma dos itens em
 centavos; o vNF do ERP conferido contra `fiscal-api/merchandise-total`, tolerância zero → 422 `FISCAL_TOTALS_MOTOR_DEFECT`); `homologation.ts` (D-NE216);
-`simples-text.ts` (D-NE271: dizeres do Simples pelo CRT e pela data — os do art. 59 § 4º da CGSN 140 só até 31/12/2026); `tech-responsible.ts`
+`simples-text.ts` (D-NE271/D-NE274: só a frase FIXA do art. 59 § 4º da CGSN 140, pelo CRT e pela data, até 31/12/2026 — a frase do CRÉDITO de ICMS é do ERP web e chega pronta na observação da nota; escrevê-la aqui a duplicaria); `tech-responsible.ts`
 (`infRespTec` + `hashCsrt`; o VALOR do CSRT nunca em XML, log, erro ou teste — o único em teste é o exemplo público da NT 2018.005); `nfe-builder.ts`
 (`buildNfeXml(input, chave)` → `NFe` SEM assinatura + o `Id` para o `signXml`; cUF, cNF, série, número, tpEmis e cDV saem DA CHAVE; recusa = 422
 `FISCAL_DOCUMENT_INVALID` com a lista INTEIRA de campos, nunca XML incompleto); `return-reference.ts` (devolução × procNFe da origem, pelo `parseXml` do

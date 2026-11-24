@@ -27,36 +27,25 @@ describe('homologação = f(tpAmb, modelo, tpImp) — D-NE216', () => {
   })
 })
 
-describe('dizeres do Simples Nacional — D-NE271 (CGSN 140, arts. 59 § 4º e 60; CGSN 190 em 01/01/2027)', () => {
-  const credit = (aliq: string, value: string, csosn = '101') => ({ csosn, creditAliq: aliq, creditValue: value })
-
-  it('CRT 1 até 31/12/2026: as duas frases do art. 59; sem crédito, só elas', () => {
-    expect(simplesTexts('1', '2026-11-24', [credit('0.00', '0.000000')])).toEqual([SIMPLES_ISSUER_TEXT])
-    expect(simplesTexts('1', '2026-12-31', [])).toEqual([SIMPLES_ISSUER_TEXT])
+describe('dizeres do Simples Nacional — D-NE271 e D-NE274 (CGSN 140, art. 59 § 4º; CGSN 190 em 01/01/2027)', () => {
+  it('CRT 1 até 31/12/2026: a frase fixa do art. 59', () => {
+    expect(simplesTexts('1', '2026-11-24')).toEqual([SIMPLES_ISSUER_TEXT])
+    expect(simplesTexts('1', '2026-12-31')).toEqual([SIMPLES_ISSUER_TEXT])
     expect(SIMPLES_ISSUER_TEXT).toBe('DOCUMENTO EMITIDO POR ME OU EPP OPTANTE PELO SIMPLES NACIONAL. NÃO GERA DIREITO A CRÉDITO FISCAL DE IPI.')
+    expect(isXsdTString(SIMPLES_ISSUER_TEXT, 1, 5000)).toBe(true)                      // com acento: dentro do alfabeto do leiaute
   })
-  it('a partir de 01/01/2027 os dizeres do art. 59 deixam de ir; a frase do crédito continua', () => {
-    expect(simplesTexts('1', '2027-01-01', [])).toEqual([])
-    expect(simplesTexts('1', '2027-01-01', [credit('2.86', '28.600000')])).toEqual([
-      'PERMITE O APROVEITAMENTO DO CRÉDITO DE ICMS NO VALOR DE R$ 28,60; CORRESPONDENTE À ALÍQUOTA DE 2,86%, NOS TERMOS DO ART. 23 DA LEI COMPLEMENTAR Nº 123, DE 2006.',
-    ])
+  it('a partir de 01/01/2027 a frase deixa de ir', () => {
+    expect(simplesTexts('1', '2027-01-01')).toEqual([])
+    expect(simplesTexts('1', '2030-06-15')).toEqual([])
   })
-  it('crédito: soma por alíquota (uma frase por alíquota), só CSOSN 101 e valor maior que zero, sem ponto flutuante', () => {
-    const out = simplesTexts('1', '2026-11-24', [
-      credit('2.86', '1000.070000'), credit('2.8600', '234.490000'), credit('3.05', '0.010000'), credit('2.86', '50.00', '102'), credit('2.86', '0.00'),
-    ])
-    expect(out).toEqual([
-      SIMPLES_ISSUER_TEXT,
-      'PERMITE O APROVEITAMENTO DO CRÉDITO DE ICMS NO VALOR DE R$ 1.234,56; CORRESPONDENTE À ALÍQUOTA DE 2,86%, NOS TERMOS DO ART. 23 DA LEI COMPLEMENTAR Nº 123, DE 2006.',
-      'PERMITE O APROVEITAMENTO DO CRÉDITO DE ICMS NO VALOR DE R$ 0,01; CORRESPONDENTE À ALÍQUOTA DE 3,05%, NOS TERMOS DO ART. 23 DA LEI COMPLEMENTAR Nº 123, DE 2006.',
-    ])
-    for (const s of out) expect(isXsdTString(s, 1, 5000)).toBe(true)                   // com acento e "Nº": dentro do alfabeto do leiaute
+  it('a frase do CRÉDITO de ICMS nunca é derivada aqui: é do ERP web, na observação da nota (D-NE274)', () => {
+    for (const date of ['2026-11-24', '2027-01-01']) expect(simplesTexts('1', date).join(' ')).not.toMatch(/CRÉDITO DE ICMS|ART\. 23/)
   })
   it('outros regimes (CRT 2, 3, 4, nulo): sem dizeres no 1º release', () => {
-    for (const crt of ['2', '3', '4', null]) expect(simplesTexts(crt, '2026-11-24', [credit('2.86', '10.00')])).toEqual([])
+    for (const crt of ['2', '3', '4', null]) expect(simplesTexts(crt, '2026-11-24')).toEqual([])
   })
   it('data malformada é erro de quem chama', () => {
-    expect(() => simplesTexts('1', '24/11/2026', [])).toThrow(/emissionDate/)
+    expect(() => simplesTexts('1', '24/11/2026')).toThrow(/emissionDate/)
   })
   it('infCpl: os dizeres primeiro, depois a observação da nota, com " | "; nada → null', () => {
     expect(complementaryInfo([SIMPLES_ISSUER_TEXT], 'Pedido 123')).toBe(`${SIMPLES_ISSUER_TEXT} | Pedido 123`)

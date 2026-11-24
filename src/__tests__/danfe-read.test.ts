@@ -38,7 +38,7 @@ describe('NFE.E6.P3.T1 — readNfeProc lê a nota autorizada', () => {
   })
 
   it('itens: o CSOSN no grupo do ICMS (nunca CST), a unidade, a quantidade e o valor, na ordem do nItem', () => {
-    expect(data.items.map(i => i.nItem)).toEqual(['1', '2'])
+    expect(data.items.map(i => i.itemNo)).toEqual(['1', '2'])
     expect(data.items[0].prod).toMatchObject({ cProd: '910', xProd: 'Flange usinada em aço Ø 50 mm', NCM: '73259990', CFOP: '5101', uCom: 'PC', vProd: '3000.00' })
     expect(data.items[0].icmsGroup).toBe('ICMSSN101')
     expect(data.items[0].icms).toMatchObject({ orig: '0', CSOSN: '101' })

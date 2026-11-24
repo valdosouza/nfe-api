@@ -13,7 +13,7 @@
  * demais campos 10 pt). Leitura L da ficha (S-5): descritivo = 6 pt e conteúdo = 10 pt nos "demais campos". O VALOR de campo nunca encolhe e nunca
  * é abreviado: o que não cabe numa linha QUEBRA em mais linhas e a caixa cresce (o XML manda; o DANFE reproduz). Só descritivos fixos e a chave
  * (comprimento fixo de 44) podem encolher, até o `minSizePt` do trecho. A chave de acesso sai em 9 pt negrito para caber nos 8,0 cm do quadro (a
- * tabela de dimensões do AII 3.8; o AII não fixa o corpo da chave — registrado na ficha).
+ * tabela de dimensões do AII 3.8; o AII não fixa o corpo da chave — suposição S-7 da ficha).
  */
 
 export const CM = Object.freeze({
@@ -44,7 +44,7 @@ export const DANFE_FONT_ROLES = Object.freeze({
 export type DanfeRole = keyof typeof DANFE_FONT_ROLES
 
 export interface DanfeTextPart {
-  readonly role: DanfeRole
+  readonly fontRole: DanfeRole
   /** O corpo do trecho (e o máximo quando o trecho pode encolher). */
   readonly sizePt: number
   /** O menor corpo que o trecho aceita (igual a `sizePt` quando não encolhe). */
@@ -57,35 +57,35 @@ export interface DanfeTextPart {
  * teste `danfe-text-parts.test.ts` confere a tabela, que o desenho só escreve por ela e que cada corpo no PDF cai na faixa de um trecho.
  */
 export const DANFE_TEXT_PARTS = Object.freeze({
-  /** Descritivo (rótulo) de campo, 6 pt caixa alta (os fixos podem encolher até 5 pt). */
-  fieldLabel: { role: 'label', sizePt: 6, minSizePt: 5, align: 'left' },
+  /** Descritivo (rótulo) de campo, 6 pt caixa alta (AII 3.7.3: nunca abaixo de 6 pt). */
+  fieldLabel: { fontRole: 'label', sizePt: 6, minSizePt: 6, align: 'left' },
   /** Título de bloco (DESTINATÁRIO/REMETENTE…), 5 pt negrito caixa alta. */
-  blockTitle: { role: 'labelBold', sizePt: 5, minSizePt: 5, align: 'left' },
+  blockTitle: { fontRole: 'labelBold', sizePt: 5, minSizePt: 5, align: 'left' },
   /** Cabeçalho de coluna dos itens, 5 pt caixa alta. */
-  columnTitle: { role: 'label', sizePt: 5, minSizePt: 5, align: 'center' },
+  columnTitle: { fontRole: 'label', sizePt: 5, minSizePt: 5, align: 'center' },
   /** Valor de campo de texto (10 pt; quebra em mais linhas, nunca encolhe). */
-  fieldValue: { role: 'value', sizePt: 10, minSizePt: 10, align: 'left' },
+  fieldValue: { fontRole: 'value', sizePt: 10, minSizePt: 10, align: 'left' },
   /** Valor de campo numérico/monetário (à direita). */
-  fieldNumber: { role: 'value', sizePt: 10, minSizePt: 10, align: 'right' },
+  fieldNumber: { fontRole: 'value', sizePt: 10, minSizePt: 10, align: 'right' },
   /** Valor de campo centrado (UF, código, protocolo). */
-  fieldCentered: { role: 'value', sizePt: 10, minSizePt: 10, align: 'center' },
+  fieldCentered: { fontRole: 'value', sizePt: 10, minSizePt: 10, align: 'center' },
   /** Conteúdo de uma linha de item e de informações complementares, 6 pt. */
-  itemText: { role: 'value', sizePt: 6, minSizePt: 6, align: 'left' },
-  itemNumber: { role: 'value', sizePt: 6, minSizePt: 6, align: 'right' },
-  itemCentered: { role: 'value', sizePt: 6, minSizePt: 6, align: 'center' },
+  itemText: { fontRole: 'value', sizePt: 6, minSizePt: 6, align: 'left' },
+  itemNumber: { fontRole: 'value', sizePt: 6, minSizePt: 6, align: 'right' },
+  itemCentered: { fontRole: 'value', sizePt: 6, minSizePt: 6, align: 'center' },
   /** "DANFE", 12 pt negrito. */
-  documentName: { role: 'valueBold', sizePt: 12, minSizePt: 12, align: 'center' },
+  documentName: { fontRole: 'valueBold', sizePt: 12, minSizePt: 12, align: 'center' },
   /** "DOCUMENTO AUXILIAR DA NOTA FISCAL ELETRÔNICA" e ENTRADA/SAÍDA, 8 pt. */
-  documentSubtitle: { role: 'value', sizePt: 8, minSizePt: 8, align: 'center' },
+  documentSubtitle: { fontRole: 'value', sizePt: 8, minSizePt: 8, align: 'center' },
   /** Série, número, folha e tpNF, 10 pt negrito. */
-  identification: { role: 'valueBold', sizePt: 10, minSizePt: 10, align: 'center' },
+  identification: { fontRole: 'valueBold', sizePt: 10, minSizePt: 10, align: 'center' },
   /** Razão social do emitente, 12 pt negrito (quebra em mais linhas, nunca encolhe). */
-  issuerName: { role: 'valueBold', sizePt: 12, minSizePt: 12, align: 'center' },
+  issuerName: { fontRole: 'valueBold', sizePt: 12, minSizePt: 12, align: 'center' },
   /** Demais dados do emitente, 8 pt negrito. */
-  issuerData: { role: 'valueBold', sizePt: 8, minSizePt: 8, align: 'center' },
+  issuerData: { fontRole: 'valueBold', sizePt: 8, minSizePt: 8, align: 'center' },
   /** A chave de acesso em blocos (negrito, comprimento fixo) e a mensagem de consulta. */
-  accessKey: { role: 'valueBold', sizePt: 9, minSizePt: 8, align: 'center' },
-  consultMessage: { role: 'value', sizePt: 6, minSizePt: 6, align: 'center' },
+  accessKey: { fontRole: 'valueBold', sizePt: 9, minSizePt: 8, align: 'center' },
+  consultMessage: { fontRole: 'value', sizePt: 6, minSizePt: 6, align: 'center' },
 } as const satisfies Readonly<Record<string, DanfeTextPart>>)
 export type DanfePartName = keyof typeof DANFE_TEXT_PARTS
 
@@ -107,7 +107,11 @@ export const DANFE_TEXTS = Object.freeze({
   natOp: 'NATUREZA DA OPERAÇÃO',
   ie: 'INSCRIÇÃO ESTADUAL',
   iest: 'INSCRIÇÃO ESTADUAL DO SUBST. TRIBUT.',
-  cnpj: 'CNPJ',
+  cnpj: 'CNPJ / CPF',
+  crt: 'CÓDIGO DO REGIME TRIBUTÁRIO',
+  duplicate: 'FATURA / DUPLICATA  VENCIMENTO  VALOR',
+  totals: 'TOTAL DOS PRODUTOS E TOTAL DA NOTA',
+  icmsIpi: 'TOTAL DO ICMS / IPI',
   recipient: 'DESTINATÁRIO / REMETENTE',
   invoice: 'FATURA / DUPLICATAS',
   tax: 'CÁLCULO DO IMPOSTO',

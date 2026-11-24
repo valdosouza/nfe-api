@@ -4,11 +4,12 @@
 // NFE.E6.P3, M1):
 //  1. `addContent`, `formText`, `note` e `textAnnotation` (D-NE228) mais o resto das APIs do pdfkit que escrevem texto ou conteúdo fora das portas —
 //     `annotate`, `formAnnotation`, `formField`, `formCombo`, `formList`, `formPushButton`, `formRadioButton`, `formCheckbox`, `continueOnNewPage`,
-//     `_fragment`, `_text`, `_line` — como CHAMADA (CALL_BANNED);
+//     `_fragment`, `_text`, `_line`, `link`, `rectAnnotation`, `lineAnnotation`, `fileAnnotation`, `highlight`, `goTo`, `markContent`, `file`,
+//     `addNamedEmbeddedFile` — como CHAMADA (CALL_BANNED);
 //  2. `addPage` em QUALQUER referência de propriedade (PROPERTY_BANNED): o embrulho (`const o = doc.addPage; doc.addPage = …`) e a chamada direta
 //     (a família não abre folha: o pdfkit abre no transbordo e o `sheetStart` da base não pode abri-la); o texto `'addPage'` solto também é
 //     acusado (regra d, como o `'pageAdded'`);
-//  3. `write` chamado sobre `.page` ou `.content` (é o que o `addContent` faz por dentro: `doc.page.write('BT … Tj ET')`) — regra b;
+//  3. `write` chamado sobre `.page` ou `.content` (e `const p = doc.page` — o apelido da página — é acusado em regra b) (é o que o `addContent` faz por dentro: `doc.page.write('BT … Tj ET')`) — regra b;
 //  4. `doc[chave]` com chave que NÃO é texto literal (`const k = 'text'; doc[k](…)`) — regra c; só o objeto chamado `doc` (a convenção da família).
 // LIMITES: a desestruturação de `note` de um objeto que não é resultado de chamada é acusada — a pasta do DANFE não usa campo com esse nome; nome
 // montado em execução em outro objeto, `eval`, `Object(doc)` e `doc.on('page' + 'Added')` seguem como os limites do cabeçalho abaixo (a cerca
@@ -52,6 +53,8 @@ export const CALL_BANNED = Object.freeze([
   'text', 'list', 'table', 'font', 'addContent', 'formText', 'note', 'textAnnotation',
   'annotate', 'formAnnotation', 'formField', 'formCombo', 'formList', 'formPushButton', 'formRadioButton', 'formCheckbox',
   'continueOnNewPage', '_fragment', '_text', '_line',
+  // o resto das anotações e dos anexos do pdfkit 0.20.2 (gate socrático, 2ª passada, L1)
+  'link', 'rectAnnotation', 'lineAnnotation', 'fileAnnotation', 'highlight', 'goTo', 'markContent', 'file', 'addNamedEmbeddedFile',
 ] as const)
 /** (b) Barrados em qualquer referência de propriedade. */
 export const PROPERTY_BANNED = Object.freeze(['heightOfString', 'widthOfString', 'registerFont', 'addPage'] as const)
@@ -217,6 +220,9 @@ export function pdfFamilyViolations(code: string): FenceViolation[] {
     }
     // (c) doc['text'], doc[`font`]
     if (ts.isElementAccessExpression(n) && isText(n.argumentExpression) && has(NAME_BANNED, n.argumentExpression.text)) add('c', n)
+    // (b) o apelido da página: `const p = doc.page; p.write('BT … Tj ET')` escreveria conteúdo sem passar por `doc.page.write` à vista
+    if (ts.isVariableDeclaration(n) && n.initializer && ts.isPropertyAccessExpression(n.initializer) && n.initializer.name.text === 'page'
+      && ts.isIdentifier(n.initializer.expression) && n.initializer.expression.text === 'doc') add('b', n)
     // (c) doc[chave] com chave que não é texto literal: `const k = 'text'; doc[k]('x')` (gate adversarial M1)
     else if (ts.isElementAccessExpression(n) && ts.isIdentifier(n.expression) && n.expression.text === 'doc' && !isText(n.argumentExpression)) add('c', n)
     // (d) 'pageAdded' em qualquer lugar

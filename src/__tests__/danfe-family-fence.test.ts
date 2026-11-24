@@ -106,6 +106,15 @@ describe('NFE.E6.P3.T3 — o alcance novo da D-NE228 (gate A6 do núcleo)', () =
       "doc._text('x', 1, 2, {}, () => {})",
       "doc._line('x', {}, () => {})",
       "doc.annotate.call(doc, 1, 2, 3, 4, {})",
+      "doc.link(10, 10, 20, 20, 'http://x')",
+      "doc.rectAnnotation(10, 10, 20, 20, { Contents: 'x' })",
+      "doc.lineAnnotation(1, 2, 3, 4, {})",
+      "doc.fileAnnotation(10, 10, 20, 20, { src: 'a' })",
+      "doc.highlight(1, 2, 3, 4)",
+      "doc.goTo(1, 2, 3, 4, 'dest')",
+      "doc.markContent('Span')",
+      "doc.file(Buffer.from('x'), { name: 'a.txt' })",
+      "doc.addNamedEmbeddedFile('a.txt', {})",
     ]
     expect(cases.map(c => [c, rules(c)])).toEqual(cases.map(c => [c, ['a']]))
   })
@@ -114,6 +123,7 @@ describe('NFE.E6.P3.T3 — o alcance novo da D-NE228 (gate A6 do núcleo)', () =
     const cases: [string, FenceRule[]][] = [
       ["doc.page.write('BT (x) Tj ET')", ['b']],
       ["doc.page.content.write('BT (x) Tj ET')", ['b']],
+      ["const p = doc.page; p.write('BT (x) Tj ET')", ['b']],
       ["const k = 'text'; doc[k]('x')", ['c']],
       ['doc[`te${sufixo}`](\'x\')', ['c']],
       ['doc[nome()](1)', ['c']],

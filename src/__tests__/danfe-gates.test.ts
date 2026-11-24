@@ -51,7 +51,8 @@ describe('gates — cada coluna do item sai com o valor do SEU campo (mutantes: 
     const t = r.texts[0]
     expect(t).toContain('CST')
     expect(t).not.toContain('CSOSN')
-    expect(t).toContain('CRT: 3 - REGIME NORMAL')
+    expect(t).toContain('3 - REGIME NORMAL')
+    expect(t).toContain('CÓDIGO DO REGIME TRIBUTÁRIO')
     expect(rowOf(r.pages[0], '910')).toEqual(['910', 'Flange usinada em aço Ø 50 mm', '73259990', '00', '5101', 'PC', '2', '1.500', '3.000,00', '3.000,00', '540,00', '18,00'])
     expect(rowOf(r.pages[0], '930')).toEqual(['930', 'Bucha de bronze', '73259990', '00', '5101', 'PC', '3', '333,333333', '1.000,00', '1.000,00', '180,00', '18,00'])
   })
@@ -84,8 +85,8 @@ describe('gates — o que os mutantes deixavam vivo agora é provado', () => {
     const base = saleInput()
     const parcels = [66666, 66666, 66666, 66666, 66666, 66670].map((cents, i) => ({ dueDate: `2026-12-${String(10 + i).padStart(2, '0')}`, cents }))
     const t = (await render(authorizedProc({ ...base, installments: parcels }).xml)).texts[0]
-    for (let n = 1; n <= 6; n++) expect(t).toContain(`DUPLICATA 00${n}`)
-    expect(t).toContain('15/12/2026  666,70')
+    for (let n = 1; n <= 5; n++) expect(t).toContain(`00${n}  ${10 + n - 1}/12/2026  666,66`)
+    expect(t).toContain('006  15/12/2026  666,70')
   })
 
   it('o carimbo CANCELADA, o cabeçalho com emitente e as barras da chave saem em TODA folha da nota cancelada de várias folhas', async () => {
@@ -111,14 +112,63 @@ describe('gates — o que os mutantes deixavam vivo agora é provado', () => {
   })
 })
 
-describe('gates — a ordem do leiaute (AII retrato): o ISSQN vem DEPOIS dos itens', () => {
-  it('o título do ISSQN está abaixo da última linha de item e acima das informações complementares', async () => {
-    const xml = insertBefore(authorizedProc().xml, '</total>', '<ISSQNtot><vServ>50.00</vServ><vBC>50.00</vBC><vISS>2.50</vISS></ISSQNtot>')
+describe('gates — a ordem do modelo vertical da NT 2026.010 (D-NE100)', () => {
+  it('destinatário, fatura, totais dos produtos e da nota, total do ICMS/IPI, ISSQN, transportador, itens e dados adicionais — de cima para baixo', async () => {
+    let xml = insertBefore(authorizedProc().xml, '</total>', '<ISSQNtot><vServ>50.00</vServ><vBC>50.00</vBC><vISS>2.50</vISS></ISSQNtot>')
+    xml = insertBefore(xml, '</transp>', '<vol><qVol>2</qVol><esp>CAIXA</esp></vol>')
     const runs = (await render(xml)).pages[0]
-    const y = (text: string): number => runs.find(r => r.text === text)!.yPdf                  // y de baixo para cima: menor = mais abaixo
-    expect(y('CÁLCULO DO ISSQN')).toBeLessThan(y('Bucha de bronze'))
-    expect(y('CÁLCULO DO ISSQN')).toBeGreaterThan(y('DADOS ADICIONAIS'))
-    expect(y('DADOS DOS PRODUTOS / SERVIÇOS')).toBeGreaterThan(y('CÁLCULO DO ISSQN'))
+    const y = (text: string): number => runs.find(r => r.text === text)!.yPdf                  // y de baixo para cima: maior = mais acima
+    const order = ['DESTINATÁRIO / REMETENTE', 'FATURA / DUPLICATAS', 'TOTAL DOS PRODUTOS E TOTAL DA NOTA', 'TOTAL DO ICMS / IPI', 'CÁLCULO DO ISSQN',
+      'TRANSPORTADOR / VOLUMES TRANSPORTADOS', 'DADOS DOS PRODUTOS / SERVIÇOS', 'DADOS ADICIONAIS']
+    for (let i = 1; i < order.length; i++) expect([order[i - 1], order[i], y(order[i - 1]) > y(order[i])]).toEqual([order[i - 1], order[i], true])
+    expect(y('CÁLCULO DO ISSQN')).toBeGreaterThan(y('Bucha de bronze'))                       // o ISSQN vem ANTES dos itens (modelo da NT)
+  })
+
+  it('totais condicionais da NT 4.4 (FCP, DIFAL, monofásico) saem quando o XML os traz com valor, e só então', async () => {
+    const plain = (await render(authorizedProc().xml)).texts[0]
+    expect(plain.join(' ')).not.toMatch(/FCP|DIFAL|MONOFÁSICO/)
+    const xml = authorizedProc().xml.replace('<vFCP>0.00</vFCP>', '<vFCP>12.34</vFCP>').replace('<vFCPST>0.00</vFCPST>', '<vFCPST>5.00</vFCPST>')
+      .replace('</ICMSTot>', '<vICMSUFDest>56.78</vICMSUFDest><vFCPUFDest>1.23</vFCPUFDest><vICMSMono>9.99</vICMSMono></ICMSTot>')
+    const t = (await render(xml)).texts[0]
+    expect(t).toEqual(expect.arrayContaining(['VALOR DO FCP', '12,34', 'VALOR DO FCP RETIDO POR ST', '5,00', 'VALOR DO DIFAL NA UF DE DESTINO', '56,78', 'VALOR DO FCP NA UF DE DESTINO', '1,23', 'VALOR DO ICMS MONOFÁSICO', '9,99']))
+  })
+})
+
+describe('gates — rótulos de campo nunca abaixo de 6 pt, número da duplicata nunca abreviado, emitente do tamanho máximo do XSD', () => {
+  it('só os títulos de bloco e de coluna saem em 5 pt; todo rótulo de campo (inclusive INFORMAÇÕES COMPLEMENTARES e RESERVADO AO FISCO) sai em 6 pt', async () => {
+    const r = await render(authorizedProc().xml)
+    const five = new Set(r.pages[0].filter(x => x.size === 5).map(x => x.text))
+    const blockAndColumn = new Set(['DESTINATÁRIO / REMETENTE', 'FATURA / DUPLICATAS', 'TOTAL DOS PRODUTOS E TOTAL DA NOTA', 'TOTAL DO ICMS / IPI', 'TRANSPORTADOR / VOLUMES TRANSPORTADOS',
+      'DADOS DOS PRODUTOS / SERVIÇOS', 'DADOS ADICIONAIS', 'CÓDIGO', 'DESCRIÇÃO DO PRODUTO / SERVIÇO', 'NCM/SH', 'CSOSN', 'CFOP', 'UN', 'QUANT.', 'VALOR UNIT.', 'VALOR TOTAL', 'BC ICMS', 'VALOR', 'ICMS', 'ALÍQ.', 'VALOR ICMS'])
+    for (const text of five) expect([text, blockAndColumn.has(text)]).toEqual([text, true])
+    const six = new Set(r.pages[0].filter(x => x.size === 6).map(x => x.text))
+    expect(six).toEqual(expect.objectContaining(new Set(['INFORMAÇÕES COMPLEMENTARES', 'RESERVADO AO FISCO', 'NATUREZA DA OPERAÇÃO', 'CÓDIGO DO REGIME TRIBUTÁRIO'])))
+    for (const label of ['INFORMAÇÕES COMPLEMENTARES', 'RESERVADO AO FISCO', 'NATUREZA DA OPERAÇÃO', 'CÓDIGO DO REGIME TRIBUTÁRIO']) expect([label, six.has(label)]).toEqual([label, true])
+    expect(r.texts[0].join(' ')).not.toContain('...')
+  })
+
+  it('nDup de 60 caracteres sai inteiro, no valor (10 pt, quebrado), e o rótulo da duplicata fica fixo', async () => {
+    const nDup = 'D'.repeat(60)
+    const xml = authorizedProc().xml.replace('<nDup>001</nDup>', `<nDup>${nDup}</nDup>`)
+    const r = await render(xml)
+    expect(r.texts[0].join('')).toContain(nDup)
+    expect(r.texts[0].join(' ')).not.toContain('...')
+    const piece = r.pages[0].find(x => /^D+$/.test(x.text))!
+    expect(piece.size).toBe(10)
+    expect(r.texts[0]).toContain('FATURA / DUPLICATA  VENCIMENTO  VALOR')
+  })
+
+  it('emitente com nome e endereço no máximo do XSD: o quadro cresce e o CRT/IE não ficam sobre o texto dele', async () => {
+    const xml = authorizedProc().xml.replace('SETES USINAGEM DE TESTE LTDA', 'W'.repeat(60)).replace('<xLgr>Rua Clemente Mendes</xLgr>', `<xLgr>${'R'.repeat(60)}</xLgr>`)
+      .replace('<xMun>Curitiba</xMun>', `<xMun>${'M'.repeat(60)}</xMun>`)
+    const r = await render(xml)
+    const runs = r.pages[0]
+    const issuerLines = runs.filter(x => /^[WRM]{20,}/.test(x.text) && x.x < 280)
+    expect(issuerLines.length).toBeGreaterThanOrEqual(4)
+    const lowestIssuer = Math.min(...issuerLines.map(x => x.yPdf))
+    const natOpLabel = runs.find(x => x.text === 'NATUREZA DA OPERAÇÃO')!
+    expect(lowestIssuer).toBeGreaterThan(natOpLabel.yPdf + 6)                                 // a última linha do emitente fica ACIMA do quadro da natureza
+    expect(runs.find(x => x.text === 'DANFE')!.yPdf).toBeGreaterThan(natOpLabel.yPdf)
   })
 })
 
@@ -154,12 +204,20 @@ describe('gates — valor fiscal nunca é abreviado (M2) e entrada hostil é 422
     expect(e?.fields?.[0]?.field).toBe('procNfeXml')
   })
 
-  it('o erro de desenho da base (RangeError) vira 422: um nome de emitente de 3.000 caracteres sem espaço desenha em linhas, sem estourar', async () => {
+  it('um nome de emitente de 3.000 caracteres (fora do XSD) é 422 rápido, não cabeçalho que come a folha nem erro 500', async () => {
     const xml = authorizedProc().xml.replace('SETES USINAGEM DE TESTE LTDA', 'S'.repeat(3000))
     const started = Date.now()
-    const r = await render(xml)
+    let e: HttpError | null = null
+    try { await render(xml) } catch (x) { e = x as HttpError }
     expect(Date.now() - started).toBeLessThan(30_000)
-    expect(r.texts[0].filter(t => /^S+$/.test(t)).join('').length).toBeGreaterThanOrEqual(3000 - 0)
+    expect(e).toBeInstanceOf(HttpError)
+    expect(e?.statusCode).toBe(422)
+    expect(e?.fields?.[0]?.field).toBe('procNfeXml')
+  })
+
+  it('o tributável é comparado como NÚMERO: `2` e `2.0000` são o mesmo valor e não geram a linha Trib.', async () => {
+    const xml = authorizedProc().xml.replace('<qTrib>2</qTrib>', '<qTrib>2.0000</qTrib>').replace('<vUnTrib>1500</vUnTrib>', '<vUnTrib>1500.000000</vUnTrib>')
+    expect((await render(xml)).texts[0].filter(x => x.startsWith('Trib.:'))).toEqual([])
   })
 })
 

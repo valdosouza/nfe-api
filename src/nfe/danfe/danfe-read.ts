@@ -32,7 +32,7 @@ export interface DanfeParty {
 }
 
 export interface DanfeItem {
-  readonly nItem: string | null
+  readonly itemNo: string | null
   /** `cProd`, `cEAN`, `xProd`, `NCM`, `CFOP`, `uCom`, `qCom`, `vUnCom`, `vProd`, `cEANTrib`, `uTrib`, `qTrib`, `vUnTrib`, `vFrete`, `vSeg`, `vDesc`, `vOutro`. */
   readonly prod: DanfeFields
   /** O grupo único de `imposto/ICMS/*`: o nome do grupo (`ICMSSN102`…) e os filhos (`orig`, `CST`/`CSOSN`, `vBC`, `pICMS`, `vICMS`…). */
@@ -153,7 +153,7 @@ export function readNfeProc(procNfeXml: string): DanfeData {
     const icmsWrap = child(child(det, 'imposto'), 'ICMS')
     const group = icmsWrap ? kids(icmsWrap)[0] ?? null : null
     return {
-      nItem: attrOf(det, 'nItem'), prod: fieldsOf(child(det, 'prod')),
+      itemNo: attrOf(det, 'nItem'), prod: fieldsOf(child(det, 'prod')),
       icmsGroup: group ? (group.localName ?? group.nodeName) : null, icms: fieldsOf(group), infAdProd: textOfChild(det, 'infAdProd'),
     }
   })

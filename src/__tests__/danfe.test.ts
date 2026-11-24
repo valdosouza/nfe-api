@@ -10,6 +10,12 @@ import { authorizedProc, insertBefore, longInput } from './danfe-fixtures'
 import { saleInput, saleKey } from './nfe-fixtures'
 import { pdfContentOps, pdfPageCount, pdfTextRuns, type TextRun } from './pdf-text'
 
+/** Os trechos da MESMA linha de base do trecho âncora, da esquerda para a direita. */
+const rowOf = (runs: TextRun[], anchor: string): string[] => {
+  const a = runs.find(r => r.text === anchor)!
+  return runs.filter(r => Math.abs(r.yPdf - a.yPdf) < 0.6).sort((x, y) => x.x - y.x).map(r => r.text)
+}
+
 jest.setTimeout(120_000)
 
 const FIXED = new Date('2026-11-24T15:00:00Z')
@@ -63,13 +69,17 @@ describe('NFE.E6.P3.T1 — o DANFE da nota autorizada em homologação (venda do
 
   it('o emitente com o CRT 1, a identificação fiscal e a natureza da operação', () => {
     const t = r.texts[0]
-    expect(t).toEqual(expect.arrayContaining(['SETES USINAGEM DE TESTE LTDA', 'CRT: 1 - SIMPLES NACIONAL', 'Rua Clemente Mendes, 1081', 'Curitiba - PR', '07.742.094/0001-13', '9053273308', 'Venda de produção do estabelecimento']))
+    expect(t).toEqual(expect.arrayContaining(['SETES USINAGEM DE TESTE LTDA', 'Rua Clemente Mendes, 1081', 'Curitiba - PR', '07.742.094/0001-13', '9053273308', 'Venda de produção do estabelecimento']))
+    // o CRT é campo próprio na linha da IE (modelo vertical da NT 2026.010): rótulo CÓDIGO DO REGIME TRIBUTÁRIO e o código com o nome
+    expect(t).toContain('CÓDIGO DO REGIME TRIBUTÁRIO')
+    expect(rowOf(r.pages[0], '9053273308')).toEqual(['9053273308', '1 - SIMPLES NACIONAL', '07.742.094/0001-13'])
+    expect(t.join(' ')).not.toContain('CRT:')
   })
 
   it('o destinatário, o cálculo do imposto, a fatura em duas parcelas e o transportador com volume', () => {
     const t = r.texts[0]
     expect(t).toEqual(expect.arrayContaining(['11.222.333/0001-81', 'Distrito Industrial', '83005-000', '24/11/2026', '1234567890']))
-    expect(t).toEqual(expect.arrayContaining(['VALOR TOTAL DA NOTA', 'VALOR TOTAL DOS PRODUTOS', 'DUPLICATA 001', '22/12/2026  2.000,00', 'DUPLICATA 002', '19/01/2027  2.000,00']))
+    expect(t).toEqual(expect.arrayContaining(['TOTAL DOS PRODUTOS E TOTAL DA NOTA', 'TOTAL DO ICMS / IPI', 'VALOR TOTAL DA NOTA', 'VALOR TOTAL DOS PRODUTOS', 'FATURA / DUPLICATA  VENCIMENTO  VALOR', '001  22/12/2026  2.000,00', '002  19/01/2027  2.000,00']))
     expect(t.filter(x => x === '4.000,00').length).toBeGreaterThanOrEqual(3)                // produtos, nota, fatura
     expect(t).toEqual(expect.arrayContaining(['CAIXA', 'SETES', '1-2', '11,000', '10,500', 'CÁLCULO DO ISSQN', '50,00', '2,50']))
   })

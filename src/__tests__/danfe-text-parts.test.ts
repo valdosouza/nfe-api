@@ -40,10 +40,10 @@ describe('NFE.E6.P3.T2 — a tabela de trechos: cada trecho diz o papel, o corpo
   it('todo trecho tem papel registrado, corpo finito positivo e alinhamento do domínio', () => {
     expect(entries.length).toBeGreaterThanOrEqual(15)
     for (const [name, p] of entries) {
-      expect([name, Object.keys(DANFE_FONT_ROLES)]).toEqual([name, expect.arrayContaining([p.role])])
+      expect([name, Object.keys(DANFE_FONT_ROLES)]).toEqual([name, expect.arrayContaining([p.fontRole])])
       expect(Number.isFinite(p.sizePt) && p.sizePt > 0).toBe(true)
       expect(ALIGNS).toContain(p.align)
-      expect(Object.keys(p).sort()).toEqual(['align', 'minSizePt', 'role', 'sizePt'])   // nenhum trecho carrega opção a mais herdável
+      expect(Object.keys(p).sort()).toEqual(['align', 'fontRole', 'minSizePt', 'sizePt'])   // nenhum trecho carrega opção a mais herdável
       expect(p.minSizePt).toBeGreaterThan(0)
       expect(p.minSizePt).toBeLessThanOrEqual(p.sizePt)
     }
@@ -138,7 +138,7 @@ describe('NFE.E6.P3.T2 — o documento com TODOS os opcionais vazios', () => {
     expect(texts).not.toContain('CÁLCULO DO ISSQN')
     expect(texts).not.toContain('TRANSPORTADOR / VOLUMES TRANSPORTADOS')           // modFrete 9 sem transportador, veículo nem volume: sem dado, sem quadro (NT 4.4)
     expect(texts).not.toContain('9 - Sem Ocorrência de Transporte')
-    expect(texts).toEqual(expect.arrayContaining(['DANFE', 'FOLHA 1/1', 'DESTINATÁRIO / REMETENTE', 'CÁLCULO DO IMPOSTO', 'DADOS DOS PRODUTOS / SERVIÇOS']))
+    expect(texts).toEqual(expect.arrayContaining(['DANFE', 'FOLHA 1/1', 'DESTINATÁRIO / REMETENTE', 'TOTAL DOS PRODUTOS E TOTAL DA NOTA', 'TOTAL DO ICMS / IPI', 'DADOS DOS PRODUTOS / SERVIÇOS']))
   })
 
   it('os campos opcionais ausentes ficam em branco: o quadro existe e o valor não aparece (fantasia, complemento, IE do destinatário, EAN)', () => {

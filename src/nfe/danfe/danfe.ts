@@ -81,12 +81,12 @@ function emit(doc: Doc, e: Emission): void {
   const p = DANFE_TEXT_PARTS[e.part]
   // a tabela de trechos MANDA no corpo: fora de [minSizePt, sizePt] é defeito do desenho (nunca vira PDF com corpo menor que o do Anexo II)
   if (!(e.sizePt >= p.minSizePt && e.sizePt <= p.sizePt)) throw new Error(`DANFE: corpo ${e.sizePt} pt fora da faixa do trecho ${e.part}`)
-  writeText(doc, p.role, e.text, { x: e.x, y: e.y, width: e.widthPt, sizePt: e.sizePt, align: p.align, lineBreak: !e.singleLine })
+  writeText(doc, p.fontRole, e.text, { x: e.x, y: e.y, width: e.widthPt, sizePt: e.sizePt, align: p.align, lineBreak: !e.singleLine })
 }
 
 /** Largura (pt) de um texto numa linha, no corpo pedido. */
 function widthOf(doc: Doc, part: DanfePartName, text: string, sizePt: number): number {
-  return measureText(doc, DANFE_TEXT_PARTS[part].role, text, { sizePt, x: left() }).width
+  return measureText(doc, DANFE_TEXT_PARTS[part].fontRole, text, { sizePt, x: left() }).width
 }
 
 const lineCache = new WeakMap<Doc, Map<string, number>>()
@@ -97,7 +97,7 @@ function lineHeight(doc: Doc, part: DanfePartName, sizePt: number): number {
   const key = `${part}|${sizePt}`
   let h = cache.get(key)
   if (h === undefined) {
-    h = measureText(doc, DANFE_TEXT_PARTS[part].role, 'Mg', { sizePt, width: c(10), x: left() }).height
+    h = measureText(doc, DANFE_TEXT_PARTS[part].fontRole, 'Mg', { sizePt, width: c(10), x: left() }).height
     cache.set(key, h)
   }
   return h
@@ -224,30 +224,35 @@ function issuerLines(p: DanfeParty): string[] {
     joinParts([joinParts([a.xLgr, a.nro], ', '), a.xCpl], ' - '),
     joinParts([a.xBairro, a.CEP ? `CEP ${brZip(a.CEP)}` : null], ' - '),
     joinParts([joinParts([a.xMun, a.UF], ' - '), a.fone ? `Fone: ${a.fone}` : null], ' - '),
-    p.CRT ? `CRT: ${CRT_LABELS[p.CRT] ?? p.CRT}` : '',
   ].filter(l => l !== '')
+}
+
+/** As linhas do quadro do emitente (razão social em 12 pt, dados em 8 pt) e a altura que elas pedem — o quadro CRESCE com o dado (L2 do gate socrático). */
+function issuerContent(doc: Doc, p: DanfeParty, inner: number): { name: string[]; data: string[]; height: number } {
+  const name = p.xFant && p.xNome ? p.xNome : (p.xNome ?? p.xFant ?? '')
+  const nameLines = name === '' ? [] : wrapLines(doc, 'issuerName', name, inner, DANFE_TEXT_PARTS.issuerName.sizePt)
+  const dataLines = issuerLines(p).flatMap(raw => wrapLines(doc, 'issuerData', raw, inner, DANFE_TEXT_PARTS.issuerData.sizePt))
+  const height = PAD * 2 + nameLines.length * lineHeight(doc, 'issuerName', DANFE_TEXT_PARTS.issuerName.sizePt) + PAD
+    + dataLines.length * lineHeight(doc, 'issuerData', DANFE_TEXT_PARTS.issuerData.sizePt) + PAD
+  return { name: nameLines, data: dataLines, height }
 }
 
 function drawIssuerBox(ctx: Ctx, x: number, y: number, w: number, h: number): void {
   const { doc, data } = ctx
   box(doc, x, y, w, h)
   const inner = w - 2 * PAD
-  const name = data.emit.xFant && data.emit.xNome ? data.emit.xNome : (data.emit.xNome ?? data.emit.xFant ?? '')
-  // razão social: 12 pt negrito (AII 3.7.6), quebrada em quantas linhas precisar — nunca encolhe
+  const content = issuerContent(doc, data.emit, inner)
   const size: number = DANFE_TEXT_PARTS.issuerName.sizePt
-  const lines = name === '' ? [] : wrapLines(doc, 'issuerName', name, inner, size)
   let cursor = y + PAD * 2
-  for (const line of lines) {
+  for (const line of content.name) {
     emit(doc, { part: 'issuerName', text: line, x: x + PAD, y: cursor, widthPt: inner, sizePt: size, singleLine: true })
     cursor += lineHeight(doc, 'issuerName', size)
   }
   cursor += PAD
   const dataSize = DANFE_TEXT_PARTS.issuerData.sizePt
-  for (const raw of issuerLines(data.emit)) {
-    for (const line of wrapLines(doc, 'issuerData', raw, inner, dataSize)) {
-      emit(doc, { part: 'issuerData', text: line, x: x + PAD, y: cursor, widthPt: inner, sizePt: dataSize, singleLine: true })
-      cursor += lineHeight(doc, 'issuerData', dataSize)
-    }
+  for (const line of content.data) {
+    emit(doc, { part: 'issuerData', text: line, x: x + PAD, y: cursor, widthPt: inner, sizePt: dataSize, singleLine: true })
+    cursor += lineHeight(doc, 'issuerData', dataSize)
   }
 }
 
@@ -308,7 +313,11 @@ function drawSheetStart(ctx: Ctx, sheet: number): void {
   const H = CM.header
   const top = c(CM.margin)
   const x0 = left()
-  const topH = c(H.top)
+  // a altura do 1º andar é a do leiaute ou a que o emitente pedir (os três quadros dividem a mesma altura)
+  const issuer = issuerContent(doc, data.emit, c(H.emitW) - 2 * PAD)
+  // um emitente que pede mais de 10 cm de cabeçalho (o XSD limita o nome a 60 e o endereço a 60 por linha) não cabe em folha: recusa, nunca cabeçalho que come a folha
+  if (issuer.height > c(10)) throw documentInvalid('O XML da nota traz um emitente grande demais para o cabeçalho do DANFE', [{ field: 'procNfeXml', message: 'Nome ou endereço do emitente fora do tamanho do leiaute' }])
+  const topH = Math.max(c(H.top), issuer.height)
   drawIssuerBox(ctx, x0, top, c(H.emitW), topH)
   drawIdentBox(ctx, x0 + c(H.emitW), top, c(H.identW), topH)
   drawKeyBox(ctx, x0 + c(H.emitW) + c(H.identW), top, c(H.keyW), topH)
@@ -317,10 +326,12 @@ function drawSheetStart(ctx: Ctx, sheet: number): void {
     { weight: H.natW, label: DANFE_TEXTS.natOp, value: data.ide.natOp ?? '', part: 'fieldValue' },
     { weight: H.protW, label: DANFE_TEXTS.protocol, value: protocol, part: 'fieldCentered' },
   ])
+  // modelo da NT 2026.010: a IE, o CÓDIGO DO REGIME TRIBUTÁRIO (CRT), a IE do substituto e o CNPJ na mesma linha
   y = fieldRow(doc, y, H.rowC, [
-    { weight: 6.86, label: DANFE_TEXTS.ie, value: data.emit.IE ?? '', part: 'fieldValue' },
-    { weight: 6.86, label: DANFE_TEXTS.iest, value: data.emit.IEST ?? '', part: 'fieldValue' },
-    { weight: 6.78, label: DANFE_TEXTS.cnpj, value: federalId(data.emit.id), part: 'fieldValue' },
+    { weight: 4.3, label: DANFE_TEXTS.ie, value: data.emit.IE ?? '', part: 'fieldValue' },
+    { weight: 4.8, label: DANFE_TEXTS.crt, value: data.emit.CRT ? (CRT_LABELS[data.emit.CRT] ?? data.emit.CRT) : '', part: 'fieldValue' },
+    { weight: 5.4, label: DANFE_TEXTS.iest, value: data.emit.IEST ?? '', part: 'fieldValue' },
+    { weight: 6.0, label: DANFE_TEXTS.cnpj, value: federalId(data.emit.id), part: 'fieldValue' },
   ])
   ctx.contentTop = y + c(CM.gap)
   ctx.y = ctx.contentTop
@@ -394,7 +405,7 @@ function drawInvoice(ctx: Ctx): void {
   const { doc, data } = ctx
   const { fat, dups } = data.billing
   if (!fat && dups.length === 0) return                                    // quadro facultativo: só se o XML traz cobrança (NT L194-196)
-  const perRow = 5
+  const perRow = 4
   ensureRoom(ctx, c(CM.cell) + c(0.5))
   let y = blockTitle(doc, ctx.y, DANFE_TEXTS.invoice)
   ctx.y = y
@@ -412,7 +423,7 @@ function drawInvoice(ctx: Ctx): void {
     y = ctx.y
     const chunk = dups.slice(i, i + perRow)
     const specs: FieldSpec[] = chunk.map(d => ({
-      weight: 1, label: `DUPLICATA ${d.nDup ?? ''}`.trim(), value: joinParts([brDate(d.dVenc), money(d.vDup)], '  '), part: 'fieldCentered' as const,
+      weight: 1, label: DANFE_TEXTS.duplicate, value: joinParts([d.nDup, brDate(d.dVenc), money(d.vDup)], '  '), part: 'fieldCentered' as const,
     }))
     while (specs.length < perRow) specs.push({ weight: 1, label: '', value: '', part: 'fieldCentered' })
     y = fieldRow(doc, y, CM.cell, specs)
@@ -420,26 +431,55 @@ function drawInvoice(ctx: Ctx): void {
   ctx.y = y + c(CM.gap)
 }
 
-function drawTax(ctx: Ctx): void {
+/** Valor decimal diferente de zero (os totais condicionais da NT 4.4 só saem quando o XML os traz com valor). */
+const nonZero = (v: string | null | undefined): boolean => v !== null && v !== undefined && v !== '' && !/^-?0+(\.0+)?$/.test(v)
+
+/** "TOTAL DOS PRODUTOS E TOTAL DA NOTA" (modelo vertical da NT 2026.010). */
+function drawTotals(ctx: Ctx): void {
   const { doc, data } = ctx
   const t = data.totals
-  ensureRoom(ctx, c(CM.cell) * 2 + c(0.5))
-  let y = blockTitle(doc, ctx.y, DANFE_TEXTS.tax)
+  ensureRoom(ctx, c(CM.cell) + c(0.5))
+  let y = blockTitle(doc, ctx.y, DANFE_TEXTS.totals)
   y = fieldRow(doc, y, CM.cell, [
-    { weight: 1, label: 'BASE DE CÁLC. DO ICMS', value: money(t.vBC), part: 'fieldNumber' },
-    { weight: 1, label: 'VALOR DO ICMS', value: money(t.vICMS), part: 'fieldNumber' },
-    { weight: 1, label: 'BASE DE CÁLC. ICMS S.T.', value: money(t.vBCST), part: 'fieldNumber' },
-    { weight: 1, label: 'VALOR DO ICMS SUBST.', value: money(t.vST), part: 'fieldNumber' },
     { weight: 1, label: 'VALOR TOTAL DOS PRODUTOS', value: money(t.vProd), part: 'fieldNumber' },
-  ])
-  y = fieldRow(doc, y, CM.cell, [
     { weight: 1, label: 'VALOR DO FRETE', value: money(t.vFrete), part: 'fieldNumber' },
     { weight: 1, label: 'VALOR DO SEGURO', value: money(t.vSeg), part: 'fieldNumber' },
     { weight: 1, label: 'DESCONTO', value: money(t.vDesc), part: 'fieldNumber' },
     { weight: 1, label: 'OUTRAS DESPESAS ACESSÓRIAS', value: money(t.vOutro), part: 'fieldNumber' },
-    { weight: 1, label: 'VALOR DO IPI', value: money(t.vIPI), part: 'fieldNumber' },
     { weight: 1, label: 'VALOR TOTAL DA NOTA', value: money(t.vNF), part: 'fieldNumber' },
   ])
+  ctx.y = y + c(CM.gap)
+}
+
+/**
+ * "TOTAL DO ICMS / IPI" (modelo vertical da NT 2026.010): BC e valor do ICMS, BC e valor do ICMS ST, IPI; e, só quando o XML traz com valor
+ * (NT 4.4, leitura L: valor diferente de zero), FCP, FCP retido por ST, DIFAL na UF de destino, FCP da UF de destino e ICMS monofásico.
+ */
+function drawIcmsIpi(ctx: Ctx): void {
+  const { doc, data } = ctx
+  const t = data.totals
+  ensureRoom(ctx, c(CM.cell) * 2 + c(0.5))
+  let y = blockTitle(doc, ctx.y, DANFE_TEXTS.icmsIpi)
+  y = fieldRow(doc, y, CM.cell, [
+    { weight: 1, label: 'BASE DE CÁLCULO DO ICMS', value: money(t.vBC), part: 'fieldNumber' },
+    { weight: 1, label: 'VALOR DO ICMS', value: money(t.vICMS), part: 'fieldNumber' },
+    { weight: 1, label: 'BASE DE CÁLCULO DO ICMS ST', value: money(t.vBCST), part: 'fieldNumber' },
+    { weight: 1, label: 'VALOR DO ICMS ST', value: money(t.vST), part: 'fieldNumber' },
+    { weight: 1, label: 'VALOR DO IPI', value: money(t.vIPI), part: 'fieldNumber' },
+  ])
+  const extras: { label: string; value: string }[] = ([
+    ['VALOR DO FCP', t.vFCP], ['VALOR DO FCP RETIDO POR ST', t.vFCPST], ['VALOR DO DIFAL NA UF DE DESTINO', t.vICMSUFDest],
+    ['VALOR DO FCP NA UF DE DESTINO', t.vFCPUFDest], ['VALOR DO ICMS MONOFÁSICO', t.vICMSMono], ['VALOR DO ICMS MONOFÁSICO RETIDO', t.vICMSMonoReten],
+  ] as const).filter(([, v]) => nonZero(v)).map(([label, v]) => ({ label, value: money(v) }))
+  for (let i = 0; i < extras.length; i += 4) {
+    ctx.y = y
+    ensureRoom(ctx, c(CM.cell))
+    y = ctx.y
+    const chunk = extras.slice(i, i + 4)
+    const specs: FieldSpec[] = chunk.map(e => ({ weight: 1, label: e.label, value: e.value, part: 'fieldNumber' as const }))
+    while (specs.length < 4) specs.push({ weight: 1, label: '', value: '', part: 'fieldNumber' })
+    y = fieldRow(doc, y, CM.cell, specs)
+  }
   ctx.y = y + c(CM.gap)
 }
 
@@ -518,7 +558,12 @@ function itemCells(item: DanfeItem): Record<string, string> {
 /** Unidade, quantidade ou valor unitário tributável diferentes dos comerciais: os DOIS aparecem (AII 3.1.7). Texto só com campos do XML. */
 function taxableLine(item: DanfeItem): string {
   const p = item.prod
-  const differs = (a: string | null | undefined, b: string | null | undefined): boolean => b !== null && b !== undefined && b !== a
+  const differs = (a: string | null | undefined, b: string | null | undefined): boolean => {
+    if (b === null || b === undefined) return false
+    const na = Number(a)
+    const nb = Number(b)
+    return a !== null && a !== undefined && Number.isFinite(na) && Number.isFinite(nb) && b !== '' && a !== '' ? na !== nb : b !== a   // `2` e `2.0000` são o mesmo número
+  }
   if (!(differs(p.uCom, p.uTrib) || differs(p.qCom, p.qTrib) || differs(p.vUnCom, p.vUnTrib))) return ''
   return `Trib.: ${joinParts([brDecimal(p.qTrib), p.uTrib], ' ')} x ${brDecimal(p.vUnTrib)}`
 }
@@ -593,7 +638,7 @@ function drawAdditional(ctx: Ctx): void {
   const textH = lineHeight(doc, 'itemText', size)
   const lines = text === '' ? [] : wrapLines(doc, 'itemText', text, widths[0] - 2 * PAD, size)
   const titleH = lineHeight(doc, 'blockTitle', DANFE_TEXT_PARTS.blockTitle.sizePt) + 1
-  const labelH = lineHeight(doc, 'blockTitle', DANFE_TEXT_PARTS.blockTitle.sizePt) + 1
+  const labelH = lineHeight(doc, 'fieldLabel', DANFE_TEXT_PARTS.fieldLabel.sizePt) + 1
   const minBox = c(2.0)
   ensureRoom(ctx, titleH + Math.min(minBox, labelH + Math.max(lines.length, 1) * textH + 2 * PAD))
   let y = blockTitle(doc, ctx.y, DANFE_TEXTS.additional)
@@ -609,8 +654,8 @@ function drawAdditional(ctx: Ctx): void {
     box(doc, left(), y, widths[0], boxH)
     box(doc, left() + widths[0], y, widths[1], boxH)
     if (first) {
-      putFit(doc, 'blockTitle', DANFE_TEXTS.complementary, left() + PAD, y + 1, widths[0] - 2 * PAD)
-      putFit(doc, 'blockTitle', DANFE_TEXTS.reserved, left() + widths[0] + PAD, y + 1, widths[1] - 2 * PAD)
+      putFit(doc, 'fieldLabel', DANFE_TEXTS.complementary, left() + PAD, y + 1, widths[0] - 2 * PAD)
+      putFit(doc, 'fieldLabel', DANFE_TEXTS.reserved, left() + widths[0] + PAD, y + 1, widths[1] - 2 * PAD)
     }
     take.forEach((line, n) => emit(doc, { part: 'itemText', text: line, x: left() + PAD, y: y + PAD + head + n * textH, widthPt: widths[0] - 2 * PAD, sizePt: size, singleLine: true }))
     index += take.length
@@ -642,12 +687,15 @@ export async function renderDanfe(input: RenderDanfeInput): Promise<Buffer> {
       sheetStart: (doc, sheet) => { ctx.doc = doc; drawSheetStart(ctx, sheet) },
     })
     ctx.doc = w.doc
+    // ordem do modelo vertical da NT 2026.010 (D-NE100; o Anexo II vale no que a NT não muda): destinatário, fatura, totais dos produtos e da nota,
+    // total do ICMS/IPI, (total do IBS/CBS/IS: só se o XML trouxer o grupo — não no Simples de 2026), ISSQN, transportador, itens, dados adicionais
     drawRecipient(ctx)
     drawInvoice(ctx)
-    drawTax(ctx)
+    drawTotals(ctx)
+    drawIcmsIpi(ctx)
+    drawIssqn(ctx)
     drawCarrier(ctx)
     drawItems(ctx)
-    drawIssqn(ctx)                                                           // Anexo II (retrato): o ISSQN vem DEPOIS dos itens
     drawAdditional(ctx)
     return await w.end((doc, info) => drawSheetNumber(doc, info.sheet, info.total))
   } catch (e) {

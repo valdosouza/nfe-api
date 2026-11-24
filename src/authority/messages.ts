@@ -19,6 +19,12 @@ export const CUF: Readonly<Record<Uf, string>> = Object.freeze({
   SE: '28', BA: '29', MG: '31', ES: '32', RJ: '33', SP: '35', PR: '41', SC: '42', RS: '43', MS: '50', MT: '51', GO: '52', DF: '53',
 })
 
+/** O inverso de `CUF`: código IBGE (2 dígitos) → sigla da UF; `null` se não é uma UF do leiaute (NFE.E5.P5, regra R3). */
+export function ufOfCode(code: string): Uf | null {
+  for (const uf of Object.keys(CUF) as Uf[]) if (CUF[uf] === code) return uf
+  return null
+}
+
 /**
  * O elemento que o `callSoap` procura é o `ret*` do MOC, dentro do invólucro de saída do WSDL (`nfeResultMsg`, que a constante dos autorizadores
  * guarda — D-NE199). PROVADO na fase 2 do smoke (SEFAZ-PR em H, 2026-11-22) para `retConsStatServ`, `retConsSitNFe` e `retConsCad`; para

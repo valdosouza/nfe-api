@@ -17,7 +17,7 @@ export const NfeErrors = Object.freeze({
 export const OUT_OF_FIRST_RELEASE = 'fora-do-primeiro-release'
 
 /** Teto de campos num erro com lista (uma nota com milhares de itens ruins não devolve um corpo de centenas de KB). */
-const MAX_FIELDS = 50
+export const MAX_FIELDS = 50
 
 export function documentInvalid(message: string, fields: FieldError[]): HttpError {
   return new HttpError(422, message, fields.slice(0, MAX_FIELDS), NfeErrors.DOCUMENT_INVALID)

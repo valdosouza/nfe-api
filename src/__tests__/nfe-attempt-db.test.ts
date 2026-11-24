@@ -35,7 +35,8 @@ d('a tentativa da NF-e no banco descartável', () => {
   const tx = <R>(invoiceId: number, fn: Parameters<typeof withInvoiceTx<R>>[4]) =>
     withInvoiceTx(pool, { schemaName: 'setes_x', institutionId: INST }, invoiceRef(INST, invoiceId, WEB_TERMINAL), { label: 'e6p1-db', lock: async () => LOCKED as never }, fn)
   const REF = (invoiceId: number) => invoiceRef(INST, invoiceId, WEB_TERMINAL)
-  const base = { lifeEvent: 1, environment: 'H' as const, authorizer: 'PR', dhEmissionUtc: '2026-11-24 13:15:30', digestValue: 'A'.repeat(27) + '=' }
+  const base = { lifeEvent: 1, environment: 'H' as const, authorizer: 'PR', dhEmissionUtc: '2026-11-24 13:15:30' }
+  const made = (key: () => string) => ({ make: () => ({ accessKey: key(), digestValue: 'A'.repeat(27) + '=' }) })
 
   beforeAll(async () => {
     const c = cfg()
@@ -59,13 +60,13 @@ d('a tentativa da NF-e no banco descartável', () => {
   })
 
   it('insertAttempt: 1ª = 1; a colisão da UNIQUE da chave (outra nota, mesma chave) sorteia outra chave; a 2ª da mesma nota = MAX+1', async () => {
-    const a1 = await tx(7001, itx => insertAttempt(itx, { ...base, makeKey: () => keyOf(15, '48213057') }, null))
+    const a1 = await tx(7001, itx => insertAttempt(itx, { ...base, ...made(() => keyOf(15, '48213057')) }, null))
     expect([a1.attempt, a1.accessKey]).toEqual([1, keyOf(15, '48213057')])
     let draws = 0
-    const a2 = await tx(7002, itx => insertAttempt(itx, { ...base, makeKey: () => keyOf(15, draws++ === 0 ? '48213057' : drawCnf(15)) }, null))
+    const a2 = await tx(7002, itx => insertAttempt(itx, { ...base, ...made(() => keyOf(15, draws++ === 0 ? '48213057' : drawCnf(15))) }, null))
     expect(draws).toBe(2)
     expect(a2.accessKey).not.toBe(a1.accessKey)
-    const a3 = await tx(7001, itx => insertAttempt(itx, { ...base, makeKey: () => keyOf(15, drawCnf(15)) }, null))
+    const a3 = await tx(7001, itx => insertAttempt(itx, { ...base, ...made(() => keyOf(15, drawCnf(15))) }, null))
     expect(a3.attempt).toBe(2)
   })
 

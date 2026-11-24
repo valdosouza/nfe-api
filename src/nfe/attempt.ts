@@ -169,12 +169,13 @@ export interface NewAttempt {
   readonly lifeEvent: number
   readonly environment: 'H' | 'P'
   readonly authorizer: string
-  /** Monta a chave com um `cNF` NOVO a cada chamada (a colisão da UNIQUE pede outro sorteio). */
-  readonly makeKey: () => string
+  /**
+   * Monta a chave com um `cNF` NOVO e o candidato ASSINADO daquela chave a cada chamada (a colisão da UNIQUE pede outro sorteio, e o `digest_value` é do candidato
+   * da chave gravada): devolve a chave e o `DigestValue` do `infNFe` assinado (27 Base64 + `=`). Quem chama guarda o resto (o XML assinado) na própria closure.
+   */
+  readonly make: () => Promise<{ accessKey: string; digestValue: string }> | { accessKey: string; digestValue: string }
   /** O `dhEmi` assinado em UTC ('AAAA-MM-DD HH:MM:SS' — `toUtcDb`). */
   readonly dhEmissionUtc: string
-  /** O `DigestValue` do `infNFe` do candidato assinado (27 Base64 + `=`). */
-  readonly digestValue: string
 }
 
 /**
@@ -191,13 +192,14 @@ export async function insertAttempt(itx: InvoiceTx, p: NewAttempt, userId: numbe
   if (!Number.isInteger(attempt) || attempt < 1) throw new Error('insertAttempt: nº da tentativa ilegível')
   for (let i = 0; i < 5; i++) {
     assertInvoiceTx(itx)                                                          // 2ª conferência logo antes de gravar (NE1A2-02): nada depois do COMMIT
-    const accessKey = p.makeKey()
+    const { accessKey, digestValue } = await p.make()
+    assertInvoiceTx(itx)                                                          // `make` é async (assina): confere de novo depois dela
     try {
       await conn.query(
         `INSERT INTO ${T} (tb_institution_id, tb_invoice_id, terminal, attempt, life_event, environment, authorizer, access_key, dh_emission, digest_value,
                            tb_user_id, created_at, updated_at, deleted)
          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW(), NOW(), 'N')`,
-        [ref.institutionId, ref.invoiceId, ref.terminal, attempt, p.lifeEvent, p.environment, p.authorizer, accessKey, p.dhEmissionUtc, p.digestValue, userId])
+        [ref.institutionId, ref.invoiceId, ref.terminal, attempt, p.lifeEvent, p.environment, p.authorizer, accessKey, p.dhEmissionUtc, digestValue, userId])
       return { attempt, accessKey }
     } catch (e) {
       if (!isKeyCollision(e)) throw e

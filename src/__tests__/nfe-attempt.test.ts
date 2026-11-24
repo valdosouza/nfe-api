@@ -125,7 +125,7 @@ describe('drawCnf — o cNF sorteado e conferido', () => {
 })
 
 describe('insertAttempt — MAX+1 sob a trava, a chave nossa e a UNIQUE da chave', () => {
-  const NEW = (makeKey: () => string) => ({ lifeEvent: 3, environment: 'H' as const, authorizer: 'PR', makeKey, dhEmissionUtc: '2026-11-24 13:15:30', digestValue: 'A'.repeat(27) + '=' })
+  const NEW = (makeKey: () => string) => ({ lifeEvent: 3, environment: 'H' as const, authorizer: 'PR', make: async () => ({ accessKey: makeKey(), digestValue: 'A'.repeat(27) + '=' }), dhEmissionUtc: '2026-11-24 13:15:30' })
   const dup = (name = 'uk_invoice_merchandise_transmission_key') => Object.assign(new Error(`Duplicate entry 'x' for key '${name}'`), { errno: 1062, code: 'ER_DUP_ENTRY' })
 
   it('grava a tentativa MAX+1 com a chave, o autorizador, o ambiente, o dhEmi em UTC e o digest; nasce sem voz', async () => {

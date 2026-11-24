@@ -132,3 +132,14 @@ describe('os XSD são dado conferido (D-NE181)', () => {
     fs.rmSync(tmp, { recursive: true, force: true })
   })
 })
+
+describe('NFe — o documento do builder da NE-4 (NFE.E5.P3; raiz nfe_v4.00.xsd do PL_010f)', () => {
+  it('a NFe vazia é recusada, com a lista de erros do validador (nunca passa calada)', async () => {
+    const r = await validateMessage('NFe', '<NFe xmlns="http://www.portalfiscal.inf.br/nfe"></NFe>')
+    expect(r.ok).toBe(false)
+    expect((r as { errors: readonly string[] }).errors.join(' ')).toMatch(/infNFe/)
+  })
+  it('raiz de outra mensagem não passa como NFe', async () => {
+    expect((await validateMessage('NFe', '<enviNFe xmlns="http://www.portalfiscal.inf.br/nfe" versao="4.00"></enviNFe>')).ok).toBe(false)
+  })
+})

@@ -13,13 +13,15 @@ import { ELEMENT, elementsOf, parseXml, type XmlNode } from 'fiscal-api'
  *   certa): no acervo há CINCO `tiposBasico_v1.03.xsd` diferentes, então "o mais novo vence pelo nome" não serve entre famílias (RF-NFE-19).
  *   Na família NF-e (base PL_009_V4 → PL_010d_v1.03/NFe → PL_010f_v1.04) o 010f vence e é igual ao do 010d/NFe onde coincidem.
  * - `include`/`import` respondidos pela PRÉ-CARGA do conjunto; um `schemaLocation` fora do conjunto é recusado ANTES do libxml (nunca rede).
- * - O `enviNFe` (autorização) entra com o montador da NE-4 (D-NE211).
+ * - A `NFe` (o documento que o builder da NE-4 monta — NFE.E5.P3) é validada pela raiz `nfe_v4.00.xsd` do PL_010f; o `TNFe` exige a
+ *   `Signature`, então só a NF-e ASSINADA passa. O `enviNFe` (o lote da autorização) entra com a transmissão, na NFE.E6.P1 (ajuste da
+ *   D-NE211 — prompt_onda_nfe_sefaz.md, anotações da ficha do NFE.E5.P3).
  * - O `detEvento` do cancelamento é `xs:any skip` no envelope do evento: é recortado como documento próprio e validado contra o
  *   `e110111_v1.00.xsd`, compilado com o `tiposBasico_v1.03` do `PL_010d_v1.03/Evento` (o de 2018 recusa nProt de 17 dígitos e CNPJ
  *   alfanumérico).
  */
 
-export type MessageKind = 'consStatServ' | 'consSitNFe' | 'consReciNFe' | 'consCad' | 'inutNFe' | 'envEvento110111'
+export type MessageKind = 'consStatServ' | 'consSitNFe' | 'consReciNFe' | 'consCad' | 'inutNFe' | 'envEvento110111' | 'NFe'
 
 export type XsdResult = { readonly ok: true } | { readonly ok: false; readonly errors: readonly string[] }
 
@@ -50,6 +52,15 @@ export const SCHEMA_SETS: Readonly<Record<MessageKind | 'detEvento110111', Schem
   },
   consReciNFe: {
     root: B + 'consReciNFe_v4.00.xsd',
+    files: {
+      'leiauteNFe_v4.00.xsd': F + 'leiauteNFe_v4.00.xsd',
+      'tiposBasico_v4.00.xsd': F + 'tiposBasico_v4.00.xsd',
+      'xmldsig-core-schema_v1.01.xsd': F + 'xmldsig-core-schema_v1.01.xsd',
+      'DFeTiposBasicos_v1.00.xsd': F + 'DFeTiposBasicos_v1.00.xsd',
+    },
+  },
+  NFe: {
+    root: F + 'nfe_v4.00.xsd',
     files: {
       'leiauteNFe_v4.00.xsd': F + 'leiauteNFe_v4.00.xsd',
       'tiposBasico_v4.00.xsd': F + 'tiposBasico_v4.00.xsd',

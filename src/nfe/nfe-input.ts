@@ -3,7 +3,7 @@ import type {
   MerchandiseInvoiceHeader, MerchandiseItemFact, PartyAddressFact, PartyFact, PaymentFacts, ReturnOriginFact, ShippingFacts, TradeUnitFact,
 } from '../facts/merchandise-facts'
 import { OUT_OF_FIRST_RELEASE, Violations } from './errors'
-import { decimalText, divideExact, FormatError, multiply, parseDecimal, roundToCents, subtract, toCents, type Decimal } from './formats'
+import { decimalText, divideExact, divideRounded, FormatError, multiply, parseDecimal, roundToCents, subtract, toCents, type Decimal } from './formats'
 import type { TpAmbCode } from './homologation'
 import { ItemNumberingError, numberItems, type ItemNumbering } from './item-numbering'
 import type { NfeAddressInput, NfeInput, NfeItemInput, NfePisCofinsInput } from './nfe-builder'
@@ -85,8 +85,16 @@ function tributable(v: Violations, p: string, sale: TradeUnitFact, taxable: Trad
   if (!sf || !tf) return same
   const qTrib = divideExact(multiply(q, sf), tf, 4)
   if (!qTrib || qTrib.units <= 0n) { v.add(`${p}.qTrib`, 'A quantidade na unidade tributável não fecha em 4 casas decimais'); return same }
-  const vUnTrib = divideExact({ units: BigInt(vProdCents), scale: 2 }, qTrib, 10)
-  if (!vUnTrib) { v.add(`${p}.vUnTrib`, 'O valor unitário na unidade tributável não fecha em 10 casas decimais'); return same }
+  // D-NE276: o valor unitário tributável é ARREDONDADO em 10 casas (meio para cima); recusa só se `vUnTrib` × `qTrib` ficar a mais de
+  // R$ 0,01 do `vProd` (a tolerância do MOC na regra 630). A quantidade (`qTrib`) continua EXATA em 4 casas.
+  const vProd: Decimal = { units: BigInt(vProdCents), scale: 2 }
+  const vUnTrib = divideRounded(vProd, qTrib, 10)
+  const gap = vUnTrib ? subtract(multiply(vUnTrib, qTrib), vProd).units : null
+  const limit = vUnTrib ? 10n ** BigInt(vUnTrib.scale + qTrib.scale - 2) : 0n          // R$ 0,01 na escala do produto vUnTrib × qTrib
+  if (!vUnTrib || gap === null || (gap < 0n ? -gap : gap) > limit) {
+    v.add(`${p}.vUnTrib`, 'O valor unitário na unidade tributável, arredondado em 10 casas, fica a mais de R$ 0,01 do valor do item')
+    return same
+  }
   return { uTrib: taxable.measureAbbreviation, qTrib: decimalText(qTrib, 11, 4), vUnTrib: decimalText(vUnTrib, 11, 10) }
 }
 

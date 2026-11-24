@@ -157,3 +157,14 @@ export function digits(value: unknown, min: number, max: number = min): string {
   if (value.length < min || value.length > max) throw new FormatError('tamanho', min === max ? `${min} dígitos` : `de ${min} a ${max} dígitos`)
   return value
 }
+
+/**
+ * Divisão em `scale` casas, ARREDONDADA meio para cima (D-NE276 — o valor unitário tributável, MOC 7.00: o `vUnTrib` é arredondado e a
+ * conferência `vProd` = `vUnTrib` × `qTrib` tem tolerância de R$ 0,01, regra 630 facultativa). Só números positivos; divisor zero = `null`.
+ */
+export function divideRounded(a: Decimal, b: Decimal, scale: number): Decimal | null {
+  if (b.units <= 0n || a.units < 0n) return null
+  const num = a.units * pow10(b.scale) * pow10(scale)
+  const den = b.units * pow10(a.scale)
+  return { units: (2n * num + den) / (2n * den), scale }
+}

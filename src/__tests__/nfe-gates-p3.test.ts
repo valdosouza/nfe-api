@@ -284,3 +284,42 @@ describe('D-NE275 — nota sem parcela no financeiro sai com a forma "90 - sem p
     expect(built(saleInput({ payments: [{ tPag: '90', cents: 0 }] }))).toEqual(['cobr: Nota sem pagamento não leva cobrança'])
   })
 })
+
+describe('D-NE276 — valor unitário tributável arredondado em 10 casas, com a tolerância de R$ 0,01', () => {
+  const NIL = { determBase: null, determBaseSt: null, discharge: null, aliqRdBase: null, baseValue: '0', aliq: '0', aliqRd: null, value: '0', aliqRdBaseSt: null, baseValueSt: null,
+    aliqSt: null, aliqRdSt: null, valueSt: null, mva: null, withheldBaseValue: null, withheldValue: null, withheldBaseValueSt: null, withheldValueSt: null, operationValue: null, deferredAliq: null, deferredValue: null }
+  const unit = (abbr: string, level: number, factor: string, gtin: string | null) => ({ level, measureAbbreviation: abbr, factor, gtin })
+  const boxed = (quantity: string, unitValue: string, saleFactor: string, taxFactor: string): MerchandiseItemFact => ({
+    itemId: 10, kind: 'Sale', merchandiseId: 910, description: 'Peça', ncm: '73259990', cest: null, source: '0', manufScale: 'S', factoryCnpj: null,
+    saleUnit: unit('CX', 2, saleFactor, null), taxableUnit: unit('UN', 1, taxFactor, null), quantity, unitValue, discountValue: '0', approxTaxAliq: null,
+    icms: { ...NIL, cst: '102', origin: '0', cfopId: '5101', credCalcAliq: null, credExplValue: null, freightValue: null, insuranceValue: null, expensesValue: null, approximateTax: null },
+    fcp: null, ipi: null, pis: { cst: '07', baseValue: null, aliqValue: null, tagValue: null, qtSaleQtty: null, qtAliqValue: null },
+    cofins: { cst: '07', baseValue: null, aliqValue: null, tagValue: null, qtSaleQtty: null, qtAliqValue: null },
+  })
+  const party = (id: number, cnpj: string): PartyFact => ({ entityId: id, nameCompany: `RAZAO ${id}`, nickTrade: null, cnpj, cpf: null, stateRegistration: '9053273308',
+    addresses: [{ kind: 'C', main: 'S', street: 'Rua A', number: '100', complement: null, neighborhood: 'Centro', zipCode: '81925530', cityName: 'Curitiba', cityIbge: '4106902', stateCode: 'PR' }],
+    tax: { taxRegime: '1 - Simples Nacional', crt: '1', indIeDest: '1', consumer: 'N' } })
+  const run = (it: MerchandiseItemFact, total: string) => nfeInputFromFacts({
+    environment: '2', dhEmi: '2026-11-24T10:15:30-03:00',
+    header: { invoiceId: 5001, number: null, serie: '1', model: '55', dtEmission: '2026-11-24', entityId: 321, status: '0', note: null, totalValue: total, indPres: 3 },
+    items: [it], operationNature: 'Venda', emitter: party(98, SETES_CNPJ), recipient: party(321, CLIENT_CNPJ),
+    payments: { billing: null, installments: [] }, shipping: { freightMode: '0', carrierId: null, carrier: null }, returnOrigins: [],
+    techResponsible: { cnpj: SETES_CNPJ, contactName: 'Suporte Setes', email: 'suporte@setes.example', phone: '4133334444' },
+  }).items[0]
+
+  it('100,00 ÷ 12 → 8,3333333333 e a nota monta; 200,00 ÷ 12 (meio para cima no último dígito) também', () => {
+    expect([run(boxed('1', '100', '12', '1'), '100.00').qTrib, run(boxed('1', '100', '12', '1'), '100.00').vUnTrib]).toEqual(['12', '8.3333333333'])
+    expect(run(boxed('1', '200', '12', '1'), '200.00').vUnTrib).toBe('16.6666666667')
+    expect(run(boxed('3', '33.333333', '7', '1'), '100.00').vUnTrib).toMatch(/^4\.76190476/)
+  })
+
+  it('a quantidade tributável continua EXATA em 4 casas: não fecha → recusa', () => {
+    const out = fieldsOf(() => run(boxed('1', '100', '1', '3'), '100.00'))
+    expect(out).toEqual(['det[10].qTrib: A quantidade na unidade tributável não fecha em 4 casas decimais'])
+  })
+
+  it('fatores iguais ou mesmo nível repetem os valores comerciais (sem divisão)', () => {
+    const same = run(boxed('2', '60', '12', '12'), '120.00')
+    expect([same.uTrib, same.qTrib, same.vUnTrib]).toEqual(['UN', '2', '60'])
+  })
+})

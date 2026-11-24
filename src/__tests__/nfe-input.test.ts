@@ -105,12 +105,16 @@ describe('ponte fatos → entrada: a venda', () => {
     expect(one('2', '10.00', '20.00')).toEqual([2000, 2000])
   })
 
-  it('S8: unidade tributável por fator — fecha → converte; não fecha → recusa (nunca arredonda calado)', () => {
+  it('S8 e D-NE276: unidade tributável por fator — fecha → converte exato; não fecha → vUnTrib arredondado em 10 casas, dentro de R$ 0,01', () => {
     const boxed = (q: string, u: string) => item(10, { quantity: q, unitValue: u, saleUnit: unit('CX', 2, '12.000000', '17891234567892'), taxableUnit: unit('UN', 1, '1.000000', '7891234567895') })
     const src = (it: MerchandiseItemFact, total: string) => sources({ items: [it], header: { ...sources().header, totalValue: total }, payments: { billing: { paymentTypeId: 1, nfePaymentCode: '01', plots: null, deadline: null }, installments: [] } })
     const i = nfeInputFromFacts(src(boxed('2', '60.000000'), '120.00')).items[0]
     expect([i.uCom, i.qCom, i.vUnCom, i.cEAN, i.uTrib, i.qTrib, i.vUnTrib, i.cEANTrib]).toEqual(['CX', '2', '60.000000', '17891234567892', 'UN', '24', '5', '7891234567895'])
-    expect(violations(src(boxed('1', '100.000000'), '100.00'))).toEqual(['det[10].vUnTrib: O valor unitário na unidade tributável não fecha em 10 casas decimais'])
+    const rounded = nfeInputFromFacts(src(boxed('1', '100.000000'), '100.00')).items[0]               // 100,00 ÷ 12 não fecha: 8,3333333333
+    expect([rounded.qTrib, rounded.vUnTrib]).toEqual(['12', '8.3333333333'])
+    expect(violations(src(boxed('1', '100.000000'), '100.00'))).toEqual([])
+    // A conta que o arredondamento faz: 12 × 8,3333333333 = 99,9999999996 — a menos de R$ 0,01 de 100,00 (tolerância do MOC, rej. 630).
+    expect(12n * 83333333333n).toBe(999999999996n)
   })
 
   it('S4: pagamento por forma, da soma das parcelas; cobrança só com parcela a prazo; à vista não leva duplicata', () => {

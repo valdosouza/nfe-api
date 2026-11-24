@@ -12,4 +12,4 @@
 --
 -- RE-EXECUTÁVEL: ADD COLUMN IF NOT EXISTS (MariaDB 10.4 e 10.11, como as 002 e 003 do núcleo).
 ALTER TABLE `tb_invoice_merchandise_transmission`
-  ADD COLUMN IF NOT EXISTS `nfe_not_registered_at` DATETIME DEFAULT NULL COMMENT 'Instante UTC em que a rota reconfirm provou o 217 (D-NE111/D-NE235); write-once; fato da tentativa, nunca voz';
+  ADD COLUMN IF NOT EXISTS `nfe_not_registered_at` DATETIME DEFAULT NULL COMMENT 'Instante UTC em que a rota reconfirm provou o 217 (D-NE111/D-NE235), write-once, fato da tentativa, nunca voz';

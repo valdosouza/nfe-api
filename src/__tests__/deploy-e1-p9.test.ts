@@ -18,17 +18,18 @@ import { MIGRATION_SETS, NFE_MIGRATIONS_PROJECT } from '../migrations'
 const SRC = path.resolve(__dirname, '..')
 const PKG_DIR = path.dirname(require.resolve('fiscal-api/package.json'))
 
-describe('núcleo 5.0.0 — o pacote instalado (DEPLOY.E1.P9, D-F237)', () => {
-  it('a versão instalada é a 5.0.0 e o vendor é o do package.json', () => {
-    expect(JSON.parse(fs.readFileSync(path.join(PKG_DIR, 'package.json'), 'utf8')).version).toBe('5.0.0')
+describe('núcleo 5.0.0 ou posterior — o pacote instalado (DEPLOY.E1.P9, D-F237)', () => {
+  it('a versão instalada é a 5.0.0 ou posterior (a exata é a cerca do passo de adoção vigente) e o vendor é o do package.json', () => {
+    const [major] = String(JSON.parse(fs.readFileSync(path.join(PKG_DIR, 'package.json'), 'utf8')).version).split('.').map(Number)
+    expect(major >= 5).toBe(true)
     const own = JSON.parse(fs.readFileSync(path.resolve(SRC, '..', 'package.json'), 'utf8'))
-    expect(own.dependencies['fiscal-api']).toBe('file:vendor/fiscal-api-5.0.0.tgz')
-    expect(fs.readdirSync(path.resolve(SRC, '..', 'vendor')).filter(f => f.endsWith('.tgz'))).toEqual(['fiscal-api-5.0.0.tgz'])
+    expect(own.dependencies['fiscal-api']).toMatch(/^file:vendor\/fiscal-api-5\.\d+\.\d+\.tgz$/)
+    expect(fs.readdirSync(path.resolve(SRC, '..', 'vendor')).filter(f => f.endsWith('.tgz'))).toEqual([own.dependencies['fiscal-api'].replace('file:vendor/', '')])
   })
 
   it('a migration 007 do núcleo (view da habilitação — D-NE170) está no pacote, e o boot aplica o núcleo ANTES da família', () => {
     const core = fs.readdirSync(CORE_MIGRATIONS_DIR).filter(f => f.endsWith('.sql')).sort()
-    expect(core.map(f => f.slice(0, 3))).toEqual(['001', '002', '003', '004', '005', '006', '007'])
+    expect(core.map(f => f.slice(0, 3)).slice(0, 7)).toEqual(['001', '002', '003', '004', '005', '006', '007'])   // as seguintes (008 …) são dos passos de adoção seguintes
     expect(core[6]).toBe('007_issuer_view.sql')
     const sql = fs.readFileSync(path.join(CORE_MIGRATIONS_DIR, core[6]), 'utf8')
     expect(sql).toContain(`CREATE OR REPLACE VIEW \`${reading.ISSUER_VIEW}\``)

@@ -26,10 +26,16 @@ describe('núcleo 5.1.0 — o pacote instalado (DEPLOY.E1.P11, D-F237)', () => {
     }
     // varre `src/` (menos o `src/__tests__` da raiz) e `scripts/`, em todas as extensões de código: gerar e abrir número é da NFE.E6.P1, aqui só a sonda.
     // Limite aceito (gate adversarial): acesso por elemento ao namespace do pacote (`core['next' + 'InvoiceNumber']`) não é visto por texto.
+    // NFE.E6.P1 (mudança 6): `src/nfe/attempt.ts` passa a ser o ÚNICO que chama `nextInvoiceNumber` (o número gerado na transmissão — D-NE257); `lockNumberSequence` e
+    // `openNumberSequence` seguem em lugar nenhum (a abertura da produção é do Valdo — D-NE265)
+    const ATTEMPT = path.join('nfe', 'attempt.ts')
     const callers = (dir: string, skip: string | null): string[] => !fs.existsSync(dir) ? [] : fs.readdirSync(dir, { withFileTypes: true }).flatMap(e => {
       const full = path.join(dir, e.name)
       if (e.isDirectory()) return full === skip || e.name === 'node_modules' ? [] : callers(full, skip)
-      return /\.(ts|tsx|mts|cts|js|mjs)$/.test(e.name) && /\b(nextInvoiceNumber|lockNumberSequence|openNumberSequence)\b/.test(fs.readFileSync(full, 'utf8')) ? [path.relative(SRC, full)] : []
+      if (!/\.(ts|tsx|mts|cts|js|mjs)$/.test(e.name)) return []
+      const text = fs.readFileSync(full, 'utf8')
+      const names = path.relative(SRC, full) === ATTEMPT ? /\b(lockNumberSequence|openNumberSequence)\b/ : /\b(nextInvoiceNumber|lockNumberSequence|openNumberSequence)\b/
+      return names.test(text) ? [path.relative(SRC, full)] : []
     })
     expect([...callers(SRC, path.join(SRC, '__tests__')), ...callers(path.resolve(SRC, '..', 'scripts'), null)]).toEqual([])
   })

@@ -14,14 +14,14 @@ import { ELEMENT, elementsOf, parseXml, type XmlNode } from 'fiscal-api'
  *   Na família NF-e (base PL_009_V4 → PL_010d_v1.03/NFe → PL_010f_v1.04) o 010f vence e é igual ao do 010d/NFe onde coincidem.
  * - `include`/`import` respondidos pela PRÉ-CARGA do conjunto; um `schemaLocation` fora do conjunto é recusado ANTES do libxml (nunca rede).
  * - A `NFe` (o documento que o builder da NE-4 monta — NFE.E5.P3) é validada pela raiz `nfe_v4.00.xsd` do PL_010f; o `TNFe` exige a
- *   `Signature`, então só a NF-e ASSINADA passa. O `enviNFe` (o lote da autorização) entra com a transmissão, na NFE.E6.P1 (ajuste da
- *   D-NE211 — prompt_onda_nfe_sefaz.md, anotações da ficha do NFE.E5.P3).
+ *   `Signature`, então só a NF-e ASSINADA passa. O `enviNFe` (o lote da autorização) e os retornos `retEnviNFe` e `retConsReciNFe` entram com a
+ *   transmissão (NFE.E6.P1 — ajuste da D-NE211): o `enviNFe` aceita uma NFe ASSINADA.
  * - O `detEvento` do cancelamento é `xs:any skip` no envelope do evento: é recortado como documento próprio e validado contra o
  *   `e110111_v1.00.xsd`, compilado com o `tiposBasico_v1.03` do `PL_010d_v1.03/Evento` (o de 2018 recusa nProt de 17 dígitos e CNPJ
  *   alfanumérico).
  */
 
-export type MessageKind = 'consStatServ' | 'consSitNFe' | 'consReciNFe' | 'consCad' | 'inutNFe' | 'envEvento110111' | 'NFe'
+export type MessageKind = 'consStatServ' | 'consSitNFe' | 'consReciNFe' | 'consCad' | 'inutNFe' | 'envEvento110111' | 'NFe' | 'enviNFe' | 'retEnviNFe' | 'retConsReciNFe'
 
 export type XsdResult = { readonly ok: true } | { readonly ok: false; readonly errors: readonly string[] }
 
@@ -52,6 +52,34 @@ export const SCHEMA_SETS: Readonly<Record<MessageKind | 'detEvento110111', Schem
   },
   consReciNFe: {
     root: B + 'consReciNFe_v4.00.xsd',
+    files: {
+      'leiauteNFe_v4.00.xsd': F + 'leiauteNFe_v4.00.xsd',
+      'tiposBasico_v4.00.xsd': F + 'tiposBasico_v4.00.xsd',
+      'xmldsig-core-schema_v1.01.xsd': F + 'xmldsig-core-schema_v1.01.xsd',
+      'DFeTiposBasicos_v1.00.xsd': F + 'DFeTiposBasicos_v1.00.xsd',
+    },
+  },
+  // NFE.E6.P1 (ficha §6-2): o lote da autorização e os dois retornos da NF-e (base PL_009_V4; o leiaute da NF-e é o do PL_010f)
+  enviNFe: {
+    root: B + 'enviNFe_v4.00.xsd',
+    files: {
+      'leiauteNFe_v4.00.xsd': F + 'leiauteNFe_v4.00.xsd',
+      'tiposBasico_v4.00.xsd': F + 'tiposBasico_v4.00.xsd',
+      'xmldsig-core-schema_v1.01.xsd': F + 'xmldsig-core-schema_v1.01.xsd',
+      'DFeTiposBasicos_v1.00.xsd': F + 'DFeTiposBasicos_v1.00.xsd',
+    },
+  },
+  retEnviNFe: {
+    root: B + 'retEnviNFe_v4.00.xsd',
+    files: {
+      'leiauteNFe_v4.00.xsd': F + 'leiauteNFe_v4.00.xsd',
+      'tiposBasico_v4.00.xsd': F + 'tiposBasico_v4.00.xsd',
+      'xmldsig-core-schema_v1.01.xsd': F + 'xmldsig-core-schema_v1.01.xsd',
+      'DFeTiposBasicos_v1.00.xsd': F + 'DFeTiposBasicos_v1.00.xsd',
+    },
+  },
+  retConsReciNFe: {
+    root: B + 'retConsReciNFe_v4.00.xsd',
     files: {
       'leiauteNFe_v4.00.xsd': F + 'leiauteNFe_v4.00.xsd',
       'tiposBasico_v4.00.xsd': F + 'tiposBasico_v4.00.xsd',

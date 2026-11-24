@@ -1,4 +1,4 @@
-import { isValidCnpj, mod11Ascii48, signXml } from 'fiscal-api'
+import { ELEMENT, elementsOf, isValidCnpj, mod11Ascii48, parseXml, signXml } from 'fiscal-api'
 import type { NfeService, Uf } from './authorizers'
 import { voidId } from '../nfe/number-void'
 
@@ -28,13 +28,14 @@ export function ufOfCode(code: string): Uf | null {
 /**
  * O elemento que o `callSoap` procura é o `ret*` do MOC, dentro do invólucro de saída do WSDL (`nfeResultMsg`, que a constante dos autorizadores
  * guarda — D-NE199). PROVADO na fase 2 do smoke (SEFAZ-PR em H, 2026-11-22) para `retConsStatServ`, `retConsSitNFe` e `retConsCad`; para
- * `retInutNFe`, `retConsReciNFe` e `retEnvEvento` segue SUPOSIÇÃO até a 1ª chamada real (NE-5).
+ * `retInutNFe`, `retConsReciNFe`, `retEnviNFe` e `retEnvEvento` segue SUPOSIÇÃO até a 1ª chamada real (NE-5/NFE.E6.P5).
  */
 export const RESULT_ELEMENT: Readonly<Partial<Record<NfeService, string>>> = Object.freeze({
   NfeStatusServico:     'retConsStatServ',
   NfeConsultaProtocolo: 'retConsSitNFe',
   NfeConsultaCadastro:  'retConsCad',
   NfeInutilizacao:      'retInutNFe',
+  NFeAutorizacao:       'retEnviNFe',
   NFeRetAutorizacao:    'retConsReciNFe',
   RecepcaoEvento:       'retEnvEvento',
 })
@@ -86,6 +87,31 @@ export function consSitNFe(chNFe: string, tpAmb: TpAmb, uf?: Uf): string {
   assertTpAmb(tpAmb)
   assertAccessKey(chNFe, uf)
   return `<consSitNFe xmlns="${NS}" versao="4.00"><tpAmb>${tpAmb}</tpAmb><xServ>CONSULTAR</xServ><chNFe>${chNFe}</chNFe></consSitNFe>`
+}
+
+/** Consulta do recibo do lote (`consReciNFe` 4.00) — o `nRec` de 15 dígitos que o 103 devolveu. */
+export function consReciNFe(nRec: string, tpAmb: TpAmb): string {
+  assertTpAmb(tpAmb)
+  if (!/^[0-9]{15}$/.test(nRec)) throw new Error('consReciNFe: nRec com 15 dígitos')
+  return `<consReciNFe xmlns="${NS}" versao="4.00"><tpAmb>${tpAmb}</tpAmb><nRec>${nRec}</nRec></consReciNFe>`
+}
+
+/**
+ * O lote da autorização (`enviNFe` 4.00): UMA NF-e, SÍNCRONO (`indSinc` 1 — D-NE33). A NFe tem de vir ASSINADA e entra BYTE A BYTE (a assinatura é
+ * sobre a forma canônica: reescrever o documento a invalidaria); o leitor estrito do núcleo confere a raiz (NFe no namespace da NF-e) e a
+ * `Signature` antes. A declaração `<?xml ?>` da NFe é tirada da frente. Erro de entrada = exceção (falha de programação do chamador).
+ */
+export function enviNFe(idLote: string, signedNfe: string): string {
+  if (!/^[0-9]{1,15}$/.test(idLote)) throw new Error('enviNFe: idLote com 1 a 15 dígitos')
+  const body = String(signedNfe).replace(/^\s*<\?xml[^?]*\?>\s*/, '').trim()
+  let doc: ReturnType<typeof parseXml>
+  try { doc = parseXml(body) } catch { throw new Error('enviNFe: a NFe é ilegível pelo leitor estrito') }
+  const all = elementsOf(doc, true).filter(e => e.nodeType === ELEMENT)
+  const top = all[0]
+  if (!top || (top.localName ?? top.nodeName) !== 'NFe' || top.namespaceURI !== NS) throw new Error('enviNFe: a raiz tem de ser a NFe no namespace da NF-e')
+  if (all.filter(e => (e.localName ?? e.nodeName) === 'NFe' && e.namespaceURI === NS).length !== 1) throw new Error('enviNFe: exatamente uma NFe por lote (D-NE33)')
+  if (!all.some(e => (e.localName ?? e.nodeName) === 'Signature' && e.namespaceURI === 'http://www.w3.org/2000/09/xmldsig#')) throw new Error('enviNFe: a NFe tem de estar assinada')
+  return `<enviNFe xmlns="${NS}" versao="4.00"><idLote>${idLote}</idLote><indSinc>1</indSinc>${body}</enviNFe>`
 }
 
 /** Consulta de cadastro (`ConsCad` 2.00) — exatamente um de CNPJ ou IE (a UF é a consultada). */

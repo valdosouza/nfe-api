@@ -79,7 +79,8 @@ describe('tipos do leiaute (tiposBasico_v4.00.xsd)', () => {
 
 describe('texto (D-NE28) e dígitos', () => {
   it('mantém acento, colapsa espaços, tira controle e apara', () => {
-    expect(nfeText('  Flange   usinada\tØ 50mm\r\n— não, "Ação" & Cia  ', 1, 120)).toBe('Flange usinada Ø 50mm — não, "Ação" & Cia'.replace('—', '—'))
+    expect(nfeText('  Flange   usinada\tØ 50mm\r\n- não, "Ação" & Cia  ', 1, 120)).toBe('Flange usinada Ø 50mm - não, "Ação" & Cia')
+    expect(reason(() => nfeText('travessão — não é do leiaute', 1, 120))).toBe('texto-invalido')
   })
   it('recusa vazio, tamanho e caractere fora de U+0020 a U+00FF — nunca corta nem troca', () => {
     expect([reason(() => nfeText('', 1, 60)), reason(() => nfeText('   \t ', 1, 60)), reason(() => nfeText(null, 1, 60)), reason(() => nfeText('A', 2, 60)),

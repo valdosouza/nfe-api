@@ -33,10 +33,10 @@ lido AO VIVO e cálculo por item REGISTRADO pelo faturamento (D-NE248); do `ICMS
 `setes_central.tb_cfop.concise` do item de nItem 1 (D-NE268); unidade vendida/tributável pelos níveis da D-PR16. Devolve FATOS CRUS: nulo onde o
 cadastro não tem e decimal como TEXTO EXATO (`CAST … AS CHAR` — o pool entrega ponto flutuante); recusa só o que impede a leitura fiel: nota inexistente (404); e, com 422, nota sem ramo, sem item de mercadoria, item sem produto no cadastro, id de item repetido entre `kind`, item sem cálculo de ICMS, e emitente ou destinatário sem entidade. ⚠️ Conhecimento negativo (provado no banco do dev): `tb_order_item_tax_rule` NUNCA num JOIN pelo
 `kind` com `tb_order_item` (colações diferentes → "Illegal mix of collations"; é lida à parte); PIS/COFINS podem não estar registrados (o faturamento
-só grava quando o motor calcula) — saem nulos e a camada 1 (NFE.E5.P5) recusa (rej. 745/748); tabela nova de `setes_central` lida aqui = linha nova de
+só grava quando o motor calcula) — saem nulos e a ponte/builder (NFE.E5.P3) recusa o item sem CST de PIS/COFINS (não é regra da camada 1); tabela nova de `setes_central` lida aqui = linha nova de
 GRANT no `nfse-api/ops/grants.sql` (cerca `acesso-e1-p1-sessao-viva.test.ts`) — no dev a conta é `'fiscal_api'@'%'` (GRANT a `@localhost` cria conta sem
 senha e derruba o login). `src/nfe/item-numbering.ts` (`numberItems`, `nItemOf`, `NFE_MAX_ITEMS`) é a ÚNICA peça que atribui nItem (D-NE103/D-NE220 —
-ordem do id do item; o serviço da conjugada fica fora; o teto de 990 é da camada 1); cerca em `item-numbering.test.ts`. Leitura real, só SELECT:
+ordem do id do item; o serviço da conjugada fica fora; o teto de 990 é conferido pela camada 1 (R7), mas a R12 de 500 KB cai antes de 990 itens); cerca em `item-numbering.test.ts`. Leitura real, só SELECT:
 `npm run explain:leituras -- <institution> <notaId>` (2º argumento novo).
 **Builder da NF-e 4.00** (NFE.E5.P3, NE-4 — ficha no Vault: `projetos/nfe-api/SUBJECT/NFE_SEFAZ/ficha-nfe-e5-p3-builder-nfe.md`). Peças PURAS em `src/nfe/`:
 `access-key.ts` (`buildAccessKey` por partes + cDV pelo `mod11Ascii48` do núcleo, CNPJ numérico e alfanumérico; confere o cNF — o cNF e o número são
@@ -55,6 +55,15 @@ o `TNFe` EXIGE a `Signature` — só a NF-e assinada passa no `validateMessage('
 rej. da devolução por item são a 1193 e a 1194 (esta só na devolução de SAÍDA), não a 1039/1048; o builder exige o CST de PIS/COFINS e NÃO assume o 07
 (o faturamento do ERP web ainda não o registra no Simples); fora de `item-numbering.ts` ninguém escreve `nItem: valor` — o `det` usa `nItemAttribute`.
 **IBS/CBS no builder** (NFE.E5.P4, D-NE277, PM-12 — ficha `projetos/nfe-api/SUBJECT/NFE_SEFAZ/ficha-nfe-e5-p4-ibscbs-2026.md`): em 2026 a NF-e do Simples (CRT 1) sai SEM o grupo `IBSCBS`, sem total de IBS/CBS e sem `vNFTot` (a rej. 1115 vale só para CRT 3; escrever CST + cClassTrib sem o `gIBSCBS` é a rej. 1022 quando o CST exige o grupo — NT 2025.002 v1.53 L2743-2801). De 01/01/2027 em diante (`IBSCBS_SIMPLES_FROM`) o `buildNfeXml` RECUSA toda nota (venda e devolução) com `ide.dhEmi … fora-do-primeiro-release`: o Simples passa a declarar `cAtivSN`, `gTribSN` e os totais (NT 2026.005), que não estão em XSD nenhum do acervo — a trava sai com o NFE.E5.P6. Prova: `nfe-ibscbs-2026.test.ts`.
+**Camada 1 da pré-validação** (NFE.E5.P5, D-NE43/D-NE253 — ficha `projetos/nfe-api/SUBJECT/NFE_SEFAZ/ficha-nfe-e5-p5-camada1.md`): `src/nfe/layer1.ts` é
+um SEGUNDO olhar, independente do builder, sobre o XML candidato (pré-assinatura): `validateCandidate(xml, ctx)` devolve TODAS as violações (regra, RF,
+rejeição ou `null` quando é escolha nossa, campo só com nome de elemento — nunca valor nem hash) e `assertLayer1` lança o 422 (`FISCAL_DOCUMENT_INVALID`;
+a R9 sozinha = `FISCAL_TOTALS_MOTOR_DEFECT`). PURA: o relógio, as UFs, o ambiente, o vNF do ERP e `csrtRequired` entram pelo `Layer1Context`; nada do builder
+é importado (cerca no teste). 14 regras em `LAYER1_RULES` (R1 chave, R2 `dhEmi`, R3 UF/ambiente/município, R4 emissão normal + modelo 55 + CRT 1, R5 texto de
+homologação e CNPJ do destinatário, R6 responsável técnico, R7 `nItem`, R8 `ICMSTot` por campo com a rejeição de cada um, R9 vNF, R10 XSD, R11 formato do
+texto, R12 tamanho, R13 pagamento, R14 devolução e chave referenciada). O tamanho é conferido ANTES de ler. Quem compõe a transmissão (NFE.E6.P1) monta o
+contexto e chama `assertLayer1` antes de assinar e de abrir tentativa; os limites aceitos (indTot, PISST, CPF, NFref em venda, ISSQN, emitente trocado) estão
+na ficha §9 e na árvore. Teste: `src/__tests__/nfe-layer1.test.ts` (a cerca do catálogo confere as regras que de fato acenderam).
 Ao concluir tarefa que gere conhecimento novo, siga `Infra-IA/skills-genericas/atualizar-infra-ia.md`.
 
 ## Estado (2026-10-20) — NE-2 EXECUTADA em worktree (`D:\Gestao2027\ne2\{fiscal-api,nfe-api}`, branch `ne2`) — `prompt_onda_nfe_sefaz.md` §15.9

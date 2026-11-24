@@ -401,7 +401,10 @@ export function buildNfeXml(input: NfeInput, accessKey: string): { xml: string; 
     paid += Number.isSafeInteger(pg.cents) && pg.cents >= 0 ? pg.cents : 0
     return xmlGroup('detPag', w.req(`${pp}.tPag`, 'tPag', () => digits(pg.tPag, 2)) + w.try(`${pp}.vPag`, () => xmlElement('vPag', dec1302(pg.cents))))
   }).join('')
-  if (isReturn && (input.payments.length !== 1 || input.payments[0].tPag !== '90' || input.payments[0].cents !== 0)) {
+  const noPayment = input.payments.length === 1 && input.payments[0].tPag === '90' && input.payments[0].cents === 0
+  if (!isReturn && !noPayment && input.payments.some(pg => pg.tPag === '90')) w.fail('pag', 'A forma 90 (sem pagamento) só vai sozinha e com valor zero')
+  if (noPayment && input.installments.length) w.fail('cobr', 'Nota sem pagamento não leva cobrança')
+  if (isReturn && !noPayment) {
     w.fail('pag', 'Devolução: forma de pagamento 90 (sem pagamento) com valor zero (rej. 871, 904)')
   }
 
@@ -414,7 +417,8 @@ export function buildNfeXml(input: NfeInput, accessKey: string): { xml: string; 
       if (e instanceof HttpError) throw e                                // vNF que não confere: defeito do motor, com o código próprio
       throw documentInvalid('A NF-e não pode ser montada: os totais da nota não puderam ser somados', [{ field: 'total', message: 'Soma dos itens fora do limite' }])
     }
-    if (!isReturn && paid !== t.vNF) w.fail('pag', 'A soma das formas de pagamento é diferente do total da nota (sem troco no 1º release)')
+    // "90 - sem pagamento" sozinha e com valor zero dispensa a conferência da soma (a rej. 865 não se aplica à forma 90 — D-NE275).
+    if (!isReturn && !noPayment && paid !== t.vNF) w.fail('pag', 'A soma das formas de pagamento é diferente do total da nota (sem troco no 1º release)')
     const ORDER = ['vBC', 'vICMS', 'vICMSDeson', 'vFCP', 'vBCST', 'vST', 'vFCPST', 'vFCPSTRet', 'vProd', 'vFrete', 'vSeg', 'vDesc', 'vII', 'vIPI', 'vIPIDevol', 'vPIS', 'vCOFINS', 'vOutro', 'vNF'] as const
     total = xmlGroup('total', xmlGroup('ICMSTot', ORDER.map(f => w.try(`total.${f}`, () => xmlElement(f, dec1302(t[f])))).join('')
       + (t.vTotTrib === 0 ? '' : xmlElement('vTotTrib', dec1302(t.vTotTrib)))))

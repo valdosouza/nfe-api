@@ -271,3 +271,16 @@ describe('G3 [FIXED] ponte — dois fatos que podem discordar não se escolhem c
     expect([i.vProdCents, i.vDescCents]).toEqual([214, 0])
   })
 })
+
+describe('D-NE275 — nota sem parcela no financeiro sai com a forma "90 - sem pagamento"', () => {
+  it('builder: 90 sozinha com valor zero dispensa a soma e a nota é válida; 90 com valor, misturada ou com cobrança é recusada', async () => {
+    const none = saleInput({ installments: [], payments: [{ tPag: '90', cents: 0 }] })
+    const xml = buildNfeXml(none, KEY).xml
+    expect(xml).toContain('<pag><detPag><tPag>90</tPag><vPag>0.00</vPag></detPag></pag>')
+    expect(xml).not.toContain('<cobr>')
+    expect(await validateMessage('NFe', signNfe(buildNfeXml(none, KEY)))).toEqual({ ok: true })
+    expect(built(saleInput({ installments: [], payments: [{ tPag: '90', cents: 400000 }] }))).toEqual(['pag: A forma 90 (sem pagamento) só vai sozinha e com valor zero'])
+    expect(built(saleInput({ installments: [], payments: [{ tPag: '90', cents: 0 }, { tPag: '01', cents: 400000 }] }))).toEqual(['pag: A forma 90 (sem pagamento) só vai sozinha e com valor zero'])
+    expect(built(saleInput({ payments: [{ tPag: '90', cents: 0 }] }))).toEqual(['cobr: Nota sem pagamento não leva cobrança'])
+  })
+})

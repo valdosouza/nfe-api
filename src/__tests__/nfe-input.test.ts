@@ -126,7 +126,7 @@ describe('ponte fatos → entrada: a venda', () => {
     const cash = nfeInputFromFacts(sources({ payments: { billing: null, installments: [{ parcel: 1, dueDate: '2026-11-24', value: '4000.00', paymentTypeId: 1, nfePaymentCode: '01' }] } }))
     expect([cash.payments, cash.installments]).toEqual([[{ tPag: '01', cents: 400000 }], []])
     const noParcel = nfeInputFromFacts(sources({ payments: { billing: { paymentTypeId: 1, nfePaymentCode: '01', plots: null, deadline: null }, installments: [] } }))
-    expect([noParcel.payments, noParcel.installments]).toEqual([[{ tPag: '01', cents: 400000 }], []])
+    expect([noParcel.payments, noParcel.installments]).toEqual([[{ tPag: '90', cents: 0 }], []])          // D-NE275: sem parcela = 90, nunca a forma do pedido como paga
   })
 
   it('transporte: sem linha → modFrete 9; com transportadora → documento, nome, IE e endereço numa linha', () => {
@@ -169,8 +169,7 @@ describe('ponte fatos → entrada: violações, TODAS de uma vez', () => {
   it('forma de pagamento sem o código da NF-e, transportadora sem cadastro, total não gravado, quantidade ilegível, nota sem item', () => {
     expect(violations(sources({ payments: { billing: null, installments: [{ parcel: 1, dueDate: '2026-12-22', value: '4000.00', paymentTypeId: 6, nfePaymentCode: null }] } })))
       .toEqual(['pag.detPag[1].tPag: A forma de pagamento da parcela não tem o código da NF-e no cadastro'])
-    expect(violations(sources({ payments: { billing: { paymentTypeId: 6, nfePaymentCode: null, plots: null, deadline: null }, installments: [] } })))
-      .toEqual(['pag.detPag[1].tPag: O pedido não tem forma de pagamento com o código da NF-e'])
+    expect(violations(sources({ payments: { billing: { paymentTypeId: 6, nfePaymentCode: null, plots: null, deadline: null }, installments: [] } }))).toEqual([])
     expect(violations(sources({ shipping: { freightMode: '1', carrierId: 77, carrier: null } }))).toEqual(['transp.carrier: A transportadora do pedido não tem cadastro de entidade'])
     expect(violations(sources({ header: { ...sources().header, totalValue: null } }))).toContain('total.vNF: O faturamento não gravou o total da nota')
     expect(violations(sources({ items: [item(10, { quantity: null })] }))).toContain('det[10].qCom: Quantidade: campo obrigatório vazio')

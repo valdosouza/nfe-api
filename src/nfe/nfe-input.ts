@@ -18,8 +18,8 @@ import type { CsrtProof } from './tech-responsible'
  *    `vProd` = quantidade × unitário a 2 casas (meio para cima); `vDesc` = `vProd` − (quantidade × unitário − desconto, a 2 casas);
  *  - unidade tributável pelo fator (S8 — D-PR16): `qTrib` = `qCom` × fator vendido ÷ fator tributável; `vUnTrib` = `vProd` ÷ `qTrib`; se a
  *    divisão não fecha nas casas do leiaute, RECUSA — nunca arredonda calado;
- *  - pagamento e cobrança (S4 — D-NE272, D-NE48): `detPag` por forma, das parcelas do faturamento; `cobr` só na venda com parcela de
- *    vencimento posterior à emissão; devolução = forma 90 com valor zero, sem cobrança;
+ *  - pagamento e cobrança (S4 — D-NE272, D-NE275, D-NE48): `detPag` por forma, das parcelas do faturamento; `cobr` só na venda com
+ *    parcela de vencimento posterior à emissão; nota SEM parcela no financeiro e devolução = forma 90 com valor zero, sem cobrança;
  *  - PIS/COFINS (S2): o CST tem de estar REGISTRADO pelo faturamento; ausente = violação com o item — nunca se assume o CST 07.
  * Devolve a entrada ou lança `HttpError` 422 `FISCAL_DOCUMENT_INVALID` com TODAS as violações de uma vez (D-NE43). O que é regra de
  * conteúdo do leiaute (campo vazio, tamanho, domínio) fica com o builder; a lista das 14 regras da camada 1 é do NFE.E5.P5.
@@ -189,11 +189,10 @@ export function nfeInputFromFacts(src: NfeInputSources): NfeInput {
       payments = [...byCode].map(([tPag, c]) => ({ tPag, cents: c }))
       // Cobrança só quando há parcela A PRAZO (vencimento depois da emissão); à vista não leva duplicata.
       if (emissionDate && parcels.some(pc => typeof pc.dueDate === 'string' && pc.dueDate > emissionDate)) installments = parcels.map(pc => ({ dueDate: pc.dueDate, cents: pc.cents }))
-    } else {
-      const code = src.payments.billing?.nfePaymentCode ?? null
-      if (!code) v.add('pag.detPag[1].tPag', 'O pedido não tem forma de pagamento com o código da NF-e')
-      payments = [{ tPag: code, cents: erpTotalCents }]
     }
+    // Sem parcela no financeiro (pedido sem cobrança, itens que não geram financeiro — a industrialização, a remessa): fica a forma
+    // "90 - sem pagamento" com valor zero (D-NE275), o padrão do ERP Desktop para o que não é venda com financeiro. A forma do pedido
+    // NÃO é declarada como paga: a nota não pode dizer que houve um pagamento que o financeiro não tem.
   }
 
   // ---- transporte -------------------------------------------------------------------------------------------------------------------

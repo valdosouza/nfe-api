@@ -1,0 +1,393 @@
+import { isValidCnpj, isValidCpf, xmlElement, xmlGroup, xmlOptionalElement, XmlUnwritableError, type TechnicalResponsible } from 'fiscal-api'
+import { assertAccessKey } from '../authority/messages'
+import { infNFeId } from './access-key'
+import { documentInvalid, OUT_OF_FIRST_RELEASE } from './errors'
+import { dec0302a04, dec1104v, dec1110v, dec1302, dec1302Opc, digits, FormatError, nfeText, toCents } from './formats'
+import { productDescriptionFor, recipientNameFor, type TpAmbCode } from './homologation'
+import { nItemAttribute, type NumberedItem } from './item-numbering'
+import { complementaryInfo, simplesTexts } from './simples-text'
+import { infRespTecXml, type CsrtProof } from './tech-responsible'
+import { icmsTotOf, type ItemTotalsCents } from './totals'
+
+/**
+ * BUILDER DA NF-e 4.00 — PURO (NFE.E5.P3.T2 e T3; prompt_onda_nfe_sefaz.md §22.2; leiaute PL_010f — RF-NFE-66). Os mesmos fatos dão sempre
+ * o mesmo XML; o que não fecha vira RECUSA, nunca XML incompleto. Devolve a `NFe` SEM assinatura (quem assina é o `signXml` do núcleo, pelo
+ * `Id` do `infNFe`); o `TNFe` exige a `Signature`, então só a NF-e assinada passa no XSD.
+ *
+ * O builder NÃO: sorteia o cNF, gera o número, monta a chave (recebe-a pronta e tira DELA cUF, cNF, série, número, tpEmis e cDV — uma fonte
+ * só), assina, calcula imposto, corrige o vNF, lê banco. A entrada é tipada pelo LEIAUTE; quem a monta a partir dos fatos do ERP é a ponte
+ * (`nfe-input.ts`).
+ *
+ * PERFIL DO 1º RELEASE (S1 da ficha): modelo 55, emissão normal, `finNFe` 1 (venda, nota de saída) e 4 (devolução de venda própria, nota
+ * de ENTRADA do mesmo emitente — S6), destinatário no Brasil; ICMS do Simples em `ICMSSN101` e `ICMSSN102` (CSOSN 102, 103, 300, 400); PIS
+ * e COFINS em `…NT` (CST 04 a 09) e `…Outr` (49 a 99). O que sai disso é recusado com o motivo `fora-do-primeiro-release`.
+ *
+ * A recusa é `HttpError` 422 `FISCAL_DOCUMENT_INVALID` com a lista INTEIRA em `fields[]` (D-NE43); o vNF divergente é
+ * `FISCAL_TOTALS_MOTOR_DEFECT` (`totals.ts`).
+ */
+
+const NS = 'http://www.portalfiscal.inf.br/nfe'
+/** DANFE normal, retrato. */
+export const TP_IMP = '1'
+/** Emissão com aplicativo do contribuinte. */
+export const PROC_EMI = '0'
+/** Versão do aplicativo emissor (1 a 20 caracteres). */
+export const VER_PROC = 'SETES-NFE-API-1.0'
+
+const SN101 = '101'
+const SN102_GROUP = ['102', '103', '300', '400']
+const NT_CST = ['04', '05', '06', '07', '08', '09']
+const isOutrCst = (cst: string): boolean => /^[0-9]{2}$/.test(cst) && Number(cst) >= 49 && Number(cst) <= 99
+/** `indPres` que obriga o `indIntermed` (rej. 434); nos demais ele não vai (rej. 435). */
+const PRES_WITH_INTERMED = ['2', '3', '4', '9']
+const UF_CODES = ['AC', 'AL', 'AM', 'AP', 'BA', 'CE', 'DF', 'ES', 'GO', 'MA', 'MG', 'MS', 'MT', 'PA', 'PB', 'PE', 'PI', 'PR', 'RJ', 'RN', 'RO', 'RR', 'RS', 'SC', 'SE', 'SP', 'TO']
+const DH_EMI = /^(20[0-9]{2})-(0[1-9]|1[0-2])-(0[1-9]|[12][0-9]|3[01])T([01][0-9]|2[0-3]):[0-5][0-9]:[0-5][0-9]([-+](0[0-9]|1[01]):00|\+12:00)$/
+
+export interface NfeAddressInput {
+  xLgr: string | null; nro: string | null; xCpl?: string | null; xBairro: string | null
+  /** Código IBGE de 7 dígitos. */
+  cMun: string | null
+  xMun: string | null; UF: string | null; CEP: string | null
+}
+
+export interface NfePisCofinsInput {
+  CST: string | null
+  /** Só nos CST 49 a 99 (`…Outr`): base, alíquota e valor como texto decimal; ausentes = zero. */
+  vBC?: string | null; pAliq?: string | null; value?: string | null
+}
+
+export interface NfeItemInput {
+  /** O item JÁ numerado pela peça única do nItem. */
+  numbered: NumberedItem
+  cProd: string | null
+  /** GTIN da unidade comercial; `null` = "SEM GTIN". */
+  cEAN: string | null
+  xProd: string | null
+  NCM: string | null
+  CEST?: string | null; indEscala?: string | null; CNPJFab?: string | null
+  CFOP: string | null
+  uCom: string | null; qCom: string | null; vUnCom: string | null
+  /** `vProd` em centavos (quantidade × unitário, a 2 casas — quem monta a entrada calcula; S11). */
+  vProdCents: number
+  cEANTrib: string | null
+  uTrib: string | null; qTrib: string | null; vUnTrib: string | null
+  vFreteCents: number; vSegCents: number; vDescCents: number; vOutroCents: number
+  /** Valor aproximado dos tributos do item, em centavos; 0 = não vai. */
+  vTotTribCents: number
+  icms: { orig: string | null; CSOSN: string | null; pCredSN: string | null; vCredICMSSN: string | null }
+  pis: NfePisCofinsInput
+  cofins: NfePisCofinsInput
+  /** Devolução (finNFe 4): a nota e o item de ORIGEM referenciados por este item (D-NE103/D-NE219). */
+  origin?: { accessKey: string; numbered: NumberedItem } | null
+}
+
+export interface NfeInput {
+  /** tpAmb: 1 = produção, 2 = homologação. */
+  environment: TpAmbCode
+  natOp: string | null
+  /** `AAAA-MM-DDThh:mm:ss±hh:00`, na zona do estabelecimento. */
+  dhEmi: string | null
+  /** 0 = entrada, 1 = saída. */
+  tpNF: '0' | '1'
+  /** 1 = interna, 2 = interestadual. */
+  idDest: '1' | '2' | '3'
+  finNFe: '1' | '4'
+  indFinal: '0' | '1'
+  indPres: string
+  emit: { CNPJ: string | null; xNome: string | null; xFant?: string | null; ender: NfeAddressInput; IE: string | null; CRT: string | null }
+  dest: { CNPJ?: string | null; CPF?: string | null; xNome: string | null; ender: NfeAddressInput; indIEDest: string | null; IE?: string | null }
+  items: readonly NfeItemInput[]
+  /** O vNF do ERP (`tb_invoice_merchandise.total_value`) em centavos — conferido contra a fórmula oficial. */
+  erpTotalCents: number
+  transp: { modFrete: string | null; carrier?: { CNPJ?: string | null; CPF?: string | null; xNome: string | null; IE?: string | null; xEnder?: string | null; xMun?: string | null; UF?: string | null } | null }
+  /** Parcelas da cobrança (D-NE272), na ordem; vazio = sem `cobr`. Nunca na devolução (D-NE48). */
+  installments: readonly { dueDate: string | null; cents: number }[]
+  /** `detPag`: forma (tPag, 2 dígitos) e valor em centavos. Na devolução: `[{ tPag: '90', cents: 0 }]`. */
+  payments: readonly { tPag: string | null; cents: number }[]
+  /** A observação da nota vinda do ERP; os dizeres do Simples são somados aqui. */
+  note?: string | null
+  techResponsible: TechnicalResponsible
+  csrt?: CsrtProof | null
+}
+
+/** Coletor: cada campo é escrito por uma função; a falha vira uma linha da recusa e o XML daquele campo fica vazio. */
+class Writer {
+  readonly fields: { field: string; message: string }[] = []
+  fail(field: string, message: string): '' { this.fields.push({ field, message }); return '' }
+  /** Roda o formatador do campo; `FormatError`/`XmlUnwritableError` viram recusa com o motivo. */
+  try(field: string, fn: () => string): string {
+    try { return fn() } catch (e) {
+      if (e instanceof FormatError) return this.fail(field, e.reason === 'vazio' ? 'Campo obrigatório vazio' : `Valor inválido (${e.message})`)
+      if (e instanceof XmlUnwritableError) return this.fail(field, e.reason === 'obrigatorio-vazio' ? 'Campo obrigatório vazio' : `Valor não pode ser escrito (${e.reason})`)
+      throw e
+    }
+  }
+  /** Elemento obrigatório com formatador. */
+  req(field: string, tag: string, fn: () => string | null | undefined): string { return this.try(field, () => xmlElement(tag, fn())) }
+  /** Elemento opcional: `null`/vazio na entrada = não vai; preenchido passa pelo formatador. */
+  opt(field: string, tag: string, value: unknown, fn: () => string | null): string {
+    return value === null || value === undefined || value === '' ? '' : this.try(field, () => xmlOptionalElement(tag, fn()))
+  }
+  oneOf(field: string, value: string | null | undefined, allowed: readonly string[], tag: string): string {
+    if (value === null || value === undefined || value === '') return this.fail(field, 'Campo obrigatório vazio')
+    if (!allowed.includes(value)) return this.fail(field, `Valor fora do domínio do leiaute`)
+    return xmlElement(tag, value)
+  }
+}
+
+function addressXml(w: Writer, path: string, tag: string, a: NfeAddressInput, cepRequired: boolean): string {
+  return xmlGroup(tag,
+    w.req(`${path}.xLgr`, 'xLgr', () => nfeText(a.xLgr, 2, 60))
+    + w.req(`${path}.nro`, 'nro', () => nfeText(a.nro, 1, 60))
+    + w.opt(`${path}.xCpl`, 'xCpl', a.xCpl, () => nfeText(a.xCpl, 1, 60))
+    + w.req(`${path}.xBairro`, 'xBairro', () => nfeText(a.xBairro, 2, 60))
+    + w.req(`${path}.cMun`, 'cMun', () => digits(a.cMun, 7))
+    + w.req(`${path}.xMun`, 'xMun', () => nfeText(a.xMun, 2, 60))
+    + w.oneOf(`${path}.UF`, a.UF, UF_CODES, 'UF')
+    + (cepRequired ? w.req(`${path}.CEP`, 'CEP', () => digits(a.CEP, 8)) : w.opt(`${path}.CEP`, 'CEP', a.CEP, () => digits(a.CEP, 8))))
+}
+
+function personIdXml(w: Writer, path: string, p: { CNPJ?: string | null; CPF?: string | null }): string {
+  const hasCnpj = p.CNPJ != null && p.CNPJ !== '', hasCpf = p.CPF != null && p.CPF !== ''
+  if (hasCnpj === hasCpf) return w.fail(`${path}.documento`, hasCnpj ? 'Informe CNPJ ou CPF, não os dois' : 'Campo obrigatório vazio')
+  if (hasCnpj) return isValidCnpj(p.CNPJ as string) ? xmlElement('CNPJ', p.CNPJ as string) : w.fail(`${path}.CNPJ`, 'CNPJ inválido')
+  return isValidCpf(p.CPF as string) ? xmlElement('CPF', p.CPF as string) : w.fail(`${path}.CPF`, 'CPF inválido')
+}
+
+function pisCofinsXml(w: Writer, path: string, kind: 'PIS' | 'COFINS', v: NfePisCofinsInput): { xml: string; cents: number } {
+  const cst = v.CST
+  if (cst === null || cst === undefined || cst === '') return { xml: w.fail(`${path}.CST`, 'Campo obrigatório vazio'), cents: 0 }
+  if (NT_CST.includes(cst)) return { xml: xmlGroup(kind, xmlGroup(`${kind}NT`, xmlElement('CST', cst))), cents: 0 }
+  if (!isOutrCst(cst)) return { xml: w.fail(`${path}.CST`, `CST ${cst.slice(0, 2)} — ${OUT_OF_FIRST_RELEASE}`), cents: 0 }
+  let cents = 0
+  const money = (field: string, text: string | null | undefined): string => w.try(`${path}.${field}`, () => { const c = toCents(text ?? '0'); if (field === 'value') cents = c; return dec1302(c) })
+  const inner = xmlElement('CST', cst)
+    + w.try(`${path}.vBC`, () => xmlElement('vBC', money('vBC', v.vBC)))
+    + w.try(`${path}.pAliq`, () => xmlElement(kind === 'PIS' ? 'pPIS' : 'pCOFINS', dec0302a04(v.pAliq ?? '0')))
+    + w.try(`${path}.value`, () => xmlElement(kind === 'PIS' ? 'vPIS' : 'vCOFINS', money('value', v.value)))
+  return { xml: xmlGroup(kind, xmlGroup(`${kind}Outr`, inner)), cents }
+}
+
+function itemXml(w: Writer, input: NfeInput, it: NfeItemInput): { xml: string; totals: ItemTotalsCents } {
+  const p = `det[${it.numbered.itemId}]`
+  const cents = (field: string, value: number, optional: boolean, tag: string): string => w.try(`${p}.${field}`, () => {
+    const text = optional ? dec1302Opc(value) : dec1302(value)
+    return text === null ? '' : xmlElement(tag, text)
+  })
+  const gtin = (field: string, tag: string, value: string | null): string =>
+    value === null || value === '' ? xmlElement(tag, 'SEM GTIN') : w.req(`${p}.${field}`, tag, () => { const d = digits(value, 8, 14); if (![8, 12, 13, 14].includes(d.length)) throw new FormatError('tamanho', 'GTIN de 8, 12, 13 ou 14 dígitos'); return d })
+  const withCest = it.CEST != null && it.CEST !== ''
+  const prod = xmlGroup('prod',
+    w.req(`${p}.cProd`, 'cProd', () => nfeText(it.cProd, 1, 60))
+    + gtin('cEAN', 'cEAN', it.cEAN)
+    + w.req(`${p}.xProd`, 'xProd', () => nfeText(productDescriptionFor(input.environment, '55', TP_IMP, it.numbered.nItem, it.xProd), 1, 120))
+    + w.req(`${p}.NCM`, 'NCM', () => digits(it.NCM, 8))
+    + (withCest ? w.req(`${p}.CEST`, 'CEST', () => digits(it.CEST, 7))
+      + w.opt(`${p}.indEscala`, 'indEscala', it.indEscala, () => (it.indEscala === 'S' || it.indEscala === 'N' ? it.indEscala : (() => { throw new FormatError('texto-invalido', 'indEscala S ou N') })()))
+      + w.opt(`${p}.CNPJFab`, 'CNPJFab', it.CNPJFab, () => (isValidCnpj(it.CNPJFab as string) ? it.CNPJFab as string : (() => { throw new FormatError('texto-invalido', 'CNPJ do fabricante inválido') })())) : '')
+    + w.req(`${p}.CFOP`, 'CFOP', () => digits(it.CFOP, 4))
+    + w.req(`${p}.uCom`, 'uCom', () => nfeText(it.uCom, 1, 6))
+    + w.req(`${p}.qCom`, 'qCom', () => dec1104v(it.qCom))
+    + w.req(`${p}.vUnCom`, 'vUnCom', () => dec1110v(it.vUnCom))
+    + cents('vProd', it.vProdCents, false, 'vProd')
+    + gtin('cEANTrib', 'cEANTrib', it.cEANTrib)
+    + w.req(`${p}.uTrib`, 'uTrib', () => nfeText(it.uTrib, 1, 6))
+    + w.req(`${p}.qTrib`, 'qTrib', () => dec1104v(it.qTrib))
+    + w.req(`${p}.vUnTrib`, 'vUnTrib', () => dec1110v(it.vUnTrib))
+    + cents('vFrete', it.vFreteCents, true, 'vFrete')
+    + cents('vSeg', it.vSegCents, true, 'vSeg')
+    + cents('vDesc', it.vDescCents, true, 'vDesc')
+    + cents('vOutro', it.vOutroCents, true, 'vOutro')
+    + xmlElement('indTot', '1'))
+
+  // ICMS do Simples Nacional — só os grupos do perfil (S1).
+  const csosn = it.icms.CSOSN
+  let icms: string
+  if (csosn === null || csosn === undefined || csosn === '') icms = w.fail(`${p}.CSOSN`, 'Campo obrigatório vazio')
+  else if (csosn === SN101) {
+    icms = xmlGroup('ICMSSN101',
+      w.oneOf(`${p}.orig`, it.icms.orig, ['0', '1', '2', '3', '4', '5', '6', '7', '8'], 'orig') + xmlElement('CSOSN', csosn)
+      + w.req(`${p}.pCredSN`, 'pCredSN', () => dec0302a04(it.icms.pCredSN))
+      + w.req(`${p}.vCredICMSSN`, 'vCredICMSSN', () => dec1302(toCents(it.icms.vCredICMSSN))))
+  } else if (SN102_GROUP.includes(csosn)) {
+    icms = xmlGroup('ICMSSN102', w.oneOf(`${p}.orig`, it.icms.orig, ['0', '1', '2', '3', '4', '5', '6', '7', '8'], 'orig') + xmlElement('CSOSN', csosn))
+  } else icms = w.fail(`${p}.CSOSN`, `CSOSN/CST ${String(csosn).slice(0, 3)} — ${OUT_OF_FIRST_RELEASE}`)
+
+  const pis = pisCofinsXml(w, `${p}.pis`, 'PIS', it.pis)
+  const cofins = pisCofinsXml(w, `${p}.cofins`, 'COFINS', it.cofins)
+  const imposto = xmlGroup('imposto',
+    (it.vTotTribCents === 0 ? '' : cents('vTotTrib', it.vTotTribCents, false, 'vTotTrib')) + xmlGroup('ICMS', icms) + pis.xml + cofins.xml)
+
+  // Devolução: a referência POR ITEM (chave + nItem da origem) é o último filho do `det`.
+  let reference = ''
+  if (input.finNFe === '4') {
+    if (!it.origin) reference = w.fail(`${p}.origin`, 'Devolução sem a nota de origem do item')
+    else {
+      const origin = it.origin
+      reference = w.try(`${p}.origin`, () => {
+        try { assertAccessKey(origin.accessKey) } catch { throw new FormatError('texto-invalido', 'chave da nota de origem fora da forma') }
+        return xmlGroup('DFeReferenciado', xmlElement('chaveAcesso', origin.accessKey) + xmlElement('nItem', String(origin.numbered.nItem)))
+      })
+    }
+  } else if (it.origin) reference = w.fail(`${p}.origin`, 'Nota de origem informada numa nota que não é devolução')
+
+  const safe = (n: number): number => (Number.isSafeInteger(n) && n >= 0 ? n : 0)
+  return {
+    xml: xmlGroup('det', prod + imposto + reference, nItemAttribute(it.numbered)),
+    totals: {
+      vProd: safe(it.vProdCents), vDesc: safe(it.vDescCents), vFrete: safe(it.vFreteCents), vSeg: safe(it.vSegCents), vOutro: safe(it.vOutroCents),
+      vBC: 0, vICMS: 0, vPIS: pis.cents, vCOFINS: cofins.cents, vTotTrib: safe(it.vTotTribCents),
+    },
+  }
+}
+
+/** A `NFe` sem assinatura, com o `Id` do `infNFe` para o `signXml`. Recusa: `HttpError` 422 com a lista inteira. */
+export function buildNfeXml(input: NfeInput, accessKey: string): { xml: string; id: string } {
+  assertAccessKey(accessKey)                                              // erro de quem chama, não recusa de nota
+  const w = new Writer()
+  const key = {
+    cUF: accessKey.slice(0, 2), yymm: accessKey.slice(2, 6), cnpj: accessKey.slice(6, 20), serie: String(Number(accessKey.slice(22, 25))),
+    nNF: String(Number(accessKey.slice(25, 34))), tpEmis: accessKey[34], cNF: accessKey.slice(35, 43), cDV: accessKey[43],
+  }
+  if (key.tpEmis !== '1') w.fail('ide.tpEmis', `Emissão em contingência — ${OUT_OF_FIRST_RELEASE}`)
+  if (input.environment !== '1' && input.environment !== '2') w.fail('ide.tpAmb', 'Valor fora do domínio do leiaute')
+
+  // ---- perfil e coerência (o que impede ESCREVER uma nota certa) --------------------------------------------------------------------
+  const dh = typeof input.dhEmi === 'string' ? DH_EMI.exec(input.dhEmi) : null
+  if (input.dhEmi === null || input.dhEmi === undefined || input.dhEmi === '') w.fail('ide.dhEmi', 'Campo obrigatório vazio')
+  else if (!dh) w.fail('ide.dhEmi', 'Data e hora fora da forma do leiaute (AAAA-MM-DDThh:mm:ss±hh:00)')
+  else if (`${dh[1].slice(2)}${dh[2]}` !== key.yymm) w.fail('ide.dhEmi', 'Ano e mês da emissão diferentes dos da chave de acesso')
+  const emissionDate = dh ? `${dh[1]}-${dh[2]}-${dh[3]}` : ''
+  if (input.emit.CNPJ !== key.cnpj) w.fail('emit.CNPJ', input.emit.CNPJ ? 'CNPJ do emitente diferente do da chave de acesso' : 'Campo obrigatório vazio')
+  if (input.finNFe !== '1' && input.finNFe !== '4') w.fail('ide.finNFe', `Finalidade ${String(input.finNFe).slice(0, 1)} — ${OUT_OF_FIRST_RELEASE}`)
+  if (input.idDest === '3') w.fail('ide.idDest', `Operação com o exterior — ${OUT_OF_FIRST_RELEASE}`)
+  else if (input.idDest !== '1' && input.idDest !== '2') w.fail('ide.idDest', 'Valor fora do domínio do leiaute')
+  if (input.finNFe === '1' && input.tpNF !== '1') w.fail('ide.tpNF', `Nota de entrada que não é devolução — ${OUT_OF_FIRST_RELEASE}`)
+  if (input.finNFe === '4' && input.tpNF !== '0') w.fail('ide.tpNF', `Devolução de saída (a fornecedor) — ${OUT_OF_FIRST_RELEASE}`)
+  if (input.items.length === 0) w.fail('det', 'Nota sem item')
+  const positions = input.items.map(it => it.numbered.nItem)
+  if (positions.some((n, i) => n !== i + 1)) w.fail('det', 'Itens fora da ordem do nItem (1, 2, 3…)')
+  if (input.emit.ender.UF && key.cUF && input.emit.ender.cMun && !String(input.emit.ender.cMun).startsWith(key.cUF)) {
+    w.fail('emit.ender.cMun', 'Município do emitente de UF diferente da chave de acesso')
+  }
+
+  // ---- ide ------------------------------------------------------------------------------------------------------------------------
+  const ide = xmlGroup('ide',
+    xmlElement('cUF', key.cUF) + xmlElement('cNF', key.cNF)
+    + w.req('ide.natOp', 'natOp', () => nfeText(input.natOp, 1, 60))
+    + xmlElement('mod', '55') + xmlElement('serie', key.serie) + xmlElement('nNF', key.nNF)
+    + (dh ? xmlElement('dhEmi', input.dhEmi as string) : '')
+    + w.oneOf('ide.tpNF', input.tpNF, ['0', '1'], 'tpNF')
+    + (input.idDest === '1' || input.idDest === '2' ? xmlElement('idDest', input.idDest) : '')
+    + w.req('ide.cMunFG', 'cMunFG', () => digits(input.emit.ender.cMun, 7))
+    + xmlElement('tpImp', TP_IMP) + xmlElement('tpEmis', key.tpEmis) + xmlElement('cDV', key.cDV)
+    + (input.environment === '1' || input.environment === '2' ? xmlElement('tpAmb', input.environment) : '')
+    + (input.finNFe === '1' || input.finNFe === '4' ? xmlElement('finNFe', input.finNFe) : '')
+    + w.oneOf('ide.indFinal', input.indFinal, ['0', '1'], 'indFinal')
+    + w.oneOf('ide.indPres', input.indPres, ['0', '1', '2', '3', '4', '5', '9'], 'indPres')
+    + (PRES_WITH_INTERMED.includes(input.indPres) ? xmlElement('indIntermed', '0') : '')
+    + xmlElement('procEmi', PROC_EMI) + xmlElement('verProc', VER_PROC))
+
+  // ---- emit e dest ------------------------------------------------------------------------------------------------------------------
+  const emit = xmlGroup('emit',
+    (isValidCnpj(key.cnpj) ? xmlElement('CNPJ', key.cnpj) : '')
+    + w.req('emit.xNome', 'xNome', () => nfeText(input.emit.xNome, 2, 60))
+    + w.opt('emit.xFant', 'xFant', input.emit.xFant, () => nfeText(input.emit.xFant, 1, 60))
+    + addressXml(w, 'emit.ender', 'enderEmit', input.emit.ender, true)
+    + w.req('emit.IE', 'IE', () => digits(input.emit.IE, 2, 14))
+    + w.oneOf('emit.CRT', input.emit.CRT, ['1', '2', '3', '4'], 'CRT'))
+  if (input.emit.CRT && input.emit.CRT !== '1') w.fail('emit.CRT', `Regime ${String(input.emit.CRT).slice(0, 1)} — ${OUT_OF_FIRST_RELEASE}`)
+
+  const ieDest = input.dest.indIEDest
+  let destIe = ''
+  if (ieDest === '1') destIe = w.req('dest.IE', 'IE', () => digits(input.dest.IE, 2, 14))                      // contribuinte: IE obrigatória (rej. 728)
+  const dest = xmlGroup('dest',
+    personIdXml(w, 'dest', input.dest)
+    + w.req('dest.xNome', 'xNome', () => nfeText(recipientNameFor(input.environment, input.dest.xNome), 2, 60))
+    + addressXml(w, 'dest.ender', 'enderDest', input.dest.ender, false)
+    + w.oneOf('dest.indIEDest', ieDest, ['1', '2', '9'], 'indIEDest')
+    + destIe)
+  if (ieDest === '9' && input.tpNF === '1' && input.indFinal !== '1') w.fail('ide.indFinal', 'Destinatário não contribuinte exige consumidor final (rej. 696)')
+
+  // ---- det --------------------------------------------------------------------------------------------------------------------------
+  const built = input.items.map(it => itemXml(w, input, it))
+  if (ieDest === '9' && input.items.some(it => it.icms.CSOSN === SN101)) w.fail('dest.indIEDest', 'CSOSN 101 não é aceito para destinatário não contribuinte (rej. 600)')
+
+  // ---- pagamento e cobrança ---------------------------------------------------------------------------------------------------------
+  const isReturn = input.finNFe === '4'
+  let cobr = ''
+  if (input.installments.length) {
+    if (isReturn) w.fail('cobr', 'Devolução não leva cobrança (D-NE48)')
+    else {
+      let total = 0
+      const dups = input.installments.map((d, i) => {
+        const dp = `cobr.dup[${i + 1}]`
+        if (!Number.isSafeInteger(d.cents) || d.cents <= 0) { w.fail(`${dp}.vDup`, 'Parcela com valor zero ou inválido'); return '' }
+        total += d.cents
+        const due = typeof d.dueDate === 'string' && /^[0-9]{4}-[0-9]{2}-[0-9]{2}$/.test(d.dueDate) ? d.dueDate : null
+        if (!due) { w.fail(`${dp}.dVenc`, d.dueDate ? 'Vencimento fora da forma AAAA-MM-DD' : 'Campo obrigatório vazio'); return '' }
+        if (emissionDate && due < emissionDate) w.fail(`${dp}.dVenc`, 'Vencimento anterior à emissão (rej. 900)')
+        if (i > 0 && typeof input.installments[i - 1].dueDate === 'string' && due < (input.installments[i - 1].dueDate as string)) w.fail(`${dp}.dVenc`, 'Vencimentos fora de ordem (rej. 850)')
+        return xmlGroup('dup', xmlElement('nDup', String(i + 1).padStart(3, '0')) + xmlElement('dVenc', due) + xmlElement('vDup', dec1302(d.cents)))
+      })
+      if (input.installments.length > 120) w.fail('cobr', 'Mais de 120 duplicatas')
+      const amount = w.try('cobr.fat', () => dec1302(total))
+      cobr = xmlGroup('cobr', xmlGroup('fat', xmlElement('nFat', key.nNF) + (amount ? xmlElement('vOrig', amount) + xmlElement('vLiq', amount) : '')) + dups.join(''))
+    }
+  }
+  let paid = 0
+  if (input.payments.length === 0) w.fail('pag', 'Nota sem forma de pagamento')
+  const detPag = input.payments.map((pg, i) => {
+    const pp = `pag.detPag[${i + 1}]`
+    paid += Number.isSafeInteger(pg.cents) && pg.cents >= 0 ? pg.cents : 0
+    return xmlGroup('detPag', w.req(`${pp}.tPag`, 'tPag', () => digits(pg.tPag, 2)) + w.try(`${pp}.vPag`, () => xmlElement('vPag', dec1302(pg.cents))))
+  }).join('')
+  if (isReturn && (input.payments.length !== 1 || input.payments[0].tPag !== '90' || input.payments[0].cents !== 0)) {
+    w.fail('pag', 'Devolução: forma de pagamento 90 (sem pagamento) com valor zero (rej. 871, 904)')
+  }
+
+  // ---- totais (a conferência do vNF lança FISCAL_TOTALS_MOTOR_DEFECT — defeito do motor, não desta lista) ---------------------------------
+  // Só com os dados da nota já escritos sem recusa: com campo inválido os valores não são confiáveis e a lista de campos vem primeiro.
+  let total = ''
+  if (input.items.length && w.fields.length === 0) {
+    const t = icmsTotOf(built.map(b => b.totals), input.erpTotalCents, emissionDate)
+    if (!isReturn && paid !== t.vNF) w.fail('pag', 'A soma das formas de pagamento é diferente do total da nota (sem troco no 1º release)')
+    const ORDER = ['vBC', 'vICMS', 'vICMSDeson', 'vFCP', 'vBCST', 'vST', 'vFCPST', 'vFCPSTRet', 'vProd', 'vFrete', 'vSeg', 'vDesc', 'vII', 'vIPI', 'vIPIDevol', 'vPIS', 'vCOFINS', 'vOutro', 'vNF'] as const
+    total = xmlGroup('total', xmlGroup('ICMSTot', ORDER.map(f => w.try(`total.${f}`, () => xmlElement(f, dec1302(t[f])))).join('')
+      + (t.vTotTrib === 0 ? '' : xmlElement('vTotTrib', dec1302(t.vTotTrib)))))
+  }
+
+  // ---- transp -----------------------------------------------------------------------------------------------------------------------
+  const c = input.transp.carrier
+  const transp = xmlGroup('transp',
+    w.oneOf('transp.modFrete', input.transp.modFrete, ['0', '1', '2', '3', '4', '9'], 'modFrete')
+    + (c ? xmlGroup('transporta',
+      personIdXml(w, 'transp.carrier', c)
+      + w.req('transp.carrier.xNome', 'xNome', () => nfeText(c.xNome, 2, 60))
+      + w.opt('transp.carrier.IE', 'IE', c.IE, () => digits(c.IE, 2, 14))
+      + w.opt('transp.carrier.xEnder', 'xEnder', c.xEnder, () => nfeText(c.xEnder, 1, 60))
+      + w.opt('transp.carrier.xMun', 'xMun', c.xMun, () => nfeText(c.xMun, 1, 60))
+      + (c.UF ? w.oneOf('transp.carrier.UF', c.UF, UF_CODES, 'UF') : '')) : ''))
+
+  // ---- infAdic e responsável técnico ------------------------------------------------------------------------------------------------
+  let infAdic = ''
+  if (emissionDate) {
+    const text = w.try('infAdic.infCpl', () => {
+      const info = complementaryInfo(simplesTexts(input.emit.CRT, emissionDate, input.items.map(it => ({ csosn: it.icms.CSOSN, creditAliq: it.icms.pCredSN, creditValue: it.icms.vCredICMSSN }))), input.note ?? null)
+      return info === null ? '' : nfeText(info, 1, 5000)
+    })
+    if (text) infAdic = xmlGroup('infAdic', xmlElement('infCpl', text))
+  }
+  const respTec = w.try('infRespTec', () => {
+    try { return infRespTecXml(input.techResponsible, input.csrt ?? null) } catch (e) {
+      if (e instanceof FormatError || e instanceof XmlUnwritableError) throw e
+      throw new FormatError('texto-invalido', e instanceof Error ? e.message : 'responsável técnico inválido')
+    }
+  })
+
+  if (w.fields.length) throw documentInvalid(`A NF-e não pode ser montada: ${w.fields.length} problema(s) nos dados da nota`, w.fields)
+
+  const id = infNFeId(accessKey)
+  const inf = ide + emit + dest + built.map(b => b.xml).join('') + total + transp + cobr + xmlGroup('pag', detPag) + infAdic + respTec
+  return { id, xml: xmlGroup('NFe', xmlGroup('infNFe', inf, { versao: '4.00', Id: id }), { xmlns: NS }) }
+}

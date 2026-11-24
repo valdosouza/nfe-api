@@ -181,7 +181,7 @@ const escAttr = (s: string) => s.replace(/[&<>"\r\t\n]/g, c => ESCAPES[c])
  * normaliza U+0085/U+2028 crus para `\n` (regra do XML 1.1 do @xmldom), o que só pode RECUSAR um xJust que o fisco aceitaria, nunca aceitar
  * um inválido (achado do gate adversarial da NFE.E4.P3.T4, para o núcleo).
  */
-function writeNfeElement(el: XmlNode, root: boolean): string | null {
+export function writeNfeElement(el: XmlNode, root: boolean): string | null {
   if (el.namespaceURI !== NFE_NS) return null
   const name = el.localName ?? el.nodeName
   let out = `<${name}${root ? ` xmlns="${NFE_NS}"` : ''}`

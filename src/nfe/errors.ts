@@ -11,6 +11,8 @@ export const NfeErrors = Object.freeze({
   TOTALS_MOTOR_DEFECT:       'FISCAL_TOTALS_MOTOR_DEFECT',
   /** O item da devolução não confere com o `det` do procNFe da origem (D-NE103). */
   RETURN_REFERENCE_MISMATCH: 'FISCAL_RETURN_REFERENCE_MISMATCH',
+  /** A família da NF-e não está no catálogo de leituras do núcleo (D-NE158): a nfe-api não monta a reserva (NFE.E6.P1.T3). */
+  FAMILY_NOT_IN_CATALOG:     'FISCAL_FAMILY_NOT_IN_CATALOG',
 } as const)
 
 /** Motivo (dentro de `fields[].message`) do que o builder do 1º release não escreve — nunca XML incompleto. */

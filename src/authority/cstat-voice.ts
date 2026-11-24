@@ -1,5 +1,4 @@
 import { toUtcDb } from 'fiscal-api'
-import type { MerchandiseVoiceWriteKind } from '../nfe/voice-family'
 import type { DuplicateCStat, ReadResult, SendFact } from './responses'
 
 /**
@@ -16,9 +15,13 @@ import type { DuplicateCStat, ReadResult, SendFact } from './responses'
  * `xMotivo` até 255 caracteres, cortado por inteiro e nunca em pedaço (o `xMotivo` do 539 NÃO é recortado para achar a chave — D-NE36).
  */
 
+/** As vozes que a RESPOSTA do fisco (ou a falha conclusiva do envio) grava; C, K e N são do cancelamento (P2). Todas estão na lista de escrita da família. */
+export type SendVoiceKind = 'A' | 'D' | 'R' | 'P' | 'F'
+
 export interface VoiceEvent {
-  readonly kind: MerchandiseVoiceWriteKind
-  readonly authorityCode: string
+  readonly kind: SendVoiceKind
+  /** O cStat (3 a 4 dígitos) em A/R/D/P; nulo no F (falha conclusiva sem cStat do fisco). */
+  readonly authorityCode: string | null
   readonly message: string
   /** O `dhRecbto` do fisco em UTC (`toUtcDb`), ou nulo. */
   readonly dh: string | null

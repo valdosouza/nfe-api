@@ -2,7 +2,7 @@ import 'dotenv/config'
 import {
   logger, assertSessionInvariants, assertIssuerModelDomainEnforced, assertIssuerEnvironmentDomainEnforced, assertFamilyViewsReadable,
   assertWithdrawnRangesViewReadable, assertIssuerViewReadable, MERCHANDISE_VOICE_READING, runMigrations, fiscalStorageRootFromEnv, access,
-  assertFiscalCodeDomainsEnforced, assertRequiredProviderCodesPresent,
+  assertFiscalCodeDomainsEnforced, assertRequiredProviderCodesPresent, assertNumberSequenceDomainsEnforced,
 } from 'fiscal-api'
 import { contextFromEnv } from './context'
 import { createApp } from './app'
@@ -45,6 +45,9 @@ async function main(): Promise<void> {
   // por nota — o builder (NFE.E5.P3) chama `requiredFiscalCredentialsFor` pela UF do emitente × modelo × ambiente (D-NE218) e calcula o
   // `hashCSRT` na família (§22.6-3). Habilitação nova (55/P, 65) sem o código exigido derruba o PRÓXIMO boot — cadastrar o código antes.
   await assertFiscalCodeDomainsEnforced(ctx.pool)
+  // DEPLOY.E1.P11 (núcleo 5.1.0, migration 008, D-NE255/D-NE257/D-NE265): os domínios do último número da NF-e (`tb_fiscal_number_sequence`) pelo CHECK de nome
+  // certo — a sonda faz INSERT numa transação sempre desfeita. Fica ANTES da conferência do CSRT: a recusa do código do fornecedor no dev não pode mascarar a sonda nova.
+  await assertNumberSequenceDomainsEnforced(ctx.pool)
   await assertRequiredProviderCodesPresent(ctx.pool)
   // ACESSO.E1.P1 (D-AU3/D-AU12): a sessão viva é lida em TODA rota protegida — sem a `vw_user_link` (script sql/70) ou sem o GRANT nela
   // (seção 1a do nfse-api/ops/grants.sql — o MESMO usuário 'fiscal_api'), o serviço NÃO sobe

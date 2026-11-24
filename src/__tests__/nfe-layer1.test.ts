@@ -20,17 +20,20 @@ const SALE: Layer1Context = { environment: 'H', emitterUf: 'PR', authorizerUf: '
 const RETURN: Layer1Context = { ...SALE, now: new Date('2026-11-25T09:05:00-03:00'), erpTotalCents: 250000 }
 const sale = (): string => buildNfeXml(saleInput(), SALE_KEY).xml
 const ret = (): string => buildNfeXml(returnSaleInput(), returnKey()).xml
-const touched = new Set<string>()
+/** As regras que de FATO saíram numa violação (a cerca do catálogo confere estas, não a intenção do teste). */
+const emitted = new Set<string>()
 
 /** A chave montada à mão, coerente (para o que o `buildAccessKey` recusa de propósito). */
 const manualKey = (o: { cnf: string; number?: number; serie?: number }): string => {
   const body = `412611${SETES_CNPJ}55${String(o.serie ?? 1).padStart(3, '0')}${String(o.number ?? 15).padStart(9, '0')}1${o.cnf}`
   return body + mod11Ascii48(body)
 }
-const run = (rule: string | string[], xml: string, ctx: Layer1Context = SALE): Promise<Layer1Violation[]> => {
-  for (const r of Array.isArray(rule) ? rule : [rule]) touched.add(r)
-  return validateCandidate(xml, ctx)
+const run = async (_rule: string | string[], xml: string, ctx: Layer1Context = SALE): Promise<Layer1Violation[]> => {
+  const v = await validateCandidate(xml, ctx)
+  for (const x of v) emitted.add(x.rule)
+  return v
 }
+const of = (v: Layer1Violation[], rule: string): Layer1Violation[] => v.filter(x => x.rule === rule)
 const rules = (v: Layer1Violation[]): string[] => [...new Set(v.map(x => x.rule))].sort()
 const rejs = (v: Layer1Violation[], rule?: string): number[] => v.filter(x => rule === undefined || x.rule === rule).map(x => x.rejection).filter((n): n is number => n !== null).sort((a, b) => a - b)
 const swap = (xml: string, from: string, to: string): string => {
@@ -159,15 +162,35 @@ describe('R4 — emissão normal (rej. 556, 244, 503)', () => {
     const a = await run('R4', buildNfeXml(saleInput(), manualKey({ cnf: '48213057', serie: 890 })).xml)
     expect([rules(a), rejs(a)]).toEqual([['R4'], [244]])
     const b = await run('R4', swap(sale(), '<serie>1</serie>', '<serie>910</serie>'))   // o builder recusa a série 910; a camada a vê no XML
-    expect(rejs(b, 'R4')).toContain(503)
+    expect([rules(b), rejs(b, 'R4')]).toEqual([['R1', 'R4'], [503]])                          // a chave também deixa de bater com o Id
+  })
+
+  it('fronteiras da série: 889 e 909 com procEmi 0', async () => {
+    const at889 = await run('R4', swap(sale(), '<serie>1</serie>', '<serie>889</serie>'))
+    expect(of(at889, 'R4')).toEqual([])
+    const at909 = await run('R4', swap(sale(), '<serie>1</serie>', '<serie>909</serie>'))
+    expect(rejs(at909, 'R4')).toEqual([244])
+  })
+
+  it('dhCont sozinho e xJust sozinho também acendem o 556', async () => {
+    for (const extra of ['<dhCont>2026-11-24T10:00:00-03:00</dhCont>', '<xJust>Falha de comunicacao com a SEFAZ</xJust>']) {
+      const v = await run('R4', swap(sale(), '</verProc>', `</verProc>${extra}`))
+      expect(rejs(v, 'R4')).toEqual([556])
+    }
+  })
+
+  it('modelo 65 e CRT 3 saem do perfil (R4); procEmi, série e CRT ausentes são violação, não exceção', async () => {
+    expect(of(await run('R4', swap(sale(), '<mod>55</mod>', '<mod>65</mod>')), 'R4').map(x => x.field)).toEqual(['ide/mod'])
+    expect(of(await run('R4', swap(sale(), '<CRT>1</CRT>', '<CRT>3</CRT>')), 'R4').map(x => x.field)).toEqual(['emit/CRT'])
+    for (const [tag, field] of [['procEmi', 'ide/procEmi'], ['serie', 'ide/serie'], ['CRT', 'emit/CRT']]) {
+      const v = await run('R4', sale().replace(new RegExp(`<${tag}>[^<]*</${tag}>`), ''))
+      expect(of(v, 'R4').map(x => x.field)).toContain(field)
+    }
   })
 
   it('tpEmis diferente de 1 → R4 sem número (fora do 1º release)', async () => {
-    const body = `412611${SETES_CNPJ}550010000000151` .replace(/1$/, '6') + '48213057'
-    const xml = swap(sale(), '<tpEmis>1</tpEmis>', '<tpEmis>6</tpEmis>')
-    const v = await run('R4', xml)
-    expect(v.filter(x => x.rule === 'R4').map(x => x.field)).toContain('ide/tpEmis')
-    expect(body.length).toBe(43)
+    const v = await run('R4', swap(sale(), '<tpEmis>1</tpEmis>', '<tpEmis>6</tpEmis>'))
+    expect([rules(v), of(v, 'R4').map(x => x.field), rejs(v, 'R4')]).toEqual([['R1', 'R4'], ['ide/tpEmis'], []])
   })
 })
 
@@ -212,9 +235,11 @@ describe('R7 — nItem (rej. 927)', () => {
     expect(v[0].field).toBe('det[2]/@nItem')
   })
 
-  it('o teto de 990 e a nota sem item', async () => {
+  it('a nota sem item acende a R7; o teto de 990 não é alcançável sob o limite de 500 KB (R12 vem antes)', async () => {
     const none = sale().replace(/<det [\s\S]*<\/det>/, '')
-    expect(rules(await run('R7', none))).toContain('R7')
+    expect(of(await run('R7', none), 'R7').map(x => x.field)).toEqual(['det'])
+    const det = /<det nItem="1">[\s\S]*?<\/det>/.exec(sale())![0]
+    expect(Buffer.byteLength(det, 'utf8') * 991).toBeGreaterThan(489_760)             // 991 itens do menor formato do builder já estouram a R12
   })
 })
 
@@ -310,6 +335,44 @@ describe('R8 e R9 — totais e vNF (rej. 531 a 564 e 601 a 604 …; 610)', () =>
     }
   })
 
+  const rich = (): { xml: string; ctx: Layer1Context } => {
+    const items = [saleItem(0, { vFreteCents: 1000, vSegCents: 200, vDescCents: 500, vOutroCents: 300 }), saleItem(1)]
+    const total = 400000 + 1000 + 200 - 500 + 300
+    const xml = buildNfeXml(saleInput({ items, erpTotalCents: total, installments: [], payments: [{ tPag: '01', cents: total }] }), SALE_KEY).xml
+    return { xml, ctx: { ...SALE, erpTotalCents: total } }
+  }
+  const TOT = { vBC: 531, vICMS: 532, vICMSDeson: 795, vFCP: 861, vBCST: 533, vST: 534, vFCPST: 862, vFCPSTRet: 859, vProd: 564, vFrete: 535, vSeg: 536, vDesc: 537, vII: 601, vIPI: 538, vIPIDevol: 863, vPIS: 602, vCOFINS: 603, vOutro: 604 } as const
+
+  it('a nota rica (frete, seguro, desconto, outras) passa limpa', async () => {
+    const { xml, ctx } = rich()
+    expect(await run('R9', xml, ctx)).toEqual([])
+  })
+
+  it('cada um dos 18 campos do ICMSTot, adulterado em 1 centavo, acende SÓ a R8 com a rejeição da SEFAZ daquele campo', async () => {
+    const { xml, ctx } = rich()
+    for (const [f, rej] of Object.entries(TOT)) {
+      const tot = /<ICMSTot>[\s\S]*?<\/ICMSTot>/.exec(xml)![0]
+      const cur = new RegExp(`<${f}>([0-9.]+)</${f}>`).exec(tot)![1]
+      const bumped = (Math.round(Number(cur) * 100) + 1) / 100
+      const v = await run('R8', xml.replace(tot, tot.replace(`<${f}>${cur}</${f}>`, `<${f}>${bumped.toFixed(2)}</${f}>`)), ctx)
+      expect([f, rules(v), rejs(v)]).toEqual([f, ['R8'], [rej]])
+    }
+  })
+
+  it('o vTotTrib do total diferente da soma dos itens, ou ausente, acende a R8 (685)', async () => {
+    const a = await run('R8', swap(sale(), '<vTotTrib>538.00</vTotTrib>', '<vTotTrib>538.01</vTotTrib>'))
+    expect([rules(a), rejs(a)]).toEqual([['R8'], [685]])
+    const b = await run('R8', sale().replace(/(<ICMSTot>[\s\S]*?)<vTotTrib>[0-9.]+<\/vTotTrib>/, '$1'))
+    expect(rejs(b, 'R8')).toContain(685)
+  })
+
+  it('tributo fora do perfil nos itens (IPI) não passa em silêncio: o total e o vNF deixam de bater (R8 538 e R9)', async () => {
+    const xml = sale().replace('<PIS>', '<IPI><cEnq>999</cEnq><IPITrib><CST>50</CST><vIPI>3.00</vIPI></IPITrib></IPI><PIS>')
+    const v = await run(['R8', 'R9'], xml)
+    expect(rejs(v, 'R8')).toContain(538)
+    expect(rules(v)).toContain('R9')
+  })
+
   it('o vProd de um ITEM adulterado → R8 (o total deixa de ser a soma) e R9 (o vNF deixa de bater com a fórmula dos itens)', async () => {
     const v = await run(['R8', 'R9'], swap(sale(), '<vProd>3000.00</vProd>', '<vProd>3000.01</vProd>'))
     expect(rules(v)).toEqual(['R8', 'R9'])
@@ -318,7 +381,7 @@ describe('R8 e R9 — totais e vNF (rej. 531 a 564 e 601 a 604 …; 610)', () =>
   it('o vNF escrito diferente da fórmula → R9 (XML inconsistente) e é erro de documento', async () => {
     const xml = swap(sale(), '<vNF>4000.00</vNF>', '<vNF>4000.01</vNF>')
     const v = await run('R9', xml)
-    expect([rules(v), rejs(v), v.some(x => x.motorDefect)]).toEqual([['R9'], [610], false])
+    expect([rules(v), rejs(v), v.some(x => x.motorDefect)]).toEqual([['R13', 'R9'], [610, 865], false])   // o vNF maior que o pago também acende o 865
     expect((await thrown(xml)).code).toBe('FISCAL_DOCUMENT_INVALID')
   })
 
@@ -356,7 +419,7 @@ describe('R10 — XSD (rej. 215)', () => {
   it('o XML ilegível (DOCTYPE, entidade, mal formado, vazio) → UMA violação da R10, nunca exceção', async () => {
     const hostile = [
       '<!DOCTYPE x [<!ENTITY a "b">]><NFe xmlns="http://www.portalfiscal.inf.br/nfe"/>', '<NFe xmlns="http://www.portalfiscal.inf.br/nfe"><infNFe>',
-      '', '<a>' .repeat(70), '<![CDATA[x]]>',
+      '', '<a>'.repeat(70), `${'<a>'.repeat(65)}x${'</a>'.repeat(65)}`, '<![CDATA[x]]>',
     ]
     for (const xml of hostile) {
       const v = await run('R10', xml)
@@ -371,7 +434,7 @@ describe('R10 — XSD (rej. 215)', () => {
 
 describe('a lista inteira (D-NE43)', () => {
   it('várias violações de regras diferentes saem TODAS numa recusa só, cada uma com regra, rejeição e campo', async () => {
-    let xml = swap(sale(), 'NF-E EMITIDA EM AMBIENTE DE HOMOLOGACAO - SEM VALOR FISCAL', 'CLIENTE')
+    let xml = swap(sale(), 'NF-E EMITIDA EM AMBIENTE DE HOMOLOGACAO - SEM VALOR FISCAL', 'MARCADOR-XYZ-123')
     xml = swap(xml, '<det nItem="2">', '<det nItem="3">')
     xml = xml.replace(/<infRespTec>[\s\S]*<\/infRespTec>/, '')
     const ctx = { ...SALE, emitterUf: 'SP' as const }
@@ -380,6 +443,7 @@ describe('a lista inteira (D-NE43)', () => {
     const err = await thrown(xml, ctx)
     expect([err.status, err.code, err.fields.length]).toEqual([422, 'FISCAL_DOCUMENT_INVALID', v.length])
     expect(err.fields.every(f => /^\[R\d+( · rej\. \d+)?\] /.test(f.message))).toBe(true)
+    expect(JSON.stringify([v, err])).not.toMatch(/MARCADOR|aWv6LeEM|SETES USINAGEM/)          // nenhuma violação cita valor de dado nem o hash
   })
 
   it('o teto de campos corta com o aviso "e mais N" na mensagem', async () => {
@@ -399,8 +463,95 @@ describe('a lista inteira (D-NE43)', () => {
   })
 })
 
+describe('escapes achados pelo gate adversarial (sondas permanentes)', () => {
+  it('espaço entre tags escrito por referência de caractere acende a 588; comentário e CDATA acendem a R11', async () => {
+    for (const ref of ['&#10;', '&#x20;', '&#9;']) expect(rejs(await run('R11', swap(sale(), '</ide><emit>', `</ide>${ref}<emit>`)), 'R11')).toEqual([588])
+    expect(of(await run('R11', swap(sale(), '</ide><emit>', '</ide><!-- x --><emit>')), 'R11').map(x => x.field)).toEqual(['infNFe'])
+    expect(of(await run('R11', swap(sale(), '<cUF>41</cUF>', '<cUF><![CDATA[41]]></cUF>')), 'R11').length).toBeGreaterThan(0)
+  })
+
+  it('NBSP e BOM não são "caractere de edição" da 588 (a norma cita LF, CR, TAB e espaço)', async () => {
+    expect(rejs(await run('R11', swap(sale(), '</ide><emit>', '</ide>\u00a0<emit>')), 'R11')).toEqual([588])      // NBSP é texto entre tags: vem do nó de texto
+    expect(rejs(await run('R11', '\ufeff' + sale()), 'R11')).not.toContain(588)
+  })
+
+  it('CNPJ do emitente (207) e do destinatário (208) com DV errado', async () => {
+    expect(rejs(await run('R1', swap(sale(), `<emit><CNPJ>${SETES_CNPJ}`, '<emit><CNPJ>07742094000114')), 'R1')).toContain(207)
+    expect(rejs(await run('R5', sale().replace(/(<dest><CNPJ>)[0-9]{14}/, '$111222333000182')), 'R5')).toEqual([208])
+  })
+
+  it('devolução: chave referenciada igual à própria (316), com DV errado (236), fora da forma (236) e de modelo 65', async () => {
+    const own = /Id="NFe(\d{44})"/.exec(ret())![1]
+    const ref = /<chaveAcesso>(\d{44})<\/chaveAcesso>/.exec(ret())![1]
+    const withKey = (k: string): string => ret().replace(ref, k)
+    expect(rejs(await run('R14', withKey(own), RETURN), 'R14')).toEqual([316])
+    const badDv = ref.slice(0, 43) + ((Number(ref[43]) + 1) % 10)
+    expect(rejs(await run('R14', withKey(badDv), RETURN), 'R14')).toEqual([236])
+    expect(rejs(await run('R14', withKey('0'.repeat(43)), RETURN), 'R14')).toEqual([236])
+    const m65 = ref.slice(0, 20) + '65' + ref.slice(22, 43)
+    const withDv = m65 + mod11Ascii48(m65)
+    expect(of(await run('R14', withKey(withDv), RETURN), 'R14').map(x => x.field).length).toBe(1)
+  })
+
+  it('devolução com um item sem referência, e detPag ausente (871)', async () => {
+    const one = ret().replace(/<DFeReferenciado>[\s\S]*?<\/DFeReferenciado>/, '')
+    expect(rejs(await run('R14', one, RETURN), 'R14')).toEqual([321])
+    expect(rejs(await run('R13', ret().replace(/<detPag>[\s\S]*?<\/detPag>/, ''), RETURN), 'R13')).toEqual([871])
+  })
+
+  it('venda com pagamento menor que o vNF (865); o maior é R13 sem número (escolha nossa)', async () => {
+    const less = await run('R13', sale().replace(/<vPag>[0-9.]+<\/vPag>/, '<vPag>1.00</vPag>'))
+    expect(rejs(less, 'R13')).toEqual([865])
+    const more = await run('R13', sale().replace(/(<detPag>[\s\S]*?<vPag>)[0-9.]+/, '$19999.00'))
+    expect([of(more, 'R13').length, rejs(more, 'R13')]).toEqual([1, []])
+  })
+
+  it('o dhEmi fora da forma: mês 00, hora 24, dia 32 e fuso -12:00 acendem a R2; +12:00 é aceito', async () => {
+    for (const bad of ['2026-00-24T10:15:30-03:00', '2026-11-24T24:15:30-03:00', '2026-11-32T10:15:30-03:00', '2026-11-24T10:15:30-12:00']) {
+      expect(of(await run('R2', swap(sale(), '<dhEmi>2026-11-24T10:15:30-03:00</dhEmi>', `<dhEmi>${bad}</dhEmi>`)), 'R2').length).toBe(1)
+    }
+    expect(of(await run('R2', swap(sale(), '<dhEmi>2026-11-24T10:15:30-03:00</dhEmi>', '<dhEmi>2026-11-24T10:15:30+12:00</dhEmi>')), 'R2')).toEqual([])
+  })
+
+  it('o relógio injetado inválido vira violação da R2, nunca janela silenciosa', async () => {
+    const v = await run('R2', sale(), { ...SALE, now: new Date('x') })
+    expect(of(v, 'R2').map(x => x.field)).toEqual(['contexto/now'])
+  })
+
+  it('a data da fórmula do vNF é a do próprio dhEmi (31/12 às 22:30 em -03:00 não vira 2027)', async () => {
+    const xml = sale().replace('<dhEmi>2026-11-24T10:15:30-03:00</dhEmi>', '<dhEmi>2026-12-31T22:30:00-03:00</dhEmi>')
+    const v = await run('R9', xml, { ...SALE, now: new Date('2026-12-31T22:31:00-03:00') })
+    expect(of(v, 'R9')).toEqual([])
+  })
+
+  it('a R5 em produção também pega o texto de homologação em outra caixa', async () => {
+    const v = await run('R5', swap(sale(), 'NF-E EMITIDA EM AMBIENTE DE HOMOLOGACAO - SEM VALOR FISCAL', 'nf-e emitida em ambiente de homologacao - sem valor fiscal'), { ...SALE, environment: 'P' })
+    expect(of(v, 'R5').length).toBe(1)
+  })
+
+  it('o tamanho: 489.760 bytes passa na R12; 489.761 cai', async () => {
+    const base = Buffer.byteLength(sale(), 'utf8')
+    const at = (n: number): string => swap(sale(), '</infNFe>', `<x>${'a'.repeat(n - base - '<x></x>'.length)}</x></infNFe>`)
+    expect(of(await run('R12', at(489_760)), 'R12')).toEqual([])
+    expect(rejs(await run('R12', at(489_761)), 'R12')).toEqual([214])
+  })
+
+  it('R6: CNPJ do responsável ausente (973); id sem hash e hash sem id (975)', async () => {
+    expect(rejs(await run('R6', sale().replace(/(<infRespTec>)<CNPJ>[0-9]+<\/CNPJ>/, '$1')), 'R6')).toContain(973)
+    expect(rejs(await run('R6', sale().replace(/<hashCSRT>[^<]*<\/hashCSRT>/, '')), 'R6')).toEqual([975])
+    expect(rejs(await run('R6', sale().replace(/<idCSRT>[^<]*<\/idCSRT>/, '')), 'R6')).toEqual([975])
+  })
+
+  it('R11: espaço só no começo ou só no fim do texto; encoding em minúsculas é aceito; raiz com outro nome → 587', async () => {
+    expect(of(await run('R11', swap(sale(), '<xFant>SETES</xFant>', '<xFant>SETES </xFant>')), 'R11').length).toBe(1)
+    expect(rejs(await run('R11', '<?xml version="1.0" encoding="utf-8"?>' + sale()), 'R11')).toEqual([])
+    expect(rejs(await run('R11', sale().replace('<NFe ', '<NFex ').replace('</NFe>', '</NFex>')), 'R11')).toEqual([587])
+  })
+})
+
 describe('a cerca do catálogo: toda regra tem prova neste arquivo', () => {
   it('as 14 regras foram exercitadas pelos testes acima', () => {
-    expect([...touched].sort((a, b) => Number(a.slice(1)) - Number(b.slice(1)))).toEqual(LAYER1_RULES.map(r => r.id))
+    // vale na corrida inteira do arquivo (com -t a cerca não tem o que conferir)
+    expect([...emitted].sort((a, b) => Number(a.slice(1)) - Number(b.slice(1)))).toEqual(LAYER1_RULES.map(r => r.id))
   })
 })

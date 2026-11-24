@@ -1,6 +1,6 @@
 import { ELEMENT, attrOf, elementsOf, isValidCnpj, merchandiseInvoiceTotal, mod11Ascii48, parseXml, type MerchandiseTotalsCents, type XmlNode } from 'fiscal-api'
 import type { Environment, Uf } from '../authority/authorizers'
-import { CUF, ufOfCode } from '../authority/messages'
+import { CUF } from '../authority/messages'
 import { validateMessage } from '../authority/xsd'
 import { documentInvalid, MAX_FIELDS, totalsMotorDefect } from './errors'
 import { toCents } from './formats'
@@ -56,23 +56,25 @@ const NO_NT = 'nenhuma NT conhecida em 2026-11-24'
 
 /** O catálogo (D-NE43: cada regra com versão do MOC, dono e revisão por NT; as fontes são as da D-NE253). */
 export const LAYER1_RULES: readonly Layer1Rule[] = Object.freeze([
-  { id: 'R1', rf: ['RF-NFE-53'], rejections: [502, 253, 897], source: 'AI:4536, 4735, 4563-4573', mocVersion: MOC, owner: OWNER, ntReview: 'NT 2019.001' },
+  { id: 'R1', rf: ['RF-NFE-53'], rejections: [502, 253, 897, 207], source: 'AI:4536, 4735, 4563-4573; MOC Anexo I rej. 207', mocVersion: MOC, owner: OWNER, ntReview: 'NT 2019.001' },
   { id: 'R2', rf: ['RF-NFE-54'], rejections: [703, 228], source: 'AI:4587, 4593; nt-2025-001-v1-03.txt:368-392', mocVersion: MOC, owner: OWNER, ntReview: 'NT 2025.001 v1.03' },
   { id: 'R3', rf: ['RF-NFE-13', 'RF-NFE-55'], rejections: [226, 247, 252, 271, 273], source: 'AI:4555, 4739, 4686-4690, 5137-5143', mocVersion: MOC, owner: OWNER, ntReview: NO_NT },
   { id: 'R4', rf: ['RF-NFE-55'], rejections: [556, 244, 503], source: 'AI:4829, 4811, 5101', mocVersion: MOC, owner: OWNER, ntReview: NO_NT },
-  { id: 'R5', rf: ['RF-NFE-29'], rejections: [598], source: 'AI:5239-5243; D-NE216', mocVersion: MOC, owner: OWNER, ntReview: 'NT 2026.002 v1.11' },
+  { id: 'R5', rf: ['RF-NFE-29'], rejections: [598, 208], source: 'AI:5239-5243; D-NE216; MOC Anexo I rej. 208', mocVersion: MOC, owner: OWNER, ntReview: 'NT 2026.002 v1.11' },
   { id: 'R6', rf: ['RF-NFE-30'], rejections: [972, 973, 975], source: 'AI:8048-8070', mocVersion: MOC, owner: OWNER, ntReview: 'NT 2018.005' },
   { id: 'R7', rf: ['RF-NFE-31'], rejections: [927], source: 'AI:5616-5620', mocVersion: MOC, owner: OWNER, ntReview: 'NT 2019.001' },
-  { id: 'R8', rf: ['RF-NFE-28'], rejections: [531, 564, 601, 685, 795, 859, 861], source: 'AI:7572; CONFERENCIAS.md:86', mocVersion: MOC, owner: OWNER, ntReview: 'NT 2025.002 v1.53' },
+  { id: 'R8', rf: ['RF-NFE-28'], rejections: [531, 532, 533, 534, 535, 536, 537, 538, 564, 601, 602, 603, 604, 685, 795, 859, 861, 862, 863], source: 'AI:7503-7602 (W03-20 a W15); CONFERENCIAS.md:86', mocVersion: MOC, owner: OWNER, ntReview: 'NT 2025.002 v1.53' },
   { id: 'R9', rf: ['RF-NFE-28'], rejections: [610], source: 'nt-2023-004-v1-20.txt:700-745; AI:7613', mocVersion: MOC, owner: OWNER, ntReview: 'NT 2023.004 v1.20' },
   { id: 'R10', rf: ['RF-NFE-19'], rejections: [215], source: 'AI:4391-4393; D-NE181', mocVersion: MOC, owner: OWNER, ntReview: NO_NT },
   { id: 'R11', rf: ['RF-NFE-35'], rejections: [402, 404, 587, 588], source: 'AI:4409-4419', mocVersion: MOC, owner: OWNER, ntReview: NO_NT },
   { id: 'R12', rf: ['RF-NFE-16'], rejections: [214], source: 'AI:4358', mocVersion: MOC, owner: OWNER, ntReview: NO_NT },
-  { id: 'R13', rf: ['RF-NFE-56'], rejections: [871, 904], source: 'AI:7884, 10355; D-NE48', mocVersion: MOC, owner: OWNER, ntReview: 'NT 2023.004 v1.20' },
-  { id: 'R14', rf: ['RF-DEV-03'], rejections: [1010, 321], source: 'nt-2025-002-v1-53.txt:5232-5262; D-NE219', mocVersion: MOC, owner: OWNER, ntReview: 'NT 2025.002 v1.53' },
+  { id: 'R13', rf: ['RF-NFE-56'], rejections: [871, 904, 865], source: 'AI:7884, 10283, 10355; D-NE48', mocVersion: MOC, owner: OWNER, ntReview: 'NT 2023.004 v1.20' },
+  { id: 'R14', rf: ['RF-DEV-03'], rejections: [1010, 321, 236, 316], source: 'nt-2025-002-v1-53.txt:5232-5262; D-NE219; MOC Anexo I rej. 236, 316', mocVersion: MOC, owner: OWNER, ntReview: 'NT 2025.002 v1.53' },
 ])
 
 const NFE_NS = 'http://www.portalfiscal.inf.br/nfe'
+/** Nome de elemento que vem do XML e entra em `field`: truncado, para o corpo da recusa não inchar. */
+const short = (name: string): string => (name.length > 64 ? `${name.slice(0, 64)}…` : name)
 /** Limite da mensagem (500 KB lidos como 1.000 — o mais estrito) e a margem para a assinatura e o envelope (S5). */
 const MAX_BYTES = 500_000
 const SIGNATURE_MARGIN = 10_240
@@ -161,15 +163,23 @@ function rawFormat(xml: string, c: Collector): void {
     if (enc && enc[1].toUpperCase() !== 'UTF-8') c.add('R11', 402, 'declaração', 'Codificação do XML diferente de UTF-8')
   }
   if (/<\/?[A-Za-z_][\w.-]*:[A-Za-z_][\w.-]*/.test(xml.replace(/^<\?xml[^?]*\?>/, ''))) c.add('R11', 404, 'documento', 'Uso de prefixo de namespace no XML da NF-e')
-  if (/>\s+</.test(xml) || /^\s/.test(xml) || /\s$/.test(xml)) c.add('R11', 588, 'documento', 'Caractere de edição (LF, CR, TAB ou espaço) entre as tags ou nas bordas da mensagem')
+  if (/>[ \t\r\n]+</.test(xml) || /^[ \t\r\n]/.test(xml) || /[ \t\r\n]$/.test(xml)) c.add('R11', 588, 'documento', 'Caractere de edição (LF, CR, TAB ou espaço) entre as tags ou nas bordas da mensagem')
 }
 
-/** R11 nos nós de texto: espaço nas pontas do texto de um elemento (escolha nossa — D-NE28). */
+/** R11 nos nós de texto: espaço nas pontas do texto (escolha nossa — D-NE28), espaço entre tags escrito por referência de caractere (588) e comentário, instrução ou CDATA (o leitor da SEFAZ não os aceita). */
 function edgeSpaces(doc: Doc, c: Collector): void {
   for (const el of elementsOf(doc.root, true)) {
     if (el.nodeType !== ELEMENT) continue
+    const name = short(el.localName ?? el.nodeName)
     const text = raw(el)
-    if (text !== null && text !== '' && text !== text.trim()) c.add('R11', null, el.localName ?? el.nodeName, 'Espaço nas pontas do texto do elemento (escolha nossa, D-NE28)')
+    if (text !== null && text !== '' && text !== text.trim()) c.add('R11', null, name, 'Espaço nas pontas do texto do elemento (escolha nossa, D-NE28)')
+    let hasElement = false
+    for (let i = 0; i < el.childNodes.length; i++) if (el.childNodes[i].nodeType === ELEMENT) hasElement = true
+    for (let i = 0; i < el.childNodes.length; i++) {
+      const n = el.childNodes[i]
+      if (n.nodeType === 8 || n.nodeType === 7 || n.nodeType === 4) c.add('R11', null, name, 'Comentário, instrução de processamento ou CDATA no XML da NF-e (escolha nossa)')
+      else if (hasElement && !c.list.some(v => v.rejection === 588) && n.nodeType === 3 && (n.nodeValue ?? '').trim() === '' && (n.nodeValue ?? '') !== '') c.add('R11', 588, name, 'Caractere de edição entre as tags (escrito por referência de caractere)')
+    }
   }
 }
 
@@ -191,6 +201,7 @@ function rulesR1(doc: Doc, c: Collector): void {
     if (id !== `NFe${body}${f.cDV}`) c.add('R1', 502, 'infNFe/@Id', 'O Id difere de "NFe" + a chave composta dos campos do próprio XML')
     if (!/^[0-9A-Z]{43}$/.test(body) || mod11Ascii48(body) !== Number(f.cDV)) c.add('R1', 253, 'ide/cDV', 'Dígito verificador da chave de acesso não confere')
   } else c.add('R1', 502, 'ide', 'Campos da chave de acesso com tamanho fora do leiaute')
+  if (!isValidCnpj(cnpj as string)) c.add('R1', 207, 'emit/CNPJ', 'CNPJ do emitente inválido')
   if (LAYER1_FORBIDDEN_CNF.includes(f.cNF as string) || Number(f.cNF) === Number(f.nNF)) c.add('R1', 897, 'ide/cNF', 'Código numérico igual ao número da nota ou em sequência proibida')
 }
 
@@ -200,6 +211,7 @@ function rulesR2(doc: Doc, ctx: Layer1Context, c: Collector): Date | null {
   if (!DH_EMI.test(dhText)) { c.add('R2', null, 'ide/dhEmi', 'Data e hora fora da forma do leiaute (fuso ±hh:00 obrigatório)'); return null }
   const at = new Date(dhText)
   if (Number.isNaN(at.getTime())) { c.add('R2', null, 'ide/dhEmi', 'Data e hora inexistentes'); return null }
+  if (Number.isNaN(ctx.now.getTime())) { c.add('R2', null, 'contexto/now', 'O relógio injetado é inválido — a janela do dhEmi não pode ser conferida'); return at }
   const diff = at.getTime() - ctx.now.getTime()
   if (diff > AHEAD_MS) c.add('R2', 703, 'ide/dhEmi', 'Data de emissão posterior à data do processamento (tolerância de 5 minutos)')
   if (diff < -BEHIND_MS) c.add('R2', 228, 'ide/dhEmi', 'Data de emissão com mais de 30 dias de atraso')
@@ -228,6 +240,10 @@ function rulesR4(doc: Doc, c: Collector): void {
   if (child(ide, 'dhCont') || child(ide, 'xJust')) c.add('R4', 556, 'ide', 'Emissão normal com data/hora ou justificativa de contingência')
   const tpEmis = val(ide, 'tpEmis'), procEmi = val(ide, 'procEmi'), serie = val(ide, 'serie')
   if (tpEmis !== null && tpEmis !== '1') c.add('R4', null, 'ide/tpEmis', 'Tipo de emissão diferente de 1 — fora do 1º release')
+  const mod = val(ide, 'mod'), crt = val(doc.emit, 'CRT')
+  if (mod !== null && mod !== '55') c.add('R4', null, 'ide/mod', 'Modelo diferente de 55 — fora do 1º release')
+  if (crt === null) c.missing('R4', 'emit/CRT')
+  else if (crt !== '1') c.add('R4', null, 'emit/CRT', 'Regime tributário diferente de 1 (Simples Nacional) — fora do 1º release')
   if (procEmi === null) c.missing('R4', 'ide/procEmi')
   if (serie === null) c.missing('R4', 'ide/serie')
   else if (/^[0-9]+$/.test(serie)) {
@@ -238,10 +254,12 @@ function rulesR4(doc: Doc, c: Collector): void {
 }
 
 function rulesR5(doc: Doc, ctx: Layer1Context, c: Collector): void {
+  const destCnpj = val(doc.dest, 'CNPJ')
+  if (destCnpj !== null && !isValidCnpj(destCnpj)) c.add('R5', 208, 'dest/CNPJ', 'CNPJ do destinatário inválido')
   const xNome = val(doc.dest, 'xNome')
   if (xNome === null) { c.missing('R5', 'dest/xNome'); return }
   if (ctx.environment === 'H' && xNome !== HOMOLOGATION_TEXT) c.add('R5', 598, 'dest/xNome', 'Em homologação o nome do destinatário é o texto fixo da norma')
-  if (ctx.environment === 'P' && xNome === HOMOLOGATION_TEXT) c.add('R5', null, 'dest/xNome', 'O texto fixo de homologação não pode aparecer em produção (escolha nossa)')
+  if (ctx.environment === 'P' && xNome.trim().toUpperCase() === HOMOLOGATION_TEXT) c.add('R5', null, 'dest/xNome', 'O texto fixo de homologação não pode aparecer em produção (escolha nossa)')
 }
 
 function rulesR6(doc: Doc, ctx: Layer1Context, c: Collector): void {
@@ -267,41 +285,54 @@ function rulesR7(doc: Doc, c: Collector): void {
   })
 }
 
+const elementsOfChildren = (parent: XmlNode): XmlNode[] => {
+  const out: XmlNode[] = []
+  for (let i = 0; i < parent.childNodes.length; i++) if (isEl(parent.childNodes[i])) out.push(parent.childNodes[i])
+  return out
+}
+
 /** Soma do texto decimal de `path` (elementos descendentes de cada `det`) em centavos; `null` se algum valor não for centavo exato. */
 const sumDets = (dets: XmlNode[], path: readonly string[]): number | null => {
   let total = 0
   for (const d of dets) {
     let nodes: XmlNode[] = [d]
-    for (const step of path) nodes = nodes.flatMap(n => children(n, step))
+    for (const step of path) nodes = step === '*' ? nodes.flatMap(n => elementsOfChildren(n)) : nodes.flatMap(n => children(n, step))
     for (const n of nodes) { const v = centsOf(raw(n)); if (v === null) return null; total += v }
   }
   return total
 }
 
-/** O que o `ICMSTot` soma dos itens: campo → caminho dentro do `det`; os sem fonte nos itens do perfil são zero. */
-const TOT_FIELDS: readonly { f: string; path: readonly string[] | null }[] = [
-  { f: 'vBC', path: null }, { f: 'vICMS', path: null }, { f: 'vICMSDeson', path: null }, { f: 'vFCP', path: null }, { f: 'vBCST', path: null },
-  { f: 'vST', path: null }, { f: 'vFCPST', path: null }, { f: 'vFCPSTRet', path: null },
-  { f: 'vProd', path: ['prod', 'vProd'] }, { f: 'vFrete', path: ['prod', 'vFrete'] }, { f: 'vSeg', path: ['prod', 'vSeg'] }, { f: 'vDesc', path: ['prod', 'vDesc'] },
-  { f: 'vII', path: null }, { f: 'vIPI', path: null }, { f: 'vIPIDevol', path: null },
-  { f: 'vPIS', path: ['imposto', 'PIS', 'PISOutr', 'vPIS'] }, { f: 'vCOFINS', path: ['imposto', 'COFINS', 'COFINSOutr', 'vCOFINS'] }, { f: 'vOutro', path: ['prod', 'vOutro'] },
+/** O que o `ICMSTot` soma dos itens: campo → caminho dentro do `det` ('*' = qualquer grupo filho: o CSOSN muda o nome do grupo) e a rejeição da SEFAZ (MOC Anexo I, W03-20 a W15). */
+const ICMS = ['imposto', 'ICMS', '*'] as const
+const TOT_FIELDS: readonly { f: string; path: readonly string[]; rej: number }[] = [
+  { f: 'vBC', path: [...ICMS, 'vBC'], rej: 531 }, { f: 'vICMS', path: [...ICMS, 'vICMS'], rej: 532 }, { f: 'vICMSDeson', path: [...ICMS, 'vICMSDeson'], rej: 795 },
+  { f: 'vFCP', path: [...ICMS, 'vFCP'], rej: 861 }, { f: 'vBCST', path: [...ICMS, 'vBCST'], rej: 533 }, { f: 'vST', path: [...ICMS, 'vICMSST'], rej: 534 },
+  { f: 'vFCPST', path: [...ICMS, 'vFCPST'], rej: 862 }, { f: 'vFCPSTRet', path: [...ICMS, 'vFCPSTRet'], rej: 859 },
+  { f: 'vProd', path: ['prod', 'vProd'], rej: 564 }, { f: 'vFrete', path: ['prod', 'vFrete'], rej: 535 }, { f: 'vSeg', path: ['prod', 'vSeg'], rej: 536 },
+  { f: 'vDesc', path: ['prod', 'vDesc'], rej: 537 },
+  { f: 'vII', path: ['imposto', 'II', 'vII'], rej: 601 }, { f: 'vIPI', path: ['imposto', 'IPI', 'IPITrib', 'vIPI'], rej: 538 },
+  { f: 'vIPIDevol', path: ['impostoDevol', 'IPI', 'vIPIDevol'], rej: 863 },
+  { f: 'vPIS', path: ['imposto', 'PIS', '*', 'vPIS'], rej: 602 }, { f: 'vCOFINS', path: ['imposto', 'COFINS', '*', 'vCOFINS'], rej: 603 },
+  { f: 'vOutro', path: ['prod', 'vOutro'], rej: 604 },
 ]
 
 function rulesR8R9(doc: Doc, ctx: Layer1Context, at: Date | null, c: Collector): void {
   const icmsTot = child(doc.tot, 'ICMSTot')
   if (!icmsTot) { c.missing('R8', 'total/ICMSTot'); return }
   const sums = new Map<string, number>()
-  for (const { f, path } of TOT_FIELDS) {
-    const expected = path === null ? 0 : sumDets(doc.dets, path)
+  for (const { f, path, rej } of TOT_FIELDS) {
+    const expected = sumDets(doc.dets, path)
     const written = centsOf(val(icmsTot, f))
-    if (written === null) { c.add('R8', null, `ICMSTot/${f}`, 'Campo do total ausente ou fora do formato monetário'); continue }
-    if (expected === null) { c.add('R8', null, `ICMSTot/${f}`, 'Valor de item fora do formato monetário — a soma não pode ser conferida'); continue }
+    if (written === null) { c.add('R8', rej, `ICMSTot/${f}`, 'Campo do total ausente ou fora do formato monetário'); continue }
+    if (expected === null) { c.add('R8', rej, `ICMSTot/${f}`, 'Valor de item fora do formato monetário — a soma não pode ser conferida'); continue }
     sums.set(f, expected)
-    if (written !== expected) c.add('R8', null, `ICMSTot/${f}`, 'O total difere da soma dos itens (regra W do ICMSTot)')
+    if (written !== expected) c.add('R8', rej, `ICMSTot/${f}`, 'O total difere da soma dos itens (regra W do ICMSTot)')
   }
   const tribSum = sumDets(doc.dets, ['imposto', 'vTotTrib'])
   const tribWritten = val(icmsTot, 'vTotTrib')
-  if (tribSum !== null && centsOf(tribWritten) !== (tribWritten === null ? null : tribSum) && !(tribWritten === null && tribSum === 0)) c.add('R8', 685, 'ICMSTot/vTotTrib', 'O total aproximado de tributos difere da soma dos itens')
+  if (tribSum !== null) {
+    if (tribWritten === null ? tribSum !== 0 : centsOf(tribWritten) !== tribSum) c.add('R8', 685, 'ICMSTot/vTotTrib', 'O total aproximado de tributos difere da soma dos itens')
+  }
 
   // R9 — o vNF escrito = a fórmula do núcleo sobre as parcelas dos ITENS = o vNF do ERP (D-NE27: tolerância zero)
   if (!at) return                                                                    // sem data legível a fórmula não roda (a R2 já acusou)
@@ -310,11 +341,11 @@ function rulesR8R9(doc: Doc, ctx: Layer1Context, at: Date | null, c: Collector):
   if (wroteVNF === null || parts.some(p => p === undefined)) { c.add('R9', 610, 'ICMSTot/vNF', 'vNF ausente ou parcelas dos itens ilegíveis — a fórmula não pode ser conferida'); return }
   const totals: MerchandiseTotalsCents = {
     vProd: parts[0] as number, vDesc: parts[1] as number, vFrete: parts[2] as number, vSeg: parts[3] as number, vOutro: parts[4] as number,
-    vICMSDesonDeducted: 0, vST: 0, vFCPST: 0, vICMSMonoReten: 0, vII: 0, vIPI: 0, vIPIDevol: 0, vServ: 0, vPISSTSummed: 0, vCOFINSSTSummed: 0, newVehicleSale: false,
+    vICMSDesonDeducted: 0, vST: sums.get('vST') ?? 0, vFCPST: sums.get('vFCPST') ?? 0, vICMSMonoReten: 0, vII: sums.get('vII') ?? 0, vIPI: sums.get('vIPI') ?? 0, vIPIDevol: sums.get('vIPIDevol') ?? 0, vServ: 0, vPISSTSummed: 0, vCOFINSSTSummed: 0, newVehicleSale: false,
   }
   let formula: number
   try {
-    formula = merchandiseInvoiceTotal(totals, at.toISOString().slice(0, 10)).cents
+    formula = merchandiseInvoiceTotal(totals, (val(doc.ide, 'dhEmi') as string).slice(0, 10)).cents
   } catch { c.add('R9', 610, 'ICMSTot/vNF', 'A fórmula oficial do vNF não se aplica a estes valores ou a esta data'); return }
   if (wroteVNF !== formula) c.add('R9', 610, 'ICMSTot/vNF', 'O vNF escrito difere da fórmula oficial sobre os itens do próprio XML')
   else if (!Number.isSafeInteger(ctx.erpTotalCents) || formula !== ctx.erpTotalCents) {
@@ -331,11 +362,20 @@ async function rulesR10(xml: string, c: Collector): Promise<void> {
   const seen = new Set<string>()
   for (const message of result.errors) {
     const m = /Element '(?:\{[^}]*\})?([^']+)'/.exec(message)
-    const name = m ? m[1] : 'documento'
+    const name = m ? short(m[1]) : 'documento'
     if (seen.has(name)) continue
     seen.add(name)
     c.add('R10', 215, name, 'Estrutura ou tipo inválido segundo o leiaute (XSD)')
   }
+}
+
+/** Chave referenciada: 44 dígitos, DV, modelo 55 e diferente da chave da própria nota. */
+function checkRefKey(key: string | null, own: string, where: string, c: Collector): void {
+  if (key === null) { c.missing('R14', where); return }
+  if (!/^[0-9]{44}$/.test(key)) { c.add('R14', 236, where, 'Chave de acesso referenciada fora da forma (44 dígitos)'); return }
+  if (mod11Ascii48(key.slice(0, 43)) !== Number(key[43])) c.add('R14', 236, where, 'Chave de acesso referenciada com dígito verificador inválido')
+  if (key.slice(20, 22) !== '55') c.add('R14', null, where, 'Chave referenciada de modelo diferente de 55 — fora do 1º release (escolha nossa)')
+  if (key === own) c.add('R14', 316, where, 'Chave de acesso referenciada igual à da própria nota')
 }
 
 function rulesR13R14(doc: Doc, c: Collector): void {
@@ -343,17 +383,29 @@ function rulesR13R14(doc: Doc, c: Collector): void {
   const nfref = children(ide, 'NFref')
   const refs = doc.dets.map(d => child(d, 'DFeReferenciado'))
   const anyRef = refs.some(r => r !== null)
+  const own = (attrOf(doc.inf, 'Id') ?? '').replace(/^NFe/, '')
   if (doc.finNFe !== '1' && doc.finNFe !== '4') c.add('R13', null, 'ide/finNFe', 'Finalidade fora do perfil do 1º release (1 venda; 4 devolução)')
+  const pag = child(doc.inf, 'pag')
+  const pags = children(pag, 'detPag')
   if (doc.isReturn) {
-    const pag = child(doc.inf, 'pag')
-    const dets = children(pag, 'detPag')
-    if (dets.length !== 1 || val(dets[0], 'tPag') !== '90') c.add('R13', 871, 'pag/detPag/tPag', 'Devolução: a forma de pagamento deve ser 90 (sem pagamento)')
-    else if (centsOf(val(dets[0], 'vPag')) !== 0) c.add('R13', 904, 'pag/detPag/vPag', 'Devolução: o valor do pagamento deve ser 0.00')
+    if (pags.length !== 1 || val(pags[0], 'tPag') !== '90') c.add('R13', 871, 'pag/detPag/tPag', 'Devolução: a forma de pagamento deve ser 90 (sem pagamento)')
+    else if (centsOf(val(pags[0], 'vPag')) !== 0) c.add('R13', 904, 'pag/detPag/vPag', 'Devolução: o valor do pagamento deve ser 0.00')
     if (nfref.length && anyRef) c.add('R14', 1010, 'ide/NFref', 'Chave referenciada no cabeçalho e também no item')
     else if (nfref.length) c.add('R14', null, 'ide/NFref', 'Referência só no cabeçalho — a devolução referencia por item (escolha nossa, D-NE219)')
     else if (!anyRef) c.add('R14', 321, 'det/DFeReferenciado', 'Devolução sem nenhuma nota referenciada')
     else refs.forEach((r, i) => { if (r === null) c.add('R14', 321, `det[${i + 1}]/DFeReferenciado`, 'Item da devolução sem a nota referenciada') })
-  } else if (anyRef) c.add('R14', null, 'det/DFeReferenciado', 'Nota que não é devolução com item referenciado (escolha nossa)')
+    refs.forEach((r, i) => { if (r !== null) checkRefKey(val(r, 'chaveAcesso'), own, `det[${i + 1}]/DFeReferenciado/chaveAcesso`, c) })
+  } else {
+    if (anyRef) c.add('R14', null, 'det/DFeReferenciado', 'Nota que não é devolução com item referenciado (escolha nossa)')
+    // venda: a soma dos pagamentos (menos o troco) cobre o vNF (865); o excesso não é rejeição numerada (escolha nossa)
+    const vnf = centsOf(val(child(doc.tot, 'ICMSTot'), 'vNF'))
+    const paid = pags.map(d => centsOf(val(d, 'vPag')))
+    if (vnf !== null && paid.length && paid.every(v => v !== null)) {
+      const net = (paid as number[]).reduce((a, b) => a + b, 0) - (centsOf(val(pag, 'vTroco')) ?? 0)
+      if (net < vnf) c.add('R13', 865, 'pag/detPag/vPag', 'Total dos pagamentos menor que o total da nota')
+      else if (net > vnf) c.add('R13', null, 'pag/detPag/vPag', 'Total dos pagamentos maior que o total da nota (escolha nossa)')
+    }
+  }
 }
 
 // ---------------------------------------------------------------------------------------------------------------------------------------
@@ -414,4 +466,3 @@ export async function assertLayer1(xml: string, ctx: Layer1Context): Promise<voi
   throw documentInvalid(`O candidato da NF-e tem ${list.length} violação(ões) da camada 1${more}`, fields)
 }
 
-export { ufOfCode }

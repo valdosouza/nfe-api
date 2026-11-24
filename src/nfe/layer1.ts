@@ -354,10 +354,13 @@ function rulesR8R9(doc: Doc, ctx: Layer1Context, at: Date | null, c: Collector):
 }
 
 /** R10 — o XSD sobre o candidato com a Signature de forma (S4); uma violação por elemento, citando só o nome (a mensagem do validador cita o valor). */
-async function rulesR10(xml: string, c: Collector): Promise<void> {
-  const close = xml.lastIndexOf('</NFe')
-  if (close < 0) { c.add('R10', 215, 'NFe', 'Elemento raiz sem fechamento'); return }
-  const result = await validateMessage('NFe', xml.slice(0, close) + FORM_SIGNATURE + xml.slice(close))
+async function rulesR10(xml: string, rootName: string, c: Collector): Promise<void> {
+  // o fechamento vem do NOME da raiz que o leitor estrito já leu (não de um literal de tag: a cerca N17 do núcleo proíbe recorte de XML por texto de tag)
+  const closeTag = `</${rootName}>`
+  const body = xml.trimEnd()
+  if (!body.endsWith(closeTag)) { c.add('R10', 215, 'NFe', 'Elemento raiz sem fechamento'); return }
+  const at = body.length - closeTag.length
+  const result = await validateMessage('NFe', body.slice(0, at) + FORM_SIGNATURE + body.slice(at))
   if (result.ok) return
   const seen = new Set<string>()
   for (const message of result.errors) {
@@ -447,7 +450,7 @@ export async function validateCandidate(xml: string, ctx: Layer1Context): Promis
   rulesR7(doc, c)
   rulesR8R9(doc, ctx, at, c)
   rulesR13R14(doc, c)
-  await rulesR10(xml, c)
+  await rulesR10(xml, top.localName ?? top.nodeName, c)
   return c.list
 }
 

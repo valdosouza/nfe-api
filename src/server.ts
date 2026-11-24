@@ -10,6 +10,7 @@ import { KeyProof } from './key-proof'
 import { MIGRATION_SETS } from './migrations'
 import { assertMerchandiseVoiceDomainsEnforced, assertMerchandiseStrictSession } from './nfe/voice-family'
 import { assertNumberVoidDomainsEnforced, assertNumberVoidUniqueKeys } from './nfe/number-void'
+import { assertNfeNotRegisteredColumn } from './nfe/not-registered'
 import { assertCorsOrigins } from './cors-origins'
 
 async function main(): Promise<void> {
@@ -30,6 +31,7 @@ async function main(): Promise<void> {
   await assertMerchandiseStrictSession(ctx.pool)           // D-NE172: a sessão é ESTRITA — a chave de 45 posições é RECUSADA (1406), nunca cortada calada
   await assertNumberVoidDomainsEnforced(ctx.pool)          // D-NE163: domínios da faixa inutilizada (001 desta API)
   await assertNumberVoidUniqueKeys(ctx.pool)               // D-NE163: as DUAS UNIQUE da faixa com as colunas decididas (CREATE IF NOT EXISTS não corrige tabela antiga)
+  await assertNfeNotRegisteredColumn(ctx.pool)             // D-NE111 (002 desta API): o fato "o fisco não registrou" tem a coluna certa; migration aplicada, senão não sobe
   // D-NE158 (DEPLOY.E1.P9, núcleo 5.0.0): a família ENTROU no catálogo `VOICE_READINGS` na janela da NE-6 e a conferência não tem mais
   // lista padrão — a nfe-api segue passando a PRÓPRIA leitura (D-F113 por família), nunca o catálogo inteiro: o boot dela não depende
   // das migrations de outra família (D-NE76)

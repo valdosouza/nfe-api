@@ -50,6 +50,8 @@ export interface MerchandiseInvoiceHeader {
   serie:      string | null
   model:      string | null
   dtEmission: string
+  /** O instante em que o faturamento criou a nota, em UTC ('AAAA-MM-DD HH:MM:SS' — PADROES_BANCO §10.1); a HORA do `dhEmi` (D-NE284). */
+  createdAt:  string | null
   entityId:   number
   status:     string
   note:       string | null
@@ -65,7 +67,8 @@ export interface MerchandiseInvoiceHeader {
 export async function readMerchandiseInvoice(q: Queryable, schemaName: string, ref: InvoiceRef): Promise<MerchandiseInvoiceHeader> {
   const s = assertSchema(schemaName)
   const [rows] = await q.query(
-    `SELECT i.id, i.number, i.serie, i.model, DATE_FORMAT(i.dt_emission, '%Y-%m-%d') AS dtEmission, i.tb_entity_id AS entityId, i.status,
+    `SELECT i.id, i.number, i.serie, i.model, DATE_FORMAT(i.dt_emission, '%Y-%m-%d') AS dtEmission,
+            DATE_FORMAT(i.created_at, '%Y-%m-%d %H:%i:%s') AS createdAt, i.tb_entity_id AS entityId, i.status,
             CONVERT(i.note USING utf8mb4) AS note, mb.id AS branchId, CAST(mb.total_value AS CHAR) AS totalValue, mb.indPres AS indPres
        FROM \`${s}\`.tb_invoice i
        LEFT JOIN \`${s}\`.tb_invoice_merchandise mb
@@ -79,7 +82,7 @@ export async function readMerchandiseInvoice(q: Queryable, schemaName: string, r
       [{ field: 'merchandise', message: 'Ramo de mercadoria ausente' }], MerchandiseFactsErrors.BRANCH_MISSING)
   }
   return {
-    invoiceId: Number(r.id), number: txt(r.number), serie: txt(r.serie), model: txt(r.model), dtEmission: String(r.dtEmission),
+    invoiceId: Number(r.id), number: txt(r.number), serie: txt(r.serie), model: txt(r.model), dtEmission: String(r.dtEmission), createdAt: txt(r.createdAt),
     entityId: Number(r.entityId), status: String(r.status ?? ''), note: txt(r.note), totalValue: txt(r.totalValue), indPres: int(r.indPres),
   }
 }

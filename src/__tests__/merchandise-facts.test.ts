@@ -33,7 +33,7 @@ const TERMINAL = 7                                                   // de prop�
 const REF = invoiceRef(INST, 5001, TERMINAL)
 
 const invoiceRow: Row = {
-  id: 5001, number: null, serie: '1', model: '55', dtEmission: '2026-11-23', entityId: 321, status: '0', note: 'obs da nota',
+  id: 5001, number: null, serie: '1', model: '55', dtEmission: '2026-11-23', createdAt: '2026-11-23 13:05:09', entityId: 321, status: '0', note: 'obs da nota',
   branchId: 5001, totalValue: '4000.00', indPres: 3,
 }
 
@@ -58,13 +58,14 @@ describe('NFE.E5.P2.T1 — nota e ramo de mercadoria', () => {
     const db = fakeDb([['tb_invoice', [invoiceRow]]])
     const h = await readMerchandiseInvoice(db, SCHEMA, REF)
     expect(h).toEqual({
-      invoiceId: 5001, number: null, serie: '1', model: '55', dtEmission: '2026-11-23', entityId: 321, status: '0', note: 'obs da nota',
+      invoiceId: 5001, number: null, serie: '1', model: '55', dtEmission: '2026-11-23', createdAt: '2026-11-23 13:05:09', entityId: 321, status: '0', note: 'obs da nota',
       totalValue: '4000.00', indPres: 3,
     })
     expect(db.calls).toHaveLength(1)
     expect(db.calls[0].params).toEqual([5001, INST, TERMINAL])
     expect(db.calls[0].sql).toContain('`setes_cliente_x`.tb_invoice i')
     expect(db.calls[0].sql).toContain('i.issuer = i.tb_institution_id')
+    expect(db.calls[0].sql).toContain("DATE_FORMAT(i.created_at, '%Y-%m-%d %H:%i:%s') AS createdAt")   // a hora do dhEmi (D-NE284), em UTC e como texto exato
     expect(db.calls[0].sql).not.toMatch(/base_icms_value|icms_value|freight_value|ipi_value/)   // os outros totais do ramo NÃO são lidos (D-NE27)
   })
 

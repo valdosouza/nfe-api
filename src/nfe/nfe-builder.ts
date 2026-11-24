@@ -311,8 +311,10 @@ export function buildNfeXml(input: NfeInput, accessKey: string): { xml: string; 
   if (input.environment !== '1' && input.environment !== '2') w.fail('ide.tpAmb', 'Valor fora do domínio do leiaute')
 
   // ---- perfil e coerência (o que impede ESCREVER uma nota certa) --------------------------------------------------------------------
-  const dh = typeof input.dhEmi === 'string' ? DH_EMI.exec(input.dhEmi) : null
-  if (input.dhEmi === null || input.dhEmi === undefined || input.dhEmi === '') w.fail('ide.dhEmi', 'Campo obrigatório vazio')
+  // O `dhEmi` é lido UMA vez (gate adversarial: um accessor que devolve valores diferentes entre a conferência e a escrita driblava a trava).
+  const dhEmiText: unknown = input.dhEmi
+  const dh = typeof dhEmiText === 'string' ? DH_EMI.exec(dhEmiText) : null
+  if (dhEmiText === null || dhEmiText === undefined || dhEmiText === '') w.fail('ide.dhEmi', 'Campo obrigatório vazio')
   else if (!dh) w.fail('ide.dhEmi', 'Data e hora fora da forma do leiaute (AAAA-MM-DDThh:mm:ss±hh:00)')
   else if (`${dh[1].slice(2)}${dh[2]}` !== key.yymm) w.fail('ide.dhEmi', 'Ano e mês da emissão diferentes dos da chave de acesso')
   if (dh && !isRealDate(`${dh[1]}-${dh[2]}-${dh[3]}`)) w.fail('ide.dhEmi', 'Data da emissão inexistente no calendário')
@@ -320,7 +322,7 @@ export function buildNfeXml(input: NfeInput, accessKey: string): { xml: string; 
   // D-NE277 (NFE.E5.P4): de 01/01/2027 em diante o Simples declara IBS/CBS em todo documento (`cAtivSN` por item, `gTribSN` e totais — NT 2026.005),
   // campos que ainda não estão em XSD nenhum do acervo nem na fonte de fatos: o builder RECUSA em vez de autorizar uma nota sem o que a norma
   // passa a exigir. Vale para toda nota (venda e devolução). Sai com o NFE.E5.P6. Até 31/12/2026 o grupo IBSCBS NÃO vai para o CRT 1.
-  if (emissionDate >= IBSCBS_SIMPLES_FROM) w.fail('ide.dhEmi', `Emissão a partir de 01/01/2027 — IBS/CBS do Simples — ${OUT_OF_FIRST_RELEASE}`)
+  if (emissionDate >= IBSCBS_SIMPLES_FROM) w.fail('ide.dhEmi', `Emissão a partir de 01/01/2027 — IBS/CBS do Simples — ${OUT_OF_FIRST_RELEASE}`)  // a mensagem é fixa e não ecoa dado da nota
   if (input.emit.CNPJ !== key.cnpj) w.fail('emit.CNPJ', input.emit.CNPJ ? 'CNPJ do emitente diferente do da chave de acesso' : 'Campo obrigatório vazio')
   if (input.finNFe !== '1' && input.finNFe !== '4') w.fail('ide.finNFe', `Finalidade ${String(input.finNFe).slice(0, 1)} — ${OUT_OF_FIRST_RELEASE}`)
   if (input.idDest === '3') w.fail('ide.idDest', `Operação com o exterior — ${OUT_OF_FIRST_RELEASE}`)
@@ -340,7 +342,7 @@ export function buildNfeXml(input: NfeInput, accessKey: string): { xml: string; 
     xmlElement('cUF', key.cUF) + xmlElement('cNF', key.cNF)
     + w.req('ide.natOp', 'natOp', () => nfeText(input.natOp, 1, 60))
     + xmlElement('mod', '55') + xmlElement('serie', key.serie) + xmlElement('nNF', key.nNF)
-    + (dh ? xmlElement('dhEmi', input.dhEmi as string) : '')
+    + (dh ? xmlElement('dhEmi', dhEmiText as string) : '')
     + w.oneOf('ide.tpNF', input.tpNF, ['0', '1'], 'tpNF')
     + (input.idDest === '1' || input.idDest === '2' ? xmlElement('idDest', input.idDest) : '')
     + w.req('ide.cMunFG', 'cMunFG', () => digits(input.emit.ender.cMun, 7))

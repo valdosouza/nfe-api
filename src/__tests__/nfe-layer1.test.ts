@@ -427,6 +427,15 @@ describe('R10 — XSD (rej. 215)', () => {
     }
   })
 
+  it('o fechamento da raiz vem do nome lido: espaço ou CRLF no fim vai ao XSD sem R10 (só a 588); raiz sem fechamento e `</NFe >` caem na R10', async () => {
+    const trailing = await run('R10', sale() + '\r\n')
+    expect([rules(trailing), rejs(trailing)]).toEqual([['R11'], [588]])
+    const selfClosed = await run('R10', '<NFe xmlns="http://www.portalfiscal.inf.br/nfe"/>')
+    expect(rules(selfClosed)).toContain('R10')
+    const spaced = await run('R10', sale().replace(/<\/NFe>$/, '</NFe >'))
+    expect(of(spaced, 'R10').map(x => x.field)).toEqual(['NFe'])                      // decisão: o fechamento com espaço não é o do leiaute
+  })
+
   it('NFe vazia: a camada acusa o infNFe ausente (R10), sem exceção', async () => {
     expect(rules(await run('R10', '<NFe xmlns="http://www.portalfiscal.inf.br/nfe"></NFe>'))).toEqual(['R10'])
   })

@@ -9,7 +9,8 @@
 //  2. `addPage` em QUALQUER referência de propriedade (PROPERTY_BANNED): o embrulho (`const o = doc.addPage; doc.addPage = …`) e a chamada direta
 //     (a família não abre folha: o pdfkit abre no transbordo e o `sheetStart` da base não pode abri-la); o texto `'addPage'` solto também é
 //     acusado (regra d, como o `'pageAdded'`);
-//  3. `write` chamado sobre `.page` ou `.content` (e `const p = doc.page` — o apelido da página — é acusado em regra b) (é o que o `addContent` faz por dentro: `doc.page.write('BT … Tj ET')`) — regra b;
+//  3. `write` chamado sobre `.page` ou `.content`; o APELIDO da página ou do conteúdo (`const p = x.page`, `p = doc.page.content`, `const { page } = doc`) e a lista
+//     `annotations` (`doc.page.annotations.push(ref)`) são acusados em regra b (é o que o `addContent` faz por dentro: `doc.page.write('BT … Tj ET')`) — regra b;
 //  4. `doc[chave]` com chave que NÃO é texto literal (`const k = 'text'; doc[k](…)`) — regra c; só o objeto chamado `doc` (a convenção da família).
 // LIMITES: a desestruturação de `note` de um objeto que não é resultado de chamada é acusada — a pasta do DANFE não usa campo com esse nome; nome
 // montado em execução em outro objeto, `eval`, `Object(doc)` e `doc.on('page' + 'Added')` seguem como os limites do cabeçalho abaixo (a cerca
@@ -57,7 +58,7 @@ export const CALL_BANNED = Object.freeze([
   'link', 'rectAnnotation', 'lineAnnotation', 'fileAnnotation', 'highlight', 'goTo', 'markContent', 'file', 'addNamedEmbeddedFile',
 ] as const)
 /** (b) Barrados em qualquer referência de propriedade. */
-export const PROPERTY_BANNED = Object.freeze(['heightOfString', 'widthOfString', 'registerFont', 'addPage'] as const)
+export const PROPERTY_BANNED = Object.freeze(['heightOfString', 'widthOfString', 'registerFont', 'addPage', 'annotations'] as const)
 /** (c) Barrados como TEXTO em colchete, chave computada ou `Reflect.*`. */
 /** (e) Só com `save()` aberto na mesma função: o recorte (D-NE142) e a mudança de matriz (A1). */
 export const SAVE_GUARDED = Object.freeze(['clip', 'rotate', 'translate', 'scale', 'transform'] as const)
@@ -115,6 +116,12 @@ function destructuringSource(pattern: ts.Node): ts.Expression | undefined {
 function bannedKey(key: string, source: ts.Expression | undefined): boolean {
   if (has(PROPERTY_BANNED, key) || key === 'clip') return true
   return has(CALL_BANNED, key) && !(source && ts.isCallExpression(unwrapCallee(source)))
+}
+
+/** O valor (sem os embrulhos `as`, `!`, parênteses) é um acesso de propriedade terminado em `.page` ou `.content` — o apelido da página ou do conteúdo dela. */
+function endsWithPageOrContent(e: ts.Expression): boolean {
+  const t = unwrapCallee(e)
+  return ts.isPropertyAccessExpression(t) && ['page', 'content'].includes(t.name.text)
 }
 
 /** O arquivo é da família de PDF: importa `fiscal-api/pdf` (ou um subcaminho dele) ou `pdfkit`, ou cita o tipo `PDFKit`. */
@@ -221,8 +228,17 @@ export function pdfFamilyViolations(code: string): FenceViolation[] {
     // (c) doc['text'], doc[`font`]
     if (ts.isElementAccessExpression(n) && isText(n.argumentExpression) && has(NAME_BANNED, n.argumentExpression.text)) add('c', n)
     // (b) o apelido da página: `const p = doc.page; p.write('BT … Tj ET')` escreveria conteúdo sem passar por `doc.page.write` à vista
-    if (ts.isVariableDeclaration(n) && n.initializer && ts.isPropertyAccessExpression(n.initializer) && n.initializer.name.text === 'page'
-      && ts.isIdentifier(n.initializer.expression) && n.initializer.expression.text === 'doc') add('b', n)
+    // (qualquer dono, passando por `as` e parênteses: `ctx.doc.page`, `(doc as any).page`, `doc.page.content` — gate socrático 3ª passada, M-3)
+    if (ts.isVariableDeclaration(n) && n.initializer && endsWithPageOrContent(n.initializer)) add('b', n)
+    else if (ts.isBinaryExpression(n) && n.operatorToken.kind === ts.SyntaxKind.EqualsToken && endsWithPageOrContent(n.right)) add('b', n)
+    // (b) a desestruturação de `page`/`content` de um objeto que não é resultado de chamada: `const { page } = doc`
+    if (ts.isBindingElement(n) && ts.isObjectBindingPattern(n.parent)) {
+      const key = n.propertyName ?? n.name
+      if ((ts.isIdentifier(key) || isText(key)) && ['page', 'content'].includes(key.text)) {
+        const src = destructuringSource(n.parent)
+        if (!(src && ts.isCallExpression(unwrapCallee(src)))) add('b', n)
+      }
+    }
     // (c) doc[chave] com chave que não é texto literal: `const k = 'text'; doc[k]('x')` (gate adversarial M1)
     else if (ts.isElementAccessExpression(n) && ts.isIdentifier(n.expression) && n.expression.text === 'doc' && !isText(n.argumentExpression)) add('c', n)
     // (d) 'pageAdded' em qualquer lugar

@@ -20,7 +20,6 @@ jest.mock('fiscal-api/pdf', () => {
 
 import { renderDanfe } from '../nfe/danfe/danfe'
 import { DANFE_FONT_ROLES, DANFE_TEXT_PARTS, WATERMARKS } from '../nfe/danfe/danfe-layout'
-import { danfeMarksOf } from '../nfe/danfe/danfe-marks'
 import { authorizedProc, emptyOptionalsInput, insertBefore, longInput } from './danfe-fixtures'
 import { pdfContentOps, pdfTextRuns, type TextRun } from './pdf-text'
 
@@ -30,7 +29,7 @@ const ALIGNS = ['left', 'center', 'right']
 
 async function runsOf(xml: string): Promise<{ runs: TextRun[][]; calls: typeof calls }> {
   calls.length = 0
-  const pdf = await renderDanfe({ procNfeXml: xml, marks: danfeMarksOf('A', '2'), creationDate: FIXED })
+  const pdf = await renderDanfe({ procNfeXml: xml, voice: 'A', creationDate: FIXED })
   return { runs: pdfContentOps(pdf).map(ops => pdfTextRuns(ops)), calls: [...calls] }
 }
 

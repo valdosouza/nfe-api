@@ -4,7 +4,7 @@
 // `projetos/nfe-api/SUBJECT/NFE_SEFAZ/ficha-nfe-e6-p3-danfe.md`, mudança 4. O PDF é lido de volta pelo `pdf-text.ts` (só de teste).
 import { HttpError } from 'fiscal-api'
 import { renderDanfe } from '../nfe/danfe/danfe'
-import { danfeMarksOf, type DanfeVoice } from '../nfe/danfe/danfe-marks'
+import { type DanfeVoice } from '../nfe/danfe/danfe-marks'
 import { NfeErrors } from '../nfe/errors'
 import { authorizedProc, insertBefore, longInput } from './danfe-fixtures'
 import { saleInput, saleKey } from './nfe-fixtures'
@@ -24,7 +24,7 @@ const KEY_BLOCKS = saleKey().match(/.{4}/g)!.join(' ')
 
 interface Rendered { pdf: Buffer; pages: TextRun[][]; texts: string[][] }
 async function render(xml: string, voice: DanfeVoice, tpAmb: '1' | '2' = '2'): Promise<Rendered> {
-  const pdf = await renderDanfe({ procNfeXml: xml, marks: danfeMarksOf(voice, tpAmb), creationDate: FIXED })
+  const pdf = await renderDanfe({ procNfeXml: xml, voice, creationDate: FIXED })
   const pages = pdfContentOps(pdf).map(ops => pdfTextRuns(ops))
   return { pdf, pages, texts: pages.map(p => p.map(r => r.text)) }
 }
@@ -154,19 +154,19 @@ describe('NFE.E6.P3.T1 — a nota em produção não leva a marca; a cancelada l
     }
   })
 
-  it('a marca de homologação tem de bater com o tpAmb do XML (422 no campo `marks`); marcas ausentes também', async () => {
-    const h = authorizedProc().xml                                                       // XML em H
-    const wrong = await refusal(renderDanfe({ procNfeXml: h, marks: danfeMarksOf('A', '1') }))
-    expect(wrong.statusCode).toBe(422)
-    expect(wrong.code).toBe(NfeErrors.DOCUMENT_INVALID)
-    expect(wrong.fields?.[0]?.field).toBe('marks')
+  it('a voz decide: sem autorização (R, P, F, D, S ou ausente) é 422 no campo `voice` — as marcas saem da voz e do tpAmb do PRÓPRIO XML, ninguém as monta por fora', async () => {
+    const xml = authorizedProc().xml
+    for (const voice of ['R', 'P', 'F', 'D', 'S', null] as const) {
+      const e = await refusal(renderDanfe({ procNfeXml: xml, voice }))
+      expect([voice, e.statusCode, e.code, e.fields?.[0]?.field]).toEqual([voice, 422, NfeErrors.DOCUMENT_INVALID, 'voice'])
+    }
     const prod = authorizedProc(saleInput({ environment: '1', dest: { ...saleInput().dest, xNome: 'CLIENTE REAL LTDA' } })).xml
-    expect((await refusal(renderDanfe({ procNfeXml: prod, marks: danfeMarksOf('A', '2') }))).fields?.[0]?.field).toBe('marks')
-    expect((await refusal(renderDanfe({ procNfeXml: h, marks: undefined as never }))).fields?.[0]?.field).toBe('marks')
+    expect((await render(xml, 'A')).texts[0]).toContain('SEM VALOR FISCAL')                 // XML em H: marca de H
+    expect((await render(prod, 'A')).texts[0]).not.toContain('SEM VALOR FISCAL')            // XML em P: sem marca
   })
 
   it('XML que não serve para o DANFE é 422 no campo `procNfeXml` (nunca PDF parcial)', async () => {
-    const e = await refusal(renderDanfe({ procNfeXml: '<nfeProc/>', marks: danfeMarksOf('A', '2') }))
+    const e = await refusal(renderDanfe({ procNfeXml: '<nfeProc/>', voice: 'A' }))
     expect(e.statusCode).toBe(422)
     expect(e.fields?.[0]?.field).toBe('procNfeXml')
   })

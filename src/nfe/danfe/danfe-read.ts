@@ -160,6 +160,11 @@ export function readNfeProc(procNfeXml: string): DanfeData {
   if (items.length === 0) throw bad('A nota não tem item (det)')
 
   const total = child(inf, 'total')
+  // o bloco "Total do IBS/CBS/IS" e as colunas UB dos itens (NT 2026.010 4.1) ainda NÃO são impressos: nota com o grupo é recusada, nunca sai um DANFE que o omite
+  // em silêncio. O builder do 1º release não escreve o grupo para o Simples em 2026 (NFE.E5.P4); o passo que o imprime tira esta recusa.
+  if (child(total, 'IBSCBSTot') !== null || kids(inf, 'det').some(det => child(child(det, 'imposto'), 'IBSCBS') !== null)) {
+    throw bad('O XML traz o grupo IBS/CBS, que este DANFE ainda não imprime (NT 2026.010 4.1)')
+  }
   const transp = child(inf, 'transp')
   const cobr = child(inf, 'cobr')
   const infAdic = child(inf, 'infAdic')

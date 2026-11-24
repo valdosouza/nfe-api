@@ -6,7 +6,7 @@
 import { HttpError } from 'fiscal-api'
 import { buildAccessKey } from '../nfe/access-key'
 import { renderDanfe } from '../nfe/danfe/danfe'
-import { danfeMarksOf, type DanfeVoice } from '../nfe/danfe/danfe-marks'
+import { type DanfeVoice } from '../nfe/danfe/danfe-marks'
 import { authorizedProc, insertBefore, longInput } from './danfe-fixtures'
 import { saleInput, saleKey } from './nfe-fixtures'
 import { pdfContentOps, pdfPageCount, pdfTextRuns, type TextRun } from './pdf-text'
@@ -16,7 +16,7 @@ const FIXED = new Date('2026-11-24T15:00:00Z')
 
 interface Rendered { pdf: Buffer; pages: TextRun[][]; texts: string[][] }
 async function render(xml: string, voice: DanfeVoice = 'A', tpAmb: '1' | '2' = '2'): Promise<Rendered> {
-  const pdf = await renderDanfe({ procNfeXml: xml, marks: danfeMarksOf(voice, tpAmb), creationDate: FIXED })
+  const pdf = await renderDanfe({ procNfeXml: xml, voice, creationDate: FIXED })
   const pages = pdfContentOps(pdf).map(ops => pdfTextRuns(ops))
   return { pdf, pages, texts: pages.map(p => p.map(r => r.text)) }
 }
@@ -43,6 +43,10 @@ describe('gates — cada coluna do item sai com o valor do SEU campo (mutantes: 
   it('Simples: código, descrição, NCM, CSOSN, CFOP, un., quantidade, unitário e total, em ordem; BC, ICMS e alíquota vazios', async () => {
     const r = await render(authorizedProc().xml)
     expect(rowOf(r.pages[0], '910')).toEqual(['910', 'Flange usinada em aço Ø 50 mm', '73259990', '101', '5101', 'PC', '2', '1.500', '3.000,00'])
+    // quantidade e valor unitário COM decimais e milhar (mutante: qCom impresso cru): 1234.5678 → 1.234,5678
+    const dec = await render(authorizedProc().xml.replace('<qCom>2</qCom>', '<qCom>1234.5678</qCom>').replace('<qTrib>2</qTrib>', '<qTrib>1234.5678</qTrib>'))
+    expect(rowOf(dec.pages[0], '910')).toContain('1.234,5678')
+    expect(rowOf(dec.pages[0], '910')).not.toContain('1234.5678')
     expect(rowOf(r.pages[0], '930')).toEqual(['930', 'Bucha de bronze', '73259990', '101', '5101', 'PC', '3', '333,333333', '1.000,00'])
   })
 
@@ -78,7 +82,7 @@ describe('gates — o que os mutantes deixavam vivo agora é provado', () => {
     expect(t).toEqual(expect.arrayContaining(['TRANSPORTES RAPIDO LTDA', '99.888.777/0001-66', '7766554433', 'Rodovia BR 277 km 10', 'ABC1D23', '12345678']))
     expect(t).toContain('TRANSPORTADOR / VOLUMES TRANSPORTADOS')
     // a IE ST fica no quadro dela (a 2ª caixa da linha de IE), não no da IE
-    expect(rowOf(r.pages[0], '9053273308')).toContain('1234567')
+    expect(rowOf(r.pages[0], '9053273308')).toEqual(['9053273308', '1 - SIMPLES NACIONAL', '1234567', '07.742.094/0001-13'])   // IE, CRT, IE ST, CNPJ: a ordem do modelo da NT
   })
 
   it('mais de 5 duplicatas: todas saem (a 6ª em linha nova)', async () => {
@@ -101,14 +105,13 @@ describe('gates — o que os mutantes deixavam vivo agora é provado', () => {
     })
   })
 
-  it('marcas só as emitidas por `danfeMarksOf`: um objeto montado à mão, mesmo com os booleanos certos, é recusado (L2)', async () => {
+  it('o carimbo vem da VOZ: voz C leva CANCELADA; qualquer outra voz de nota autorizada não; não há como passar marca montada por fora (a entrada é a voz)', async () => {
     const xml = authorizedProc().xml
-    for (const forged of [{ homologation: true, cancelled: false }, Object.freeze({ homologation: true, cancelled: true }), { ...danfeMarksOf('C', '2') }]) {
-      let e: HttpError | null = null
-      try { await renderDanfe({ procNfeXml: xml, marks: forged }) } catch (x) { e = x as HttpError }
-      expect(e?.statusCode).toBe(422)
-      expect(e?.fields?.[0]?.field).toBe('marks')
-    }
+    expect((await render(xml, 'C')).texts[0]).toContain('CANCELADA')
+    for (const voice of ['A', 'K', 'N'] as const) expect((await render(xml, voice)).texts[0]).not.toContain('CANCELADA')
+    // um objeto de entrada com `marks` forjado não muda nada: o campo nem existe no contrato (o carimbo sai só da voz)
+    const forged = { procNfeXml: xml, voice: 'A', marks: { homologation: false, cancelled: true }, creationDate: FIXED } as unknown as Parameters<typeof renderDanfe>[0]
+    expect(pdfTextRuns(pdfContentOps(await renderDanfe(forged))[0]).map(r => r.text)).not.toContain('CANCELADA')
   })
 })
 
@@ -289,5 +292,90 @@ describe('gates — CNPJ alfanumérico, nota de 400 itens e o cabeçalho dentro 
     expect(text).not.toMatch(/Helvetica/)
     expect(text).toMatch(/\/BaseFont \/Times-Bold/)
     expect(text).toMatch(/\/BaseFont \/Times-Roman/)
+  })
+})
+
+describe('gates — mutantes que ainda sobreviviam (frete × seguro, fatura líquida × original, IM do ISSQN)', () => {
+  it('frete, seguro, desconto e outras despesas com valores DISTINTOS saem cada um no seu campo', async () => {
+    const xml = authorizedProc().xml.replace('<vFrete>0.00</vFrete><vSeg>0.00</vSeg><vDesc>0.00</vDesc>', '<vFrete>11.11</vFrete><vSeg>22.22</vSeg><vDesc>33.33</vDesc>')
+      .replace('<vOutro>0.00</vOutro>', '<vOutro>44.44</vOutro>')
+    const r = await render(xml)
+    // o valor sai logo abaixo do descritivo dele: ordem do modelo da NT (produtos, frete, seguro, desconto, outras despesas, total)
+    // a linha do modelo da NT: produtos, frete, seguro, desconto, outras despesas, total da nota — cada valor no seu campo
+    expect(rowOf(r.pages[0], '11,11')).toEqual(['4.000,00', '11,11', '22,22', '33,33', '44,44', '4.000,00'])
+  })
+
+  it('fatura com desconto: valor original, desconto e valor líquido distintos, cada um no seu campo', async () => {
+    const xml = authorizedProc().xml.replace('<vOrig>4000.00</vOrig><vLiq>4000.00</vLiq>', '<vOrig>4100.00</vOrig><vDesc>100.00</vDesc><vLiq>4000.00</vLiq>')
+    const r = await render(xml)
+    expect(rowOf(r.pages[0], '4.100,00')).toEqual(['15', '4.100,00', '100,00', '4.000,00'])
+  })
+
+  it('ISSQN com inscrição municipal: a IM sai no campo dela', async () => {
+    let xml = insertBefore(authorizedProc().xml, '</total>', '<ISSQNtot><vServ>50.00</vServ><vBC>50.00</vBC><vISS>2.50</vISS></ISSQNtot>')
+    xml = insertBefore(xml, '<CRT>', '<IM>987654</IM>')
+    expect(rowOf((await render(xml)).pages[0], '987654')).toEqual(['987654', '50,00', '50,00', '2,50'])
+  })
+})
+
+describe('gates — HIGH-N1 (espaços), quadros longos dentro da folha e o grupo IBS/CBS', () => {
+  it('infCpl com 4.998 espaços entre duas letras (válido no XSD) desenha rápido e preserva as letras', async () => {
+    const xml = authorizedProc().xml.replace(/<infCpl>[\s\S]*?<\/infCpl>/, `<infCpl>a${' '.repeat(4998)}b</infCpl>`)
+    const started = Date.now()
+    const r = await render(xml)
+    expect(Date.now() - started).toBeLessThan(15_000)
+    const stream = r.texts[0].join(' ')
+    expect(stream).toMatch(/\ba {1,3}b\b/)
+  })
+
+  it('muitas duplicatas e transportador com textos longos: NENHUM trecho cai abaixo do pé nem fora da folha, e FOLHA k/N segue certa', async () => {
+    const dups = Array.from({ length: 75 }, (_, i) => `<dup><nDup>${String(i + 1).padStart(3, '0')}</nDup><dVenc>2026-12-22</dVenc><vDup>1.00</vDup></dup>`).join('')
+    let xml = authorizedProc().xml.replace('</cobr>', `${dups}</cobr>`)
+    xml = insertBefore(xml, '</transp>', `<transporta><xNome>${'T'.repeat(60)}</xNome><xEnder>${'E'.repeat(60)}</xEnder><xMun>${'M'.repeat(60)}</xMun><UF>PR</UF></transporta>`)
+    const r = await render(xml)
+    const total = pdfPageCount(r.pdf)
+    r.pages.forEach((runs, i) => {
+      expect(runs.filter(x => x.text !== 'SEM VALOR FISCAL' && x.yPdf <= 0.25 * 28.3465)).toEqual([])
+      expect(r.texts[i]).toContain(`FOLHA ${i + 1}/${total}`)
+    })
+    for (let n = 1; n <= 75; n += 37) expect(r.texts.flat().join(' ')).toContain(`${String(n).padStart(3, '0')}  22/12/2026  1,00`)
+  })
+
+  it('XML com o grupo IBS/CBS (IBSCBSTot no total ou IBSCBS no item) é 422 no campo procNfeXml: o bloco ainda não é impresso e não pode sumir em silêncio', async () => {
+    const withTotal = insertBefore(authorizedProc().xml, '</total>', '<IBSCBSTot><vBCIBSCBS>3000.00</vBCIBSCBS></IBSCBSTot>')
+    const withItem = insertBefore(authorizedProc().xml, '</imposto>', '<IBSCBS><CST>000</CST></IBSCBS>')
+    for (const xml of [withTotal, withItem]) {
+      let e: HttpError | null = null
+      try { await render(xml) } catch (x) { e = x as HttpError }
+      expect(e?.statusCode).toBe(422)
+      expect(e?.fields?.[0]?.field).toBe('procNfeXml')
+      expect(e?.fields?.[0]?.message).toMatch(/IBS\/CBS/)
+    }
+  })
+
+  it('ICMS monofásico: BC e valor, próprios e por retenção, com os rótulos da NT', async () => {
+    const xml = authorizedProc().xml.replace('</ICMSTot>', '<qBCMono>10.00</qBCMono><vICMSMono>1.11</vICMSMono><qBCMonoReten>20.00</qBCMonoReten><vICMSMonoReten>2.22</vICMSMonoReten></ICMSTot>')
+    const t = (await render(xml)).texts[0]
+    expect(t).toEqual(expect.arrayContaining(['BC DO ICMS MONOFÁSICO', '10,00', 'VALOR DO ICMS MONOFÁSICO', '1,11', 'BC DO ICMS MONOFÁSICO POR RETENÇÃO', '20,00', 'VALOR DO ICMS MONOFÁSICO POR RETENÇÃO', '2,22']))
+  })
+})
+
+describe('gates — desempenho no teto de itens e bloco maior que a folha', () => {
+  it('990 itens (o teto do leiaute) desenham em tempo razoável, em 17 folhas ou mais, com todos os itens e nada abaixo do pé', async () => {
+    const started = Date.now()
+    const r = await render(authorizedProc(longInput(990)).xml)
+    const elapsed = Date.now() - started
+    expect(elapsed).toBeLessThan(20_000)
+    expect(pdfPageCount(r.pdf)).toBeGreaterThanOrEqual(15)
+    expect(r.texts.flat().filter(x => /^Item de teste número \d+$/.test(x))).toHaveLength(990)
+    for (const runs of r.pages) expect(runs.filter(x => x.text !== 'SEM VALOR FISCAL' && x.yPdf <= 0.25 * 28.3465)).toEqual([])
+  })
+
+  it('um item com infAdProd de milhares de linhas (fora do XSD) é 422: nunca PDF com texto fora da folha', async () => {
+    const xml = authorizedProc().xml.replace('</xProd>', `</xProd>`).replace(/(<det nItem="1">[\s\S]*?<\/imposto>)/, `$1<infAdProd>${'palavra '.repeat(6000)}</infAdProd>`)
+    let e: HttpError | null = null
+    try { await render(xml) } catch (x) { e = x as HttpError }
+    expect(e?.statusCode).toBe(422)
+    expect(e?.fields?.[0]?.field).toBe('procNfeXml')
   })
 })

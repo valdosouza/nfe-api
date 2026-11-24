@@ -5,7 +5,8 @@ import {
   CM, CRT_LABELS, DANFE_FONT_ROLES, DANFE_TEXTS, DANFE_TEXT_PARTS, ITEM_COLUMNS, MOD_FRETE_LABELS, WATERMARKS,
   type DanfePartName,
 } from './danfe-layout'
-import { isIssuedDanfeMarks, type DanfeMarks } from './danfe-marks'
+import { danfeMarksOf, type DanfeMarks, type DanfeVoice } from './danfe-marks'
+import type { TpAmbCode } from '../homologation'
 import { readNfeProc, type DanfeData, type DanfeFields, type DanfeItem, type DanfeParty } from './danfe-read'
 
 /**
@@ -32,7 +33,8 @@ import { readNfeProc, type DanfeData, type DanfeFields, type DanfeItem, type Dan
  */
 export interface RenderDanfeInput {
   readonly procNfeXml: string
-  readonly marks: DanfeMarks
+  /** A última voz da tentativa (o `kind` lido pela view da família): decide se há DANFE e se leva o carimbo (`danfeMarksOf`). */
+  readonly voice: DanfeVoice
   /** Data gravada no PDF (padrão: agora). */
   readonly creationDate?: Date
 }
@@ -85,8 +87,17 @@ function emit(doc: Doc, e: Emission): void {
 }
 
 /** Largura (pt) de um texto numa linha, no corpo pedido. */
+const widthCache = new WeakMap<Doc, Map<string, number>>()
 function widthOf(doc: Doc, part: DanfePartName, text: string, sizePt: number): number {
-  return measureText(doc, DANFE_TEXT_PARTS[part].fontRole, text, { sizePt, x: left() }).width
+  let cache = widthCache.get(doc)
+  if (!cache) { cache = new Map(); widthCache.set(doc, cache) }
+  const key = `${part}|${sizePt}|${text}`
+  let w = cache.get(key)
+  if (w === undefined) {
+    w = measureText(doc, DANFE_TEXT_PARTS[part].fontRole, text, { sizePt, x: left() }).width
+    if (cache.size < 50_000) cache.set(key, w)                              // teto de memória por documento
+  }
+  return w
 }
 
 const lineCache = new WeakMap<Doc, Map<string, number>>()
@@ -118,7 +129,10 @@ function fitChars(doc: Doc, part: DanfePartName, text: string, widthPt: number, 
 /** Quebra o texto em linhas que cabem em `widthPt` (palavras; palavra maior que a linha é partida por caractere). Respeita `\n`. */
 function wrapLines(doc: Doc, part: DanfePartName, text: string, widthPt: number, sizePt: number): string[] {
   const out: string[] = []
-  for (const paragraph of text.split('\n')) {
+  for (const rawParagraph of text.split('\n')) {
+    // 3 ou mais espaços seguidos valem 2: o XSD aceita centenas de espaços no meio do texto, e cada espaço extra seria uma "palavra" vazia medida de novo
+    // (custo quadrático: 5.000 espaços levavam 89 s de CPU síncrona — HIGH-N1 do gate adversarial); só espaço em branco muda, nenhum caractere visível
+    const paragraph = rawParagraph.replace(/ {3,}/g, '  ')
     let line = ''
     for (const word of paragraph.split(' ')) {
       const candidate = line === '' ? word : `${line} ${word}`
@@ -192,17 +206,23 @@ interface FieldSpec { readonly weight: number; readonly label: string; readonly 
  * Uma linha de campos lado a lado: caixa + descritivo (6 pt) + valor QUEBRADO no corpo do trecho (10 pt). A altura é a maior entre a mínima do
  * leiaute e a que o valor mais longo pede. Devolve o `y` de baixo.
  */
-function fieldRow(doc: Doc, y: number, heightCm: number, specs: readonly FieldSpec[]): number {
-  const widths = scaled(specs.map(s => s.weight))
+function rowHeight(doc: Doc, heightCm: number, specs: readonly FieldSpec[]): number {
+  const widths = scaled(specs.map(sp => sp.weight))
   const labelH = lineHeight(doc, 'fieldLabel', DANFE_TEXT_PARTS.fieldLabel.sizePt)
-  const lines = specs.map((s, i) => (s.value === '' ? 0 : wrapLines(doc, s.part, s.value, widths[i] - 2 * PAD, DANFE_TEXT_PARTS[s.part].sizePt).length))
-  const tallest = specs.reduce((m, s, i) => Math.max(m, lines[i] * lineHeight(doc, s.part, DANFE_TEXT_PARTS[s.part].sizePt)), 0)
-  const h = Math.max(c(heightCm), PAD / 2 + labelH + tallest + PAD)
+  const lines = specs.map((sp, i) => (sp.value === '' ? 0 : wrapLines(doc, sp.part, sp.value, widths[i] - 2 * PAD, DANFE_TEXT_PARTS[sp.part].sizePt).length))
+  const tallest = specs.reduce((m, sp, i) => Math.max(m, lines[i] * lineHeight(doc, sp.part, DANFE_TEXT_PARTS[sp.part].sizePt)), 0)
+  return Math.max(c(heightCm), PAD / 2 + labelH + tallest + PAD)
+}
+
+function fieldRow(doc: Doc, y: number, heightCm: number, specs: readonly FieldSpec[]): number {
+  const widths = scaled(specs.map(sp => sp.weight))
+  const labelH = lineHeight(doc, 'fieldLabel', DANFE_TEXT_PARTS.fieldLabel.sizePt)
+  const h = rowHeight(doc, heightCm, specs)
   let x = left()
-  specs.forEach((s, i) => {
+  specs.forEach((sp, i) => {
     box(doc, x, y, widths[i], h)
-    putFit(doc, 'fieldLabel', s.label, x + PAD, y + PAD / 2, widths[i] - 2 * PAD)
-    putWrapped(doc, s.part, s.value, x + PAD, y + PAD / 2 + labelH, widths[i] - 2 * PAD)
+    putFit(doc, 'fieldLabel', sp.label, x + PAD, y + PAD / 2, widths[i] - 2 * PAD)
+    putWrapped(doc, sp.part, sp.value, x + PAD, y + PAD / 2 + labelH, widths[i] - 2 * PAD)
     x += widths[i]
   })
   return y + h
@@ -361,6 +381,10 @@ function newSheet(ctx: Ctx): void {
 
 /** Garante `needed` pt livres; abre folha se não couber. Devolve `true` quando abriu. */
 function ensureRoom(ctx: Ctx, needed: number): boolean {
+  // um bloco (linha de campos ou item) mais alto que a folha útil não cabe nem numa folha nova: recusa, nunca texto fora da folha
+  if (needed > bottomLimit(ctx.doc) - ctx.contentTop) {
+    throw documentInvalid('O XML da nota traz um bloco maior que a folha do DANFE', [{ field: 'procNfeXml', message: 'Texto de um item ou campo grande demais para uma folha' }])
+  }
   if (ctx.y + needed <= bottomLimit(ctx.doc)) return false
   const before = ctx.sheet
   newSheet(ctx)
@@ -370,121 +394,131 @@ function ensureRoom(ctx: Ctx, needed: number): boolean {
 
 const money = (v: string | null | undefined): string => brDecimal(v)
 
+/**
+ * Uma linha de campos do CORPO: mede a altura que o valor mais longo pede, reserva ESSA altura (com o título do bloco, quando é a 1ª linha) e abre
+ * folha nova se não couber — o quadro nunca passa do pé da folha (MEDIUM-N2 do gate adversarial).
+ */
+function ctxRow(ctx: Ctx, heightCm: number, specs: readonly FieldSpec[], title?: string): void {
+  const { doc } = ctx
+  const titleH = title ? lineHeight(doc, 'blockTitle', DANFE_TEXT_PARTS.blockTitle.sizePt) + 1 : 0
+  ensureRoom(ctx, titleH + rowHeight(doc, heightCm, specs))
+  let y = ctx.y
+  if (title) y = blockTitle(doc, y, title)
+  ctx.y = fieldRow(doc, y, heightCm, specs)
+}
+
+const gap = (ctx: Ctx): void => { ctx.y += c(CM.gap) }
+
 function drawRecipient(ctx: Ctx): void {
-  const { doc, data } = ctx
+  const { data } = ctx
   const r = data.dest
   const a = r.address
-  const rows = (): void => {
-    let y = ctx.y
-    y = blockTitle(doc, y, DANFE_TEXTS.recipient)
-    y = fieldRow(doc, y, CM.cell, [
-      { weight: 12.0, label: 'NOME / RAZÃO SOCIAL', value: r.xNome ?? '', part: 'fieldValue' },
-      { weight: 4.5, label: 'CNPJ / CPF', value: federalId(r.id), part: 'fieldValue' },
-      { weight: 4.0, label: 'DATA DA EMISSÃO', value: brDate(data.ide.dhEmi), part: 'fieldCentered' },
-    ])
-    y = fieldRow(doc, y, CM.cell, [
-      { weight: 9.0, label: 'ENDEREÇO', value: joinParts([joinParts([a.xLgr, a.nro], ', '), a.xCpl], ' - '), part: 'fieldValue' },
-      { weight: 4.5, label: 'BAIRRO / DISTRITO', value: a.xBairro ?? '', part: 'fieldValue' },
-      { weight: 3.0, label: 'CEP', value: brZip(a.CEP), part: 'fieldCentered' },
-      { weight: 4.0, label: 'DATA DA SAÍDA / ENTRADA', value: brDate(data.ide.dhSaiEnt), part: 'fieldCentered' },
-    ])
-    y = fieldRow(doc, y, CM.cell, [
-      { weight: 9.0, label: 'MUNICÍPIO', value: a.xMun ?? '', part: 'fieldValue' },
-      { weight: 3.5, label: 'FONE / FAX', value: a.fone ?? '', part: 'fieldValue' },
-      { weight: 1.0, label: 'UF', value: a.UF ?? '', part: 'fieldCentered' },
-      { weight: 3.5, label: 'INSCRIÇÃO ESTADUAL', value: r.IE ?? '', part: 'fieldValue' },
-      { weight: 3.5, label: 'HORA DA SAÍDA / ENTRADA', value: clockTime(data.ide.dhSaiEnt), part: 'fieldCentered' },
-    ])
-    ctx.y = y + c(CM.gap)
-  }
-  ensureRoom(ctx, c(CM.cell) * 3 + c(0.5))
-  rows()
+  ctxRow(ctx, CM.cell, [
+    { weight: 12.0, label: 'NOME / RAZÃO SOCIAL', value: r.xNome ?? '', part: 'fieldValue' },
+    { weight: 4.5, label: 'CNPJ / CPF', value: federalId(r.id), part: 'fieldValue' },
+    { weight: 4.0, label: 'DATA DA EMISSÃO', value: brDate(data.ide.dhEmi), part: 'fieldCentered' },
+  ], DANFE_TEXTS.recipient)
+  ctxRow(ctx, CM.cell, [
+    { weight: 9.0, label: 'ENDEREÇO', value: joinParts([joinParts([a.xLgr, a.nro], ', '), a.xCpl], ' - '), part: 'fieldValue' },
+    { weight: 4.5, label: 'BAIRRO / DISTRITO', value: a.xBairro ?? '', part: 'fieldValue' },
+    { weight: 3.0, label: 'CEP', value: brZip(a.CEP), part: 'fieldCentered' },
+    { weight: 4.0, label: 'DATA DA SAÍDA / ENTRADA', value: brDate(data.ide.dhSaiEnt), part: 'fieldCentered' },
+  ])
+  ctxRow(ctx, CM.cell, [
+    { weight: 9.0, label: 'MUNICÍPIO', value: a.xMun ?? '', part: 'fieldValue' },
+    { weight: 3.5, label: 'FONE / FAX', value: a.fone ?? '', part: 'fieldValue' },
+    { weight: 1.0, label: 'UF', value: a.UF ?? '', part: 'fieldCentered' },
+    { weight: 3.5, label: 'INSCRIÇÃO ESTADUAL', value: r.IE ?? '', part: 'fieldValue' },
+    { weight: 3.5, label: 'HORA DA SAÍDA / ENTRADA', value: clockTime(data.ide.dhSaiEnt), part: 'fieldCentered' },
+  ])
+  gap(ctx)
 }
 
 function drawInvoice(ctx: Ctx): void {
-  const { doc, data } = ctx
+  const { data } = ctx
   const { fat, dups } = data.billing
   if (!fat && dups.length === 0) return                                    // quadro facultativo: só se o XML traz cobrança (NT L194-196)
-  const perRow = 4
-  ensureRoom(ctx, c(CM.cell) + c(0.5))
-  let y = blockTitle(doc, ctx.y, DANFE_TEXTS.invoice)
-  ctx.y = y
+  let title: string | undefined = DANFE_TEXTS.invoice
   if (fat) {
-    y = fieldRow(doc, y, CM.cell, [
+    ctxRow(ctx, CM.cell, [
       { weight: 1, label: 'FATURA', value: fat.nFat ?? '', part: 'fieldValue' },
       { weight: 1, label: 'VALOR ORIGINAL', value: money(fat.vOrig), part: 'fieldNumber' },
       { weight: 1, label: 'DESCONTO', value: money(fat.vDesc), part: 'fieldNumber' },
       { weight: 1, label: 'VALOR LÍQUIDO', value: money(fat.vLiq), part: 'fieldNumber' },
-    ])
+    ], title)
+    title = undefined
   }
+  const perRow = 4
   for (let i = 0; i < dups.length; i += perRow) {
-    ctx.y = y
-    ensureRoom(ctx, c(CM.cell))
-    y = ctx.y
-    const chunk = dups.slice(i, i + perRow)
-    const specs: FieldSpec[] = chunk.map(d => ({
+    const specs: FieldSpec[] = dups.slice(i, i + perRow).map(d => ({
       weight: 1, label: DANFE_TEXTS.duplicate, value: joinParts([d.nDup, brDate(d.dVenc), money(d.vDup)], '  '), part: 'fieldCentered' as const,
     }))
     while (specs.length < perRow) specs.push({ weight: 1, label: '', value: '', part: 'fieldCentered' })
-    y = fieldRow(doc, y, CM.cell, specs)
+    ctxRow(ctx, CM.cell, specs, title)
+    title = undefined
   }
-  ctx.y = y + c(CM.gap)
+  gap(ctx)
 }
 
-/** Valor decimal diferente de zero (os totais condicionais da NT 4.4 só saem quando o XML os traz com valor). */
+/** Valor decimal diferente de zero (os totais condicionais da NT 4.4 só saem quando o XML os traz com valor — suposição S-8 da ficha). */
 const nonZero = (v: string | null | undefined): boolean => v !== null && v !== undefined && v !== '' && !/^-?0+(\.0+)?$/.test(v)
 
 /** "TOTAL DOS PRODUTOS E TOTAL DA NOTA" (modelo vertical da NT 2026.010). */
 function drawTotals(ctx: Ctx): void {
-  const { doc, data } = ctx
-  const t = data.totals
-  ensureRoom(ctx, c(CM.cell) + c(0.5))
-  let y = blockTitle(doc, ctx.y, DANFE_TEXTS.totals)
-  y = fieldRow(doc, y, CM.cell, [
+  const t = ctx.data.totals
+  ctxRow(ctx, CM.cell, [
     { weight: 1, label: 'VALOR TOTAL DOS PRODUTOS', value: money(t.vProd), part: 'fieldNumber' },
     { weight: 1, label: 'VALOR DO FRETE', value: money(t.vFrete), part: 'fieldNumber' },
     { weight: 1, label: 'VALOR DO SEGURO', value: money(t.vSeg), part: 'fieldNumber' },
     { weight: 1, label: 'DESCONTO', value: money(t.vDesc), part: 'fieldNumber' },
     { weight: 1, label: 'OUTRAS DESPESAS ACESSÓRIAS', value: money(t.vOutro), part: 'fieldNumber' },
     { weight: 1, label: 'VALOR TOTAL DA NOTA', value: money(t.vNF), part: 'fieldNumber' },
-  ])
-  ctx.y = y + c(CM.gap)
+  ], DANFE_TEXTS.totals)
+  gap(ctx)
 }
 
 /**
  * "TOTAL DO ICMS / IPI" (modelo vertical da NT 2026.010): BC e valor do ICMS, BC e valor do ICMS ST, IPI; e, só quando o XML traz com valor
- * (NT 4.4, leitura L: valor diferente de zero), FCP, FCP retido por ST, DIFAL na UF de destino, FCP da UF de destino e ICMS monofásico.
+ * (NT 4.4; S-8 da ficha: valor diferente de zero), FCP, FCP retido por ST, DIFAL na UF de destino, FCP da UF de destino e o ICMS monofásico
+ * (valor e base quantitativa, próprio e por retenção).
  */
 function drawIcmsIpi(ctx: Ctx): void {
-  const { doc, data } = ctx
-  const t = data.totals
-  ensureRoom(ctx, c(CM.cell) * 2 + c(0.5))
-  let y = blockTitle(doc, ctx.y, DANFE_TEXTS.icmsIpi)
-  y = fieldRow(doc, y, CM.cell, [
+  const t = ctx.data.totals
+  ctxRow(ctx, CM.cell, [
     { weight: 1, label: 'BASE DE CÁLCULO DO ICMS', value: money(t.vBC), part: 'fieldNumber' },
     { weight: 1, label: 'VALOR DO ICMS', value: money(t.vICMS), part: 'fieldNumber' },
     { weight: 1, label: 'BASE DE CÁLCULO DO ICMS ST', value: money(t.vBCST), part: 'fieldNumber' },
     { weight: 1, label: 'VALOR DO ICMS ST', value: money(t.vST), part: 'fieldNumber' },
     { weight: 1, label: 'VALOR DO IPI', value: money(t.vIPI), part: 'fieldNumber' },
-  ])
+  ], DANFE_TEXTS.icmsIpi)
   const extras: { label: string; value: string }[] = ([
     ['VALOR DO FCP', t.vFCP], ['VALOR DO FCP RETIDO POR ST', t.vFCPST], ['VALOR DO DIFAL NA UF DE DESTINO', t.vICMSUFDest],
-    ['VALOR DO FCP NA UF DE DESTINO', t.vFCPUFDest], ['VALOR DO ICMS MONOFÁSICO', t.vICMSMono], ['VALOR DO ICMS MONOFÁSICO RETIDO', t.vICMSMonoReten],
+    ['VALOR DO FCP NA UF DE DESTINO', t.vFCPUFDest], ['BC DO ICMS MONOFÁSICO', t.qBCMono], ['VALOR DO ICMS MONOFÁSICO', t.vICMSMono],
+    ['BC DO ICMS MONOFÁSICO POR RETENÇÃO', t.qBCMonoReten], ['VALOR DO ICMS MONOFÁSICO POR RETENÇÃO', t.vICMSMonoReten],
   ] as const).filter(([, v]) => nonZero(v)).map(([label, v]) => ({ label, value: money(v) }))
   for (let i = 0; i < extras.length; i += 4) {
-    ctx.y = y
-    ensureRoom(ctx, c(CM.cell))
-    y = ctx.y
-    const chunk = extras.slice(i, i + 4)
-    const specs: FieldSpec[] = chunk.map(e => ({ weight: 1, label: e.label, value: e.value, part: 'fieldNumber' as const }))
+    const specs: FieldSpec[] = extras.slice(i, i + 4).map(e => ({ weight: 1, label: e.label, value: e.value, part: 'fieldNumber' as const }))
     while (specs.length < 4) specs.push({ weight: 1, label: '', value: '', part: 'fieldNumber' })
-    y = fieldRow(doc, y, CM.cell, specs)
+    ctxRow(ctx, CM.cell, specs)
   }
-  ctx.y = y + c(CM.gap)
+  gap(ctx)
+}
+
+function drawIssqn(ctx: Ctx): void {
+  const { data } = ctx
+  const s = data.issqnTotals
+  if (!s) return                                                            // suprimível quando não se aplica (NT L239-242)
+  ctxRow(ctx, CM.cell, [
+    { weight: 1, label: 'INSCRIÇÃO MUNICIPAL', value: data.emit.IM ?? '', part: 'fieldValue' },
+    { weight: 1, label: 'VALOR TOTAL DOS SERVIÇOS', value: money(s.vServ), part: 'fieldNumber' },
+    { weight: 1, label: 'BASE DE CÁLCULO DO ISSQN', value: money(s.vBC), part: 'fieldNumber' },
+    { weight: 1, label: 'VALOR DO ISSQN', value: money(s.vISS), part: 'fieldNumber' },
+  ], DANFE_TEXTS.issqn)
+  gap(ctx)
 }
 
 function drawCarrier(ctx: Ctx): void {
-  const { doc, data } = ctx
+  const { data } = ctx
   const tr = data.transp
   const carrier: DanfeFields = tr.carrier ?? {}
   const vehicle: DanfeFields = tr.vehicle ?? {}
@@ -492,19 +526,16 @@ function drawCarrier(ctx: Ctx): void {
   // com transporte (0 a 4), o quadro não sai; "9 - Sem Ocorrência de Transporte" sozinho é ausência de dado
   const hasData = tr.carrier !== null || tr.vehicle !== null || tr.volumes.length > 0 || (tr.modFrete !== null && tr.modFrete !== '9')
   if (!hasData) return
-  const rowsNeeded = 1 + (tr.carrier ? 1 : 0) + Math.max(tr.volumes.length > 0 ? 1 : 0, 0)
-  ensureRoom(ctx, c(CM.cell) * rowsNeeded + c(0.5))
-  let y = blockTitle(doc, ctx.y, DANFE_TEXTS.carrier)
-  y = fieldRow(doc, y, CM.cell, [
+  ctxRow(ctx, CM.cell, [
     { weight: 5.0, label: 'NOME / RAZÃO SOCIAL', value: carrier.xNome ?? '', part: 'fieldValue' },
     { weight: 6.5, label: 'FRETE POR CONTA', value: tr.modFrete ? (MOD_FRETE_LABELS[tr.modFrete] ?? tr.modFrete) : '', part: 'fieldValue' },
     { weight: 2.2, label: 'CÓDIGO ANTT', value: vehicle.RNTC ?? '', part: 'fieldCentered' },
     { weight: 2.2, label: 'PLACA DO VEÍCULO', value: vehicle.placa ?? '', part: 'fieldCentered' },
     { weight: 1.0, label: 'UF', value: vehicle.UF ?? '', part: 'fieldCentered' },
     { weight: 3.6, label: 'CNPJ / CPF', value: federalId(carrier.CNPJ ?? carrier.CPF ?? null), part: 'fieldValue' },
-  ])
+  ], DANFE_TEXTS.carrier)
   if (tr.carrier) {
-    y = fieldRow(doc, y, CM.cell, [
+    ctxRow(ctx, CM.cell, [
       { weight: 9.0, label: 'ENDEREÇO', value: carrier.xEnder ?? '', part: 'fieldValue' },
       { weight: 6.5, label: 'MUNICÍPIO', value: carrier.xMun ?? '', part: 'fieldValue' },
       { weight: 1.0, label: 'UF', value: carrier.UF ?? '', part: 'fieldCentered' },
@@ -512,11 +543,8 @@ function drawCarrier(ctx: Ctx): void {
     ])
   }
   for (const v of tr.volumes) {
-    ctx.y = y
-    ensureRoom(ctx, c(CM.cell))
-    y = ctx.y
     const f = v.fields
-    y = fieldRow(doc, y, CM.cell, [
+    ctxRow(ctx, CM.cell, [
       { weight: 2.5, label: 'QUANTIDADE', value: f.qVol ?? '', part: 'fieldCentered' },
       { weight: 4.0, label: 'ESPÉCIE', value: f.esp ?? '', part: 'fieldValue' },
       { weight: 4.0, label: 'MARCA', value: f.marca ?? '', part: 'fieldValue' },
@@ -525,22 +553,7 @@ function drawCarrier(ctx: Ctx): void {
       { weight: 3.25, label: 'PESO LÍQUIDO', value: brDecimal(f.pesoL), part: 'fieldNumber' },
     ])
   }
-  ctx.y = y + c(CM.gap)
-}
-
-function drawIssqn(ctx: Ctx): void {
-  const { doc, data } = ctx
-  const s = data.issqnTotals
-  if (!s) return                                                            // suprimível quando não se aplica (NT L239-242)
-  ensureRoom(ctx, c(CM.cell) + c(0.5))
-  let y = blockTitle(doc, ctx.y, DANFE_TEXTS.issqn)
-  y = fieldRow(doc, y, CM.cell, [
-    { weight: 1, label: 'INSCRIÇÃO MUNICIPAL', value: data.emit.IM ?? '', part: 'fieldValue' },
-    { weight: 1, label: 'VALOR TOTAL DOS SERVIÇOS', value: money(s.vServ), part: 'fieldNumber' },
-    { weight: 1, label: 'BASE DE CÁLCULO DO ISSQN', value: money(s.vBC), part: 'fieldNumber' },
-    { weight: 1, label: 'VALOR DO ISSQN', value: money(s.vISS), part: 'fieldNumber' },
-  ])
-  ctx.y = y + c(CM.gap)
+  gap(ctx)
 }
 
 // ---- itens -----------------------------------------------------------------------------------------------------------------------------
@@ -671,14 +684,8 @@ function drawAdditional(ctx: Ctx): void {
 // ---------------------------------------------------------------------------------------------------------------------------------------
 export async function renderDanfe(input: RenderDanfeInput): Promise<Buffer> {
   const data = readNfeProc(input?.procNfeXml)
-  const marks = input?.marks
-  // só as marcas que saíram de `danfeMarksOf(voz, tpAmb)`: um objeto montado à mão pode dizer `cancelled: false` para uma nota de voz C (L2 do gate adversarial)
-  if (!isIssuedDanfeMarks(marks)) {
-    throw documentInvalid('As marcas do DANFE não foram informadas', [{ field: 'marks', message: 'Informe as marcas devolvidas por danfeMarksOf(voz, tpAmb)' }])
-  }
-  if (marks.homologation !== (data.ide.tpAmb === '2')) {
-    throw documentInvalid('A marca de homologação não confere com o ambiente da nota', [{ field: 'marks', message: 'A marca de homologação tem de ser igual ao tpAmb 2 do XML' }])
-  }
+  // as marcas saem da VOZ e do ambiente do PRÓPRIO XML: ninguém monta marca por fora (nem pede marca de H para nota de P); voz sem autorização = 422 no campo `voice`
+  const marks = danfeMarksOf(input?.voice ?? null, data.ide.tpAmb as TpAmbCode)
   const ctx = { data, marks, contentTop: 0, y: 0, sheet: 0 } as Ctx
   try {
     const w = createPdf({

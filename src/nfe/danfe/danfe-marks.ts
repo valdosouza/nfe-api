@@ -23,10 +23,6 @@ export type DanfeVoice = TransmissionEventKind | null
 
 const WITH_AUTHORIZATION: readonly string[] = ['A', 'K', 'N', 'C']
 
-/** As marcas que SAÍRAM de `danfeMarksOf`: o DANFE só aceita estas (L2 do gate adversarial — `cancelled: false` forjado numa nota de voz C não passa). */
-const ISSUED = new WeakSet<object>()
-export const isIssuedDanfeMarks = (marks: unknown): marks is DanfeMarks => typeof marks === 'object' && marks !== null && ISSUED.has(marks)
-
 export function danfeMarksOf(voice: DanfeVoice, tpAmb: TpAmbCode): DanfeMarks {
   if (tpAmb !== '1' && tpAmb !== '2') throw documentInvalid('Ambiente do DANFE fora do domínio', [{ field: 'tpAmb', message: 'O ambiente do DANFE é 1 (produção) ou 2 (homologação)' }])
   if (voice === null || !WITH_AUTHORIZATION.includes(voice)) {
@@ -34,7 +30,5 @@ export function danfeMarksOf(voice: DanfeVoice, tpAmb: TpAmbCode): DanfeMarks {
       ? 'A tentativa não tem voz do fisco: sem autorização não há DANFE'
       : `A voz ${String(voice)} não é de nota autorizada: sem autorização não há DANFE` }])
   }
-  const marks = Object.freeze({ homologation: tpAmb === '2', cancelled: voice === 'C' })
-  ISSUED.add(marks)
-  return marks
+  return Object.freeze({ homologation: tpAmb === '2', cancelled: voice === 'C' })
 }

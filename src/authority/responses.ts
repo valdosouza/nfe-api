@@ -21,7 +21,7 @@ import { NFE_NS } from './soap'
 export type ReadResult<F> =
   | { readonly kind: 'fact'; readonly fact: F }
   /** `note`: a rejeição é da NOTA (o cStat do `protNFe` da nossa chave); sem ele é a recusa da PERGUNTA (656, 108/109, 999…) — nunca fecha a tentativa (NFE.E6.P1, gate socrático H1). */
-  | { readonly kind: 'rejection'; readonly cStat: string; readonly xMotivo: string | null; readonly note?: true }
+  | { readonly kind: 'rejection'; readonly cStat: string; readonly xMotivo: string | null; readonly note?: true; /** a recusa da PERGUNTA pelo serviço (656, 108/109, 999): nunca conclui nada — alimenta o disjuntor (NFE.E6.P2) */ readonly refused?: true }
   | { readonly kind: 'no-voice'; readonly cStat: string }
   | { readonly kind: 'ambiguous'; readonly cause: AmbiguousCause }
 
@@ -30,6 +30,9 @@ const DSIG_NS = 'http://www.w3.org/2000/09/xmldsig#'
 
 const ambiguous = (cause: AmbiguousCause): ReadResult<never> => ({ kind: 'ambiguous', cause })
 const rejection = (cStat: string, xMotivo: string | null): ReadResult<never> => ({ kind: 'rejection', cStat, xMotivo })
+/** A recusa da PERGUNTA (consumo indevido 656, serviço paralisado 108/109, erro interno 999): nunca é rejeição do evento nem da faixa (RF-NFE-74, NFE.E6.P2). */
+const REFUSED = new Set(['656', '108', '109', '999'])
+const refusedOr = (cStat: string, xMotivo: string | null): ReadResult<never> => (REFUSED.has(cStat) ? { kind: 'rejection', cStat, xMotivo, refused: true } : rejection(cStat, xMotivo))
 
 class Unreadable extends Error {}
 
@@ -245,7 +248,8 @@ export interface VoidQuestion {
   readonly tpAmb: '1' | '2'; readonly cUF: string; readonly ano: string; readonly CNPJ: string; readonly mod: '55' | '65'
   readonly serie: number; readonly nNFIni: number; readonly nNFFin: number
 }
-export interface VoidFact { readonly status: 'withdrawn'; readonly cStat: '102' | '563'; readonly nProt: string | null }
+/** `dhRecbto` (do fisco, com offset) e `xMotivo` entram no rastro da faixa (NFE.E6.P2): o preenchimento write-once da linha pendente. */
+export interface VoidFact { readonly status: 'withdrawn'; readonly cStat: '102' | '563'; readonly nProt: string | null; readonly dhRecbto: string | null; readonly xMotivo: string | null }
 
 /** Inutilização (`retInutNFe` — RF-NFE-23): 102 homologada; 563 = mesma faixa já pedida (prova, com o nProt se vier — D-NE40); 256/241 = rejeição (D-NE207). */
 export function readVoid(q: VoidQuestion, xml: string): ReadResult<VoidFact> {
@@ -256,22 +260,27 @@ export function readVoid(q: VoidQuestion, xml: string): ReadResult<VoidFact> {
     if (!inf) return ambiguous('envelope-ilegivel')
     const cStat = text(inf, 'cStat')
     if (!cStat) return ambiguous('envelope-ilegivel')
-    if (cStat !== '102' && cStat !== '563') return rejection(cStat, text(inf, 'xMotivo'))
-    // D-NE210: TODAS as partes do eco presentes e iguais
+    if (REFUSED.has(cStat)) return refusedOr(cStat, text(inf, 'xMotivo'))
+    // D-NE210: TODAS as partes do eco presentes e iguais — ANTES de decidir qualquer cStat (a rejeição também precisa ser da NOSSA faixa)
     const echoOk = text(inf, 'tpAmb') === q.tpAmb && sameNumber(text(inf, 'cUF'), q.cUF) && sameNumber(text(inf, 'ano'), q.ano)
       && text(inf, 'CNPJ') === q.CNPJ && text(inf, 'mod') === q.mod && sameNumber(text(inf, 'serie'), q.serie)
       && sameNumber(text(inf, 'nNFIni'), q.nNFIni) && sameNumber(text(inf, 'nNFFin'), q.nNFFin)
     if (!echoOk) return ambiguous('nao-classificada')
+    if (cStat !== '102' && cStat !== '563') return rejection(cStat, text(inf, 'xMotivo'))
     const nProt = text(inf, 'nProt')
     if (cStat === '102' && !nProt) return ambiguous('envelope-ilegivel')
-    return { kind: 'fact', fact: { status: 'withdrawn', cStat, nProt } }
+    if (nProt !== null && !NPROT_FORM.test(nProt)) return ambiguous('nao-classificada')
+    const dhRecbto = text(inf, 'dhRecbto')
+    if (dhRecbto !== null && (!DH_FORM.test(dhRecbto) || Number.isNaN(Date.parse(dhRecbto)) || toUtcDb(dhRecbto) === null)) return ambiguous('nao-classificada')
+    return { kind: 'fact', fact: { status: 'withdrawn', cStat, nProt, dhRecbto, xMotivo: text(inf, 'xMotivo') } }
   })
 }
 
 // ---------------------------------------------------------------------------------------------------------------------------------------
 
 export interface CancelQuestion { readonly chNFe: string; readonly tpAmb: '1' | '2'; readonly nSeqEvento: 1 }
-export interface CancelFact { readonly status: 'cancelled'; readonly cStat: '135' | '155'; readonly nProt: string }
+/** `dhRegEvento` (do fisco, com offset) e `xMotivo` entram no rastro (voz C — NFE.E6.P2, Q1); o `nProt` vive no `-evt110111-1.xml` guardado. */
+export interface CancelFact { readonly status: 'cancelled'; readonly cStat: '135' | '155'; readonly nProt: string; readonly dhRegEvento: string; readonly xMotivo: string | null }
 
 /** Evento 110111 (`retEnvEvento` — RF-NFE-24): decide o `retEvento`, nunca o 128 do lote; 135/155 cancelam; 136/573/580 ambíguos (D-NE208). */
 export function readCancelEvent(q: CancelQuestion, xml: string): ReadResult<CancelFact> {
@@ -280,7 +289,7 @@ export function readCancelEvent(q: CancelQuestion, xml: string): ReadResult<Canc
     const evs = children(ret, 'retEvento')
     if (evs.length === 0) {
       const lote = text(ret, 'cStat')
-      return lote === '128' || !lote ? ambiguous('evento-sem-retorno') : rejection(lote, text(ret, 'xMotivo'))
+      return lote === '128' || !lote ? ambiguous('evento-sem-retorno') : refusedOr(lote, text(ret, 'xMotivo'))
     }
     if (evs.length !== 1) return ambiguous('nao-classificada')                    // D-NE39: 1 evento por lote
     const ev = evs[0]
@@ -290,12 +299,16 @@ export function readCancelEvent(q: CancelQuestion, xml: string): ReadResult<Canc
     const cStat = text(inf, 'cStat')
     if (!cStat) return ambiguous('envelope-ilegivel')
     if (cStat === '136' || cStat === '573' || cStat === '580') return ambiguous('evento-nao-conferido')
-    if (cStat !== '135' && cStat !== '155') return rejection(cStat, text(inf, 'xMotivo'))
+    if (REFUSED.has(cStat)) return refusedOr(cStat, text(inf, 'xMotivo'))
+    // D-NE210: o eco (chave, tipo, sequência e ambiente) ANTES de decidir qualquer cStat — a rejeição também precisa ser do NOSSO evento
     const echoOk = text(inf, 'chNFe') === q.chNFe && text(inf, 'tpEvento') === '110111'
       && sameNumber(text(inf, 'nSeqEvento'), q.nSeqEvento) && text(inf, 'tpAmb') === q.tpAmb
     if (!echoOk) return ambiguous('nao-classificada')                             // D-NE42, D-NE210
+    if (cStat !== '135' && cStat !== '155') return rejection(cStat, text(inf, 'xMotivo'))
     const nProt = text(inf, 'nProt')
-    if (!nProt) return ambiguous('envelope-ilegivel')
-    return { kind: 'fact', fact: { status: 'cancelled', cStat, nProt } }
+    if (!nProt || !NPROT_FORM.test(nProt)) return ambiguous('envelope-ilegivel')
+    const dhRegEvento = text(inf, 'dhRegEvento')
+    if (!dhRegEvento || !DH_FORM.test(dhRegEvento) || Number.isNaN(Date.parse(dhRegEvento)) || toUtcDb(dhRegEvento) === null) return ambiguous('nao-classificada')
+    return { kind: 'fact', fact: { status: 'cancelled', cStat, nProt, dhRegEvento, xMotivo: text(inf, 'xMotivo') } }
   })
 }

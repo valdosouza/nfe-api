@@ -1,5 +1,5 @@
 import { toUtcDb } from 'fiscal-api'
-import type { DuplicateCStat, ReadResult, SendFact } from './responses'
+import type { CancelFact, DuplicateCStat, ReadResult, SendFact, VoidFact } from './responses'
 
 /**
  * O que o cStat DIZ À NOSSA TENTATIVA (NFE.E6.P1 — D-NE33, D-NE34, D-NE35, D-NE36, D-NE108; ficha-nfe-e6-p1-transmitir-consultar-reconferir.md §4 e §6-3;
@@ -83,4 +83,56 @@ export function voiceOfCStat(result: ReadResult<SendFact>, source: 'P' | 'Q'): V
 export function checkDigest(expected: string, digVal: string | null): 'ok' | 'absent' | 'mismatch' {
   if (digVal === null) return 'absent'
   return digVal === expected ? 'ok' : 'mismatch'
+}
+
+// ---------------------------------------------------------------------------------------------------------------------------------------
+// NFE.E6.P2 — o que a resposta do evento e da inutilização diz (D-NE208, D-NE40, D-NE207, D-NE210; RF-NFE-18/23/24/74). PURAS: a AÇÃO, nunca a gravação.
+// ---------------------------------------------------------------------------------------------------------------------------------------
+
+/**
+ * O cancelamento (110111): 135 e 155 provam (voz C com o `xMotivo`, o `dhRegEvento` em UTC e o `tpEvento` em `authority_code`); a rejeição do EVENTO (501, 222…) libera a
+ * reserva (voz N); o que o serviço RECUSOU (656, 108/109, 999), o 136/573/580 e a resposta sem eco são ambíguos e MANTÊM a reserva K — a saída é consultar a chave.
+ * `breaker`: o cStat recusado, para o disjuntor do 656.
+ */
+export type CancelDecision =
+  | { readonly action: 'cancelled'; readonly authorityCode: '110111'; readonly cStat: '135' | '155'; readonly message: string; readonly dh: string; readonly nProt: string }
+  | { readonly action: 'release'; readonly cStat: string; readonly message: string }
+  | { readonly action: 'keep'; readonly reason: string; readonly breaker: string | null }
+
+export function voiceOfCancel(result: ReadResult<CancelFact>): CancelDecision {
+  if (result.kind === 'fact') {
+    const f = result.fact
+    const dh = toUtcDb(f.dhRegEvento)
+    if (dh === null) return { action: 'keep', reason: 'dhRegEvento-ilegivel', breaker: null }
+    return { action: 'cancelled', authorityCode: '110111', cStat: f.cStat, message: clip(`Cancelada no fisco: ${f.xMotivo ?? ''}`, 'Cancelada no fisco'), dh, nProt: f.nProt }
+  }
+  if (result.kind === 'rejection') {
+    if (result.refused) return { action: 'keep', reason: 'servico-recusou', breaker: result.cStat }
+    return { action: 'release', cStat: result.cStat, message: clip(result.xMotivo, `Pedido de cancelamento rejeitado (${result.cStat})`) }
+  }
+  if (result.kind === 'ambiguous') return { action: 'keep', reason: result.cause, breaker: null }
+  return { action: 'keep', reason: 'sem-voz', breaker: null }
+}
+
+/**
+ * A inutilização: 102 e 563 retiram a faixa (D-NE40; o 563 com o nProt do pedido anterior é a prova); 256/241 e as demais são REJEIÇÃO (D-NE207: história, nunca retira); o
+ * que o serviço recusou (656…) e a resposta sem eco ficam PENDENTES — o reenvio da MESMA faixa reconcilia (S6). `breaker`: o cStat recusado, para o disjuntor.
+ */
+export type VoidDecision =
+  | { readonly action: 'withdrawn'; readonly cStat: '102' | '563'; readonly nProt: string | null; readonly dhRecbto: string | null; readonly message: string }
+  | { readonly action: 'rejected'; readonly cStat: string; readonly message: string }
+  | { readonly action: 'pending'; readonly reason: string; readonly breaker: string | null }
+
+export function voiceOfVoid(result: ReadResult<VoidFact>): VoidDecision {
+  if (result.kind === 'fact') {
+    const f = result.fact
+    const dh = f.dhRecbto === null ? null : toUtcDb(f.dhRecbto)
+    return { action: 'withdrawn', cStat: f.cStat, nProt: f.nProt, dhRecbto: dh, message: clip(f.xMotivo, f.cStat === '102' ? 'Inutilização de número homologada' : 'Faixa já inutilizada') }
+  }
+  if (result.kind === 'rejection') {
+    if (result.refused) return { action: 'pending', reason: 'servico-recusou', breaker: result.cStat }
+    return { action: 'rejected', cStat: result.cStat, message: clip(result.xMotivo, `Inutilização rejeitada (${result.cStat})`) }
+  }
+  if (result.kind === 'ambiguous') return { action: 'pending', reason: result.cause, breaker: null }
+  return { action: 'pending', reason: 'sem-voz', breaker: null }
 }

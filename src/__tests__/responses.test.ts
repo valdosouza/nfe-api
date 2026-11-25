@@ -105,15 +105,21 @@ describe('inutilização (RF-NFE-23; D-NE40, D-NE207, D-NE210)', () => {
     return env(`<retInutNFe xmlns="${NS}" versao="4.00"><infInut>${body}</infInut>${opts.sig ? SIG : ''}</retInutNFe>`)
   }
   it('102 com o eco inteiro → inutilizada com o protocolo', () => {
-    expect(readVoid(q, ret('102'))).toEqual({ kind: 'fact', fact: { status: 'withdrawn', cStat: '102', nProt: '141260000000009' } })
+    expect(readVoid(q, ret('102'))).toEqual({ kind: 'fact', fact: { status: 'withdrawn', cStat: '102', nProt: '141260000000009', dhRecbto: '2026-11-21T10:00:00-03:00', xMotivo: 'm' } })
   })
   it('563 → inutilizada (prova), com ou sem nProt', () => {
-    expect(readVoid(q, ret('563'))).toEqual({ kind: 'fact', fact: { status: 'withdrawn', cStat: '563', nProt: '141260000000009' } })
-    expect(readVoid(q, ret('563', { nProt: false }))).toEqual({ kind: 'fact', fact: { status: 'withdrawn', cStat: '563', nProt: null } })
+    expect(readVoid(q, ret('563'))).toEqual({ kind: 'fact', fact: { status: 'withdrawn', cStat: '563', nProt: '141260000000009', dhRecbto: '2026-11-21T10:00:00-03:00', xMotivo: 'm' } })
+    expect(readVoid(q, ret('563', { nProt: false }))).toEqual({ kind: 'fact', fact: { status: 'withdrawn', cStat: '563', nProt: null, dhRecbto: '2026-11-21T10:00:00-03:00', xMotivo: 'm' } })
   })
   it('256 e 241 → rejeição (D-NE207)', () => {
     expect(readVoid(q, ret('256', { nProt: false }))).toEqual({ kind: 'rejection', cStat: '256', xMotivo: 'm' })
     expect(readVoid(q, ret('241', { nProt: false }))).toEqual({ kind: 'rejection', cStat: '241', xMotivo: 'm' })
+  })
+  it('NFE.E6.P2: o eco vem ANTES da rejeição (D-NE210) — 256 de outra faixa é ambíguo; 656/108/109/999 são recusa da pergunta; nProt ou dhRecbto fora da forma → ambíguo', () => {
+    expect(readVoid(q, ret('256', { ini: '2', nProt: false }))).toEqual({ kind: 'ambiguous', cause: 'nao-classificada' })
+    for (const c of ['656', '108', '109', '999']) expect(readVoid(q, ret(c, { nProt: false }))).toEqual({ kind: 'rejection', cStat: c, xMotivo: 'm', refused: true })
+    expect(readVoid(q, ret('102').replace('141260000000009', '1'))).toEqual({ kind: 'ambiguous', cause: 'nao-classificada' })
+    expect(readVoid(q, ret('102').replace('2026-11-21T10:00:00-03:00', 'ontem'))).toEqual({ kind: 'ambiguous', cause: 'nao-classificada' })
   })
   it('faixa do eco diferente ou parte ausente → ambíguo (D-NE210); resposta assinada → ambíguo (D-NE206)', () => {
     expect(readVoid(q, ret('102', { ini: '2' }))).toEqual({ kind: 'ambiguous', cause: 'nao-classificada' })
@@ -133,8 +139,8 @@ describe('evento 110111 (RF-NFE-24; D-NE39, D-NE106, D-NE208, D-NE210)', () => {
   const ret = (lote: string, ...evs: string[]) =>
     env(`<retEnvEvento xmlns="${NS}" versao="1.00"><idLote>1</idLote><tpAmb>2</tpAmb><verAplic>PR</verAplic><cOrgao>41</cOrgao><cStat>${lote}</cStat><xMotivo>m</xMotivo>${evs.join('')}</retEnvEvento>`)
   it('135 e 155 com o eco → cancelada (o 128 do lote nunca decide)', () => {
-    expect(readCancelEvent(q, ret('128', ev('135')))).toEqual({ kind: 'fact', fact: { status: 'cancelled', cStat: '135', nProt: '141260000000077' } })
-    expect(readCancelEvent(q, ret('128', ev('155')))).toEqual({ kind: 'fact', fact: { status: 'cancelled', cStat: '155', nProt: '141260000000077' } })
+    expect(readCancelEvent(q, ret('128', ev('135')))).toEqual({ kind: 'fact', fact: { status: 'cancelled', cStat: '135', nProt: '141260000000077', dhRegEvento: '2026-11-21T10:00:00-03:00', xMotivo: 'm' } })
+    expect(readCancelEvent(q, ret('128', ev('155')))).toEqual({ kind: 'fact', fact: { status: 'cancelled', cStat: '155', nProt: '141260000000077', dhRegEvento: '2026-11-21T10:00:00-03:00', xMotivo: 'm' } })
   })
   it('lote 128 sem retEvento → ambíguo evento-sem-retorno', () => {
     expect(readCancelEvent(q, ret('128'))).toEqual({ kind: 'ambiguous', cause: 'evento-sem-retorno' })
@@ -148,6 +154,19 @@ describe('evento 110111 (RF-NFE-24; D-NE39, D-NE106, D-NE208, D-NE210)', () => {
     expect(readCancelEvent(q, ret('128', ev('135', CHAVE, { drop: 'chNFe' })))).toEqual({ kind: 'ambiguous', cause: 'nao-classificada' })
     expect(readCancelEvent(q, ret('128', ev('135'), ev('135')))).toEqual({ kind: 'ambiguous', cause: 'nao-classificada' })
     expect(readCancelEvent(q, ret('128', ev('135', CHAVE, { sig: true })))).toEqual({ kind: 'ambiguous', cause: 'nao-classificada' })
+  })
+  it('NFE.E6.P2: o eco vem ANTES da rejeição (D-NE210) — 501 de outra chave ou sem a chave é ambíguo, não rejeição; o que o serviço RECUSOU (656/108/109/999) é recusa da pergunta', () => {
+    expect(readCancelEvent(q, ret('128', ev('501', OUTRA)))).toEqual({ kind: 'ambiguous', cause: 'nao-classificada' })
+    expect(readCancelEvent(q, ret('128', ev('501', CHAVE, { drop: 'chNFe' })))).toEqual({ kind: 'ambiguous', cause: 'nao-classificada' })
+    for (const c of ['656', '108', '109', '999']) {
+      expect(readCancelEvent(q, ret(c))).toEqual({ kind: 'rejection', cStat: c, xMotivo: 'm', refused: true })
+      expect(readCancelEvent(q, ret('128', ev(c)))).toEqual({ kind: 'rejection', cStat: c, xMotivo: 'm', refused: true })
+    }
+  })
+  it('NFE.E6.P2: 135/155 sem dhRegEvento, com dhRegEvento torto ou com nProt fora da forma → ambíguo (a voz C leva o dh do fisco)', () => {
+    expect(readCancelEvent(q, ret('128', ev('135', CHAVE, { drop: 'dhRegEvento' })))).toEqual({ kind: 'ambiguous', cause: 'nao-classificada' })
+    expect(readCancelEvent(q, ret('128', ev('135').replace('2026-11-21T10:00:00-03:00', 'ontem')))).toEqual({ kind: 'ambiguous', cause: 'nao-classificada' })
+    expect(readCancelEvent(q, ret('128', ev('135').replace('141260000000077', '12')))).toEqual({ kind: 'ambiguous', cause: 'envelope-ilegivel' })
   })
   it('rejeição do evento (ex.: 501 fora do prazo) e do lote (ex.: 491) → rejeição', () => {
     expect(readCancelEvent(q, ret('128', ev('501')))).toEqual({ kind: 'rejection', cStat: '501', xMotivo: 'm' })

@@ -23,6 +23,10 @@
     "PL_010f_v1.04/leiauteNFe_v4.00.xsd": "2bace939973916d54184ff3e2740041a932de5d79772f3363504504160f22542",
     "PL_010f_v1.04/DFeTiposBasicos_v1.00.xsd": "173577a4e3a9dc1d0deced85b89b955b6064bb5a4ae5a96f6727d2da8a694d09",
     "PL_010f_v1.04/nfe_v4.00.xsd": "adce3646c13ceb54922ec3142fc1dc45bd4fb839ac35ad583e86c733c07d27df",
+    "PL_010d_v1.03/Evento/retEnvEvento_v1.00.xsd": "5eb93a244c5b26c983c08f725f8eafaa1923664a992181b9d78f60cc8523fa72",
+    "PL_010d_v1.03/Evento/procEventoNFe_v1.00.xsd": "4263ee5d12e7a731efab126310aba4edb25612e5986a1c5dde0c87e6c6173798",
+    "PL_009_V4_00_NT_2020_006_v1.20/retInutNFe_v4.00.xsd": "f088a06df63d8b4e24a726b73ec3328cdb54a575a75351fbf4a9476934c9dafd",
+    "PL_009_V4_00_NT_2020_006_v1.20/procInutNFe_v4.00.xsd": "fe95c091dab0f35cc56734ffb870d753d35770501dc360956283cad52deb8239",
     "Evento_Canc_PL_v1.01/e110111_v1.00.xsd": "56fcdad336b281a9de5e7aae27850bc2c5bd7714e267c891e1b4d0dc227c65da"
   }
 }

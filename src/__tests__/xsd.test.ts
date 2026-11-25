@@ -143,3 +143,29 @@ describe('NFe — o documento do builder da NE-4 (NFE.E5.P3; raiz nfe_v4.00.xsd 
     expect((await validateMessage('NFe', '<enviNFe xmlns="http://www.portalfiscal.inf.br/nfe" versao="4.00"></enviNFe>')).ok).toBe(false)
   })
 })
+
+describe('os retornos do evento e da inutilização (NFE.E6.P2 mudança 1)', () => {
+  const CH = '41261107742094000113550010000000151482130575'
+  const NS = 'http://www.portalfiscal.inf.br/nfe'
+  const retEvento = (cStat = '135', extra = '') =>
+    `<retEnvEvento xmlns="${NS}" versao="1.00"><idLote>1</idLote><tpAmb>2</tpAmb><verAplic>PR</verAplic><cOrgao>41</cOrgao><cStat>128</cStat><xMotivo>Lote de Evento Processado</xMotivo>`
+    + `<retEvento versao="1.00"><infEvento><tpAmb>2</tpAmb><verAplic>PR</verAplic><cOrgao>41</cOrgao><cStat>${cStat}</cStat><xMotivo>Evento registrado e vinculado a NF-e</xMotivo>`
+    + `<chNFe>${CH}</chNFe><tpEvento>110111</tpEvento><xEvento>Cancelamento registrado</xEvento><nSeqEvento>1</nSeqEvento><dhRegEvento>2026-11-25T10:00:00-03:00</dhRegEvento><nProt>141260000000002</nProt>${extra}</infEvento></retEvento></retEnvEvento>`
+  const retInut = (cStat = '102', extra = '') =>
+    `<retInutNFe xmlns="${NS}" versao="4.00"><infInut><tpAmb>2</tpAmb><verAplic>PR</verAplic><cStat>${cStat}</cStat><xMotivo>Inutilizacao de numero homologado</xMotivo><cUF>41</cUF><ano>26</ano>`
+    + `<CNPJ>07742094000113</CNPJ><mod>55</mod><serie>1</serie><nNFIni>10</nNFIni><nNFFin>12</nNFFin><dhRecbto>2026-11-25T10:00:00-03:00</dhRecbto><nProt>141260000000003</nProt>${extra}</infInut></retInutNFe>`
+
+  it('retEnvEvento e retInutNFe reais da SEFAZ (montados na suíte) passam; sem o motivo ou com a versão trocada, caem', async () => {
+    expect(await validateMessage('retEnvEvento', retEvento())).toEqual({ ok: true })
+    expect(await validateMessage('retInutNFe', retInut())).toEqual({ ok: true })
+    expect((await validateMessage('retEnvEvento', retEvento().replace(/<xMotivo>Evento[^<]*<\/xMotivo>/, ''))).ok).toBe(false)
+    expect((await validateMessage('retEnvEvento', retEvento().replace('versao="1.00"><idLote', 'versao="9.99"><idLote'))).ok).toBe(false)
+    expect((await validateMessage('retInutNFe', retInut().replace(/<xMotivo>[^<]*<\/xMotivo>/, ''))).ok).toBe(false)
+    expect((await validateMessage('retInutNFe', retInut().replace('<mod>55</mod>', '<mod>77</mod>'))).ok).toBe(false)
+  })
+
+  it('os conjuntos do procEventoNFe e do procInutNFe carregam (as cópias estão no manifesto)', () => {
+    for (const k of ['procEventoNFe', 'procInutNFe', 'retEnvEvento', 'retInutNFe'] as const) expect([k, typeof SCHEMA_SETS[k].root]).toEqual([k, 'string'])
+    expect(() => loadSchemaSets()).not.toThrow()
+  })
+})

@@ -22,6 +22,7 @@ import { ELEMENT, elementsOf, parseXml, type XmlNode } from 'fiscal-api'
  */
 
 export type MessageKind = 'consStatServ' | 'consSitNFe' | 'consReciNFe' | 'consCad' | 'inutNFe' | 'envEvento110111' | 'NFe' | 'enviNFe' | 'retEnviNFe' | 'retConsReciNFe'
+  | 'retEnvEvento' | 'procEventoNFe' | 'retInutNFe' | 'procInutNFe'
 
 export type XsdResult = { readonly ok: true } | { readonly ok: false; readonly errors: readonly string[] }
 
@@ -117,6 +118,39 @@ export const SCHEMA_SETS: Readonly<Record<MessageKind | 'detEvento110111', Schem
       'leiauteEvento_v1.00.xsd': D + 'Evento/leiauteEvento_v1.00.xsd',
       'tiposBasico_v1.03.xsd': D + 'Evento/tiposBasico_v1.03.xsd',
       'xmldsig-core-schema_v1.01.xsd': D + 'Evento/xmldsig-core-schema_v1.01.xsd',
+    },
+  },
+  // NFE.E6.P2 (D-NE50): o retorno do evento e o procEventoNFe (o evento + o retEvento, o que se guarda), o retorno da inutilização e o procInutNFe
+  retEnvEvento: {
+    root: D + 'Evento/retEnvEvento_v1.00.xsd',
+    files: {
+      'leiauteEvento_v1.00.xsd': D + 'Evento/leiauteEvento_v1.00.xsd',
+      'tiposBasico_v1.03.xsd': D + 'Evento/tiposBasico_v1.03.xsd',
+      'xmldsig-core-schema_v1.01.xsd': D + 'Evento/xmldsig-core-schema_v1.01.xsd',
+    },
+  },
+  procEventoNFe: {
+    root: D + 'Evento/procEventoNFe_v1.00.xsd',
+    files: {
+      'leiauteEvento_v1.00.xsd': D + 'Evento/leiauteEvento_v1.00.xsd',
+      'tiposBasico_v1.03.xsd': D + 'Evento/tiposBasico_v1.03.xsd',
+      'xmldsig-core-schema_v1.01.xsd': D + 'Evento/xmldsig-core-schema_v1.01.xsd',
+    },
+  },
+  retInutNFe: {
+    root: B + 'retInutNFe_v4.00.xsd',
+    files: {
+      'leiauteInutNFe_v4.00.xsd': D + 'NFe/leiauteInutNFe_v4.00.xsd',
+      'tiposBasico_v4.00.xsd': F + 'tiposBasico_v4.00.xsd',
+      'xmldsig-core-schema_v1.01.xsd': F + 'xmldsig-core-schema_v1.01.xsd',
+    },
+  },
+  procInutNFe: {
+    root: B + 'procInutNFe_v4.00.xsd',
+    files: {
+      'leiauteInutNFe_v4.00.xsd': D + 'NFe/leiauteInutNFe_v4.00.xsd',
+      'tiposBasico_v4.00.xsd': F + 'tiposBasico_v4.00.xsd',
+      'xmldsig-core-schema_v1.01.xsd': F + 'xmldsig-core-schema_v1.01.xsd',
     },
   },
   detEvento110111: {

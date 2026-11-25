@@ -68,8 +68,9 @@ describe('o vetor de retorno — uma classe por caso (104 com protNFe)', () => {
 })
 
 describe('o vetor de retorno — cabeçalho do lote', () => {
-  it('lote rejeitado sem protNFe (764, 776, 215, 656, 214) → R com o cStat do lote', () => {
-    for (const cStat of ['764', '776', '215', '656', '214']) {
+  it('lote rejeitado sem protNFe (764, 776, 215, 214) → R com o cStat do lote; 656 e 999 NÃO são rejeição da nota: ambíguo', () => {
+    for (const cStat of ['656', '999']) expect([cStat, voiceOfCStat(readSend(Q, retEnvi(cStat)), 'P').action]).toEqual([cStat, 'ambiguous'])
+    for (const cStat of ['764', '776', '215', '214']) {
       const d = voice(voiceOfCStat(readSend(Q, retEnvi(cStat, '', '2', 'Rejeicao do lote')), 'P'))
       expect([d.event.kind, d.event.authorityCode, d.event.message]).toEqual(['R', cStat, 'Rejeicao do lote'])
     }

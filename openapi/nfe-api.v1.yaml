@@ -282,6 +282,7 @@ paths:
         '400': { $ref: '#/components/responses/Invalid' }
         '403': { $ref: '#/components/responses/Forbidden' }
         '404': { $ref: '#/components/responses/NotFound' }
+        '429': { $ref: '#/components/responses/TooSoon' }   # o freio das 30 rejeições do mesmo cStat na vida da nota (D-NE254) — RESOURCE_BUSY
         '409':
           description: >-
             FISCAL_ISSUER_MISSING · FISCAL_CERT_MISSING/EXPIRED/INVALID · FISCAL_TRANSMISSION_IN_PROGRESS · FISCAL_ALREADY_AUTHORIZED ·
@@ -309,7 +310,9 @@ paths:
         '503': { $ref: '#/components/responses/AuthorityUnavailable' }
 
   /v1/nfe/invoices/{invoiceId}/refresh:
-    parameters: [ { $ref: '#/components/parameters/InvoiceId' } ]
+    parameters:
+      - { $ref: '#/components/parameters/InvoiceId' }
+      - { name: all, in: query, required: false, schema: { type: boolean, default: false }, description: 'true = consulta as chaves de TODAS as tentativas da nota (o 539 — D-NE36)' }
     post:
       tags: [nfe]
       summary: Consulta o fisco pela NOSSA chave (ou pelo recibo, se P) e grava a voz nova da tentativa vigente (idempotente)
@@ -773,7 +776,6 @@ components:
         dhAuthorization: { type: string, nullable: true }
         lastKind: { type: string, nullable: true, enum: [S, P, A, R, D, C, K, F, N, null] }
         lastCode: { type: string, nullable: true, description: 'cStat cru (3 ou 4 dígitos)' }
-        lastMessage: { type: string, nullable: true }
         number: { type: integer, description: 'nNF — lido da chave (posições 26 a 34)' }
         serie: { type: integer }
         notRegisteredAt: { type: string, nullable: true, description: 'fato da rota reconfirm (D-NE111) — nunca voz' }

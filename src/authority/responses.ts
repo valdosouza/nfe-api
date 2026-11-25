@@ -198,7 +198,8 @@ export function readSend(q: SendQuestion, xml: string): ReadResult<SendFact> {
     const cStat = text(ret, 'cStat')
     if (!cStat) return ambiguous('envelope-ilegivel')
     if (DUPLICATE.has(cStat)) return { kind: 'fact', fact: { status: 'duplicate', cStat: cStat as DuplicateCStat } }
-    if (cStat === '108' || cStat === '109') return ambiguous('nao-classificada')                   // serviço paralisado: o lote não foi processado e nada se conclui — a tentativa fica em voo
+    // serviço paralisado (108/109), consumo indevido (656) e erro interno (999) NÃO dizem que a NOTA foi rejeitada: o lote pode ter sido processado — nada se conclui, a tentativa fica em voo e a consulta esclarece (gate socrático M2)
+    if (cStat === '108' || cStat === '109' || cStat === '656' || cStat === '999') return ambiguous('nao-classificada')
     if (cStat !== '103' && cStat !== '104' && cStat !== '105') return NOTE_REJECTION.test(cStat) ? rejection(cStat, text(ret, 'xMotivo')) : ambiguous('nao-classificada')
     if (text(ret, 'tpAmb') !== q.tpAmb) return ambiguous('nao-classificada')
     if (cStat === '105') return { kind: 'fact', fact: { status: 'processing', cStat: '105' } }

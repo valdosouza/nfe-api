@@ -241,3 +241,16 @@ export async function touchQueriedAt(q: Q, ref: InvoiceRef, attempt: number): Pr
     `UPDATE ${T} SET last_queried_at = NOW(), updated_at = NOW() WHERE tb_institution_id = ? AND tb_invoice_id = ? AND terminal = ? AND attempt = ? AND deleted = 'N'`,
     [ref.institutionId, ref.invoiceId, ref.terminal, attempt])
 }
+
+/** As vozes das tentativas da vida da nota, na ordem (tentativa, evento) — a leitura da rota `GET /v1/nfe/invoices/{id}`. */
+export async function voicesOfLife(q: Q, ref: InvoiceRef, lifeEvent: number): Promise<{ attempt: number; event: number; kind: TransmissionEventKind; authorityCode: string | null; message: string | null; dh: string | null; source: 'P' | 'Q' }[]> {
+  const [rows] = await q.query(
+    `SELECT e.attempt, e.event, e.kind, e.authority_code AS authorityCode, e.message, ${fmt('e.dh', 'dh')}, e.source
+       FROM ${EV} e JOIN ${T} t ON t.tb_institution_id = e.tb_institution_id AND t.tb_invoice_id = e.tb_invoice_id AND t.terminal = e.terminal AND t.attempt = e.attempt
+      WHERE e.tb_institution_id = ? AND e.tb_invoice_id = ? AND e.terminal = ? AND t.life_event = ? AND e.deleted = 'N' AND t.deleted = 'N'
+      ORDER BY e.attempt, e.event`, [ref.institutionId, ref.invoiceId, ref.terminal, lifeEvent])
+  return (Array.isArray(rows) ? rows : []).map((r: any) => ({
+    attempt: Number(r.attempt), event: Number(r.event), kind: String(r.kind) as TransmissionEventKind, authorityCode: r.authorityCode == null ? null : String(r.authorityCode),
+    message: r.message == null ? null : String(r.message), dh: r.dh == null ? null : String(r.dh), source: String(r.source) as 'P' | 'Q',
+  }))
+}

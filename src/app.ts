@@ -8,10 +8,11 @@ import type { AppContext } from './context'
 import { healthHandler } from './health'
 import { KeyProof } from './key-proof'
 import { emitterRoutes } from './modules/emitter/emitter.routes'
+import { invoicesRoutes } from './modules/invoices/invoices.routes'
 
 /**
  * Contrato DESIGN-FIRST (D-F8): o YAML é a fonte; servido em /docs e /v1/openapi.yaml. D-NE166 (NE-2): a nfe-api serve só `GET /v1/health`
- * e o emitente; as outras rotas do contrato ficam marcadas `x-onda` com a onda que as traz (NE-3/NE-5) — sem stub 501. A cerca
+ * e o emitente (e, com a NFE.E6.P1, a situação, o transmitir, o consultar e o reconfirmar da nota); as outras rotas do contrato ficam marcadas `x-onda` com a onda que as traz — sem stub 501. A cerca
  * rota × contrato (`app.test.ts`) confere servidas = contrato − marcadas.
  */
 export const OPENAPI_PATH = path.resolve(__dirname, '..', 'openapi', 'nfe-api.v1.yaml')
@@ -46,6 +47,7 @@ export function createApp(ctx: AppContext, keyProof: KeyProof = new KeyProof(ctx
     ? (p, iat) => access.liveIdentity(ctx.pool, p, iat)
     : undefined)
   app.use('/v1/emitter', auth, emitterRoutes(ctx))
+  app.use('/v1/nfe/invoices', auth, invoicesRoutes(ctx))                // NFE.E6.P1: situação, transmitir, consultar e reconfirmar (o resto do ciclo é da NE-5 que segue)
 
   app.use((_req, res) => { res.status(404).json({ error: 'Rota não encontrada', code: 'NOT_FOUND' }) })
   app.use(errorMiddleware)

@@ -225,7 +225,6 @@ paths:
   /v1/nfe/invoices/{invoiceId}:
     parameters: [ { $ref: '#/components/parameters/InvoiceId' } ]
     get:
-      x-onda: NE-5   # D-NE166: entra com a NE-5 — ciclo da NF-e (reserva, builder, consulta, cancelamento, inutilização, DANFE/e-mail, numeração); não servida na NE-2 (sem stub 501)
       tags: [nfe]
       summary: Situação fiscal da nota (tentativas, vozes e eventos da VIDA vigente)
       description: Leitura exige a interface do ramo contratada. Instantes na zona do estabelecimento (Q-TZ1).
@@ -246,13 +245,12 @@ paths:
   /v1/nfe/invoices/{invoiceId}/transmit:
     parameters: [ { $ref: '#/components/parameters/InvoiceId' } ]
     post:
-      x-onda: NE-5   # D-NE166: entra com a NE-5 — ciclo da NF-e (reserva, builder, consulta, cancelamento, inutilização, DANFE/e-mail, numeração); não servida na NE-2 (sem stub 501)
       tags: [nfe]
       summary: Transmite a NF-e da nota (1 NF-e por lote, síncrono — D-NE33)
       description: >-
-        A nfe-api lê a nota no ERP (viva, emitida por este estabelecimento, com ramo de mercadoria, número e série do ERP — D-F21) e monta
+        A nfe-api lê a nota no ERP (viva, emitida por este estabelecimento, com ramo de mercadoria; a SÉRIE é do ERP — D-NE11 — e o NÚMERO nasce AQUI, na transmissão, do último número guardado no núcleo — D-NE257/D-NE282) e monta
         a NF-e 4.00 com o que está congelado no faturamento + emitente/destinatário lidos agora. Pré-validação camada 1 (D-NE43: o que a
-        API deriva — chave/cNF/cDV, dhEmi × relógio, coerência de totais com o vNF do ERP (D-NE27), textos de homologação, tamanhos — + XSD)
+        API deriva — chave/cNF/cDV, dhEmi × janela de 5 minutos e 30 dias (a data do faturamento + a hora do `created_at` na zona do estabelecimento — D-NE278/D-NE284), coerência de totais com o vNF do ERP (D-NE27), textos de homologação, tamanhos — + XSD)
         sobre o CANDIDATO montado em memória que a reserva grava IGUAL; violação = 422 com a lista inteira, sem tentativa. Reserva a
         tentativa sob o FOR UPDATE da nota (D-F27); a chave, o cNF, o cDV, o autorizador, o tpEmis e a presença de IE nascem NA reserva e
         são write-once (D-NE7/D-NE37/D-NE96 — emitente SEM IE vai à SVRS). Fisco FORA da transação. Privilégio TRANSMITIR na interface do
@@ -311,13 +309,12 @@ paths:
   /v1/nfe/invoices/{invoiceId}/refresh:
     parameters: [ { $ref: '#/components/parameters/InvoiceId' } ]
     post:
-      x-onda: NE-5   # D-NE166: entra com a NE-5 — ciclo da NF-e (reserva, builder, consulta, cancelamento, inutilização, DANFE/e-mail, numeração); não servida na NE-2 (sem stub 501)
       tags: [nfe]
       summary: Consulta o fisco pela NOSSA chave (ou pelo recibo, se P) e grava a voz nova da tentativa vigente (idempotente)
       description: >-
         Privilégio TRANSMITIR do ramo. A pergunta vai ao autorizador GRAVADO na tentativa (D-NE37). Rodízio respeita o consumo indevido
         (656: > 10 consultas da MESMA chave por hora bloqueiam o CNPJ — intervalo mínimo por chave; D-NE26) — consulta recusada pelo
-        intervalo = 429 sem ir ao fisco. 217 ("NF-e não consta") numa tentativa em voo = F conclusivo (envio que não chegou). C
+        intervalo = 429 sem ir ao fisco. 217 ("NF-e não consta") NÃO fecha nada pela consulta: devolve `notRegistered: true` e só a rota `reconfirm` grava o fato (D-NE111/D-NE235). C
         descoberta aqui (cancelada em outro sistema com o mesmo A1) NÃO produz o C local — o setes-api a lê (D-F11). Reconciliação com
         prova: `digVal` do protNFe × DigestValue do XML guardado (D-NE41 — o digVal é opcional no XSD; ausente ou divergente =
         pendência crítica, nunca sobrescreve).
@@ -331,6 +328,34 @@ paths:
                 properties:
                   ok: { type: boolean }
                   data: { $ref: '#/components/schemas/RefreshResult' }
+        '400': { $ref: '#/components/responses/Invalid' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '429': { $ref: '#/components/responses/TooSoon' }
+        '502': { $ref: '#/components/responses/AuthorityAmbiguous' }
+        '503': { $ref: '#/components/responses/AuthorityUnavailable' }
+
+  /v1/nfe/invoices/{invoiceId}/reconfirm:
+    parameters: [ { $ref: '#/components/parameters/InvoiceId' } ]
+    post:
+      tags: [nfe]
+      summary: Reconfirma o 217 — grava o FATO "o fisco não registrou" na tentativa em voo (D-NE111, D-NE235)
+      description: >-
+        Privilégio TRANSMITIR do ramo. Pergunta ao fisco pela NOSSA chave, no autorizador gravado na tentativa. Só com 217 e `chNFe` igual, sem recibo 103/105 em aberto
+        e se a última voz ainda é a que a pergunta viu, grava `nfe_not_registered_at` na tentativa (fato, NUNCA voz). A tentativa continua em voo e a nova tentativa segue
+        barrada (409) até o `notRegisteredProven` do núcleo existir (PM-8). Qualquer outra resposta do fisco é tratada como o `refresh` trata (pousa A, D…), sem gravar o
+        fato. Respeita a cota da chave (429).
+      responses:
+        '200':
+          description: ok
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  ok: { type: boolean }
+                  data: { $ref: '#/components/schemas/ReconfirmResult' }
         '400': { $ref: '#/components/responses/Invalid' }
         '403': { $ref: '#/components/responses/Forbidden' }
         '404': { $ref: '#/components/responses/NotFound' }
@@ -747,6 +772,9 @@ components:
         lastKind: { type: string, nullable: true, enum: [S, P, A, R, D, C, K, F, N, null] }
         lastCode: { type: string, nullable: true, description: 'cStat cru (3 ou 4 dígitos)' }
         lastMessage: { type: string, nullable: true }
+        number: { type: integer, description: 'nNF — lido da chave (posições 26 a 34)' }
+        serie: { type: integer }
+        notRegisteredAt: { type: string, nullable: true, description: 'fato da rota reconfirm (D-NE111) — nunca voz' }
     Voice:
       type: object
       properties:
@@ -790,6 +818,8 @@ components:
         invoiceId: { type: integer }
         attempt: { type: integer }
         accessKey: { type: string }
+        number: { type: integer, minimum: 1, maximum: 999999999, description: 'nNF gerado AQUI na transmissão (D-NE257); o ERP o lê da chave publicada — posições 26 a 34 (D-NE283)' }
+        serie: { type: integer, minimum: 0, maximum: 909 }
         protocol: { type: string, nullable: true }
         receipt: { type: string, nullable: true }
         kind: { type: string, enum: [A, P] }
@@ -802,6 +832,21 @@ components:
         kind: { type: string, nullable: true }
         localCancelPending: { type: boolean }
         digestCheck: { type: string, enum: [match, mismatch, absent, not_applicable], description: 'D-NE41 — digVal do protNFe × DigestValue do XML guardado' }
+        accessKey: { type: string }
+        via: { type: string, enum: [key, receipt] }
+        reason: { type: string, nullable: true, description: 'por que nada foi gravado (ambíguo, 217, 106, voz que mudou…)' }
+        incident: { type: string, nullable: true, enum: [digest-mismatch, digest-absent, authorized-in-closed-attempt, null], description: 'pendência crítica ou incidente: pede a mão de alguém, nunca vira voz' }
+        notRegistered: { type: boolean, description: 'o fisco respondeu 217 com a nossa chave — a consulta NÃO grava; só o reconfirm' }
+        next: { type: string, nullable: true, enum: [consult-key, consult-receipt, null] }
+    ReconfirmResult:
+      type: object
+      properties:
+        invoiceId: { type: integer }
+        attempt: { type: integer }
+        accessKey: { type: string }
+        recorded: { type: boolean, description: 'o fato foi gravado agora' }
+        reason: { type: string, enum: [registrada-agora, ja-registrada, nao-e-217, recibo-em-aberto, voz-mudou-depois-da-pergunta, tentativa-fechada] }
+        refresh: { allOf: [ { $ref: '#/components/schemas/RefreshResult' } ], nullable: true, description: 'a resposta do fisco quando NÃO foi o 217' }
     CancelResult:
       type: object
       properties:

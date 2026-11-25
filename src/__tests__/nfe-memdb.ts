@@ -58,6 +58,9 @@ export class MemDb {
       const n = this.events.filter(e => e.attempt === params[3] && e.kind === params[4] && (params.length === 5 ? e.dh === null : [params[5], params[6]].includes(e.dh))).length
       return [[{ n }], []]
     }
+    if (/FROM tb_invoice_merchandise_transmission_event e JOIN/.test(s)) {
+      return [this.events.map(e => ({ attempt: e.attempt, event: e.event, kind: e.kind, authorityCode: e.authority_code, message: e.message, dh: e.dh, source: e.source })), []]
+    }
     if (/FROM tb_invoice_merchandise_transmission t/.test(s)) {
       const view = (a: any) => {
         const evs = this.events.filter(e => e.attempt === a.attempt)

@@ -1,4 +1,5 @@
-import { HttpError, ErrorCodes, InstitutionPayload, isAdmin } from 'fiscal-api'
+import { HttpError, ErrorCodes, InstitutionPayload, InvoiceRef, isAdmin, erp, access } from 'fiscal-api'
+import type { AppContext } from '../context'
 
 /**
  * Guardas da borda da nfe-api (molde: `nfse-api/src/modules/guards.ts`). Na NE-2 só o emitente é servido (D-NE166) — o privilégio do RAMO
@@ -16,4 +17,34 @@ import { HttpError, ErrorCodes, InstitutionPayload, isAdmin } from 'fiscal-api'
  */
 export function requireAdmin(inst: InstitutionPayload): void {
   if (!isAdmin(inst)) throw new HttpError(403, 'Ação exclusiva do administrador do estabelecimento', undefined, ErrorCodes.ADMIN_REQUIRED)
+}
+
+/**
+ * Autorização de AÇÃO na porta fiscal (NFE.E6.P1 mudança 10 — D-F13/D-F14/D-F37/D-PV40; molde `nfse-api/src/modules/guards.ts`): a REGRA é do ERP (privilégio na interface do
+ * RAMO da nota — a interface vem da view de política `vw_order_interface`, lida pelo núcleo) e a nfe-api a APLICA. Licença antes do privilégio (a ordem do diagnóstico mora na
+ * biblioteca `access`): 403 `INTERFACE_NOT_ALLOWED` (ramo não contratado — vale também para o admin) × 403 `PRIVILEGE_REQUIRED`. O privilégio é citado pelo NOME do verbo
+ * (D-PV49/D-PV53 — nenhum número de privilégio nas APIs fiscais): TRANSMITIR para transmitir e reconfirmar, CONSULTAR para consultar (D-PV40: consultar ≠ transmitir).
+ */
+export async function requireBranchPrivilege(ctx: AppContext, inst: InstitutionPayload, ref: InvoiceRef, privilege: access.PrivilegeName): Promise<void> {
+  const key = await erp.orderInterface(ctx.pool, inst.schemaName, ref)
+  const verdict = await access.accessVerdict(ctx.pool, inst, [key], privilege)
+  if (verdict === 'not-contracted') throw new HttpError(403, `Interface ${key} não contratada para este estabelecimento`, undefined, ErrorCodes.INTERFACE_NOT_ALLOWED)
+  if (verdict === 'no-privilege') throw new HttpError(403, `Privilégio necessário para esta ação na interface ${key}`, undefined, ErrorCodes.PRIVILEGE_REQUIRED)
+}
+
+/** Leitura: a interface do ramo tem de estar ao ALCANCE (contratada; o super vê todas — A-PV1). */
+export async function requireBranchInterface(ctx: AppContext, inst: InstitutionPayload, ref: InvoiceRef): Promise<void> {
+  const key = await erp.orderInterface(ctx.pool, inst.schemaName, ref)
+  if ((await access.reachableKeys(ctx.pool, inst, [key])).length === 0) {
+    throw new HttpError(403, `Interface ${key} não contratada para este estabelecimento`, undefined, ErrorCodes.INTERFACE_NOT_ALLOWED)
+  }
+}
+
+/** id de rota: inteiro positivo, senão 400. */
+export function parseInvoiceId(raw: string): number {
+  const id = Number(raw)
+  if (!/^\d+$/.test(String(raw)) || !Number.isSafeInteger(id) || id <= 0) {
+    throw new HttpError(400, 'invoiceId inválido', [{ field: 'invoiceId', message: 'Informe um id (inteiro positivo)' }], ErrorCodes.INVALID_ID)
+  }
+  return id
 }

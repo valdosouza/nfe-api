@@ -3,7 +3,7 @@ import type { DuplicateCStat, ReadResult, SendFact } from './responses'
 
 /**
  * O que o cStat DIZ À NOSSA TENTATIVA (NFE.E6.P1 — D-NE33, D-NE34, D-NE35, D-NE36, D-NE108; ficha-nfe-e6-p1-transmitir-consultar-reconferir.md §4 e §6-3;
- * RF-NFE-21 e a proposta RF-NFE-72/73). PURA: recebe o que o leitor entendeu da resposta (já conferida contra a pergunta) e devolve a AÇÃO — nunca
+ * RF-NFE-21 e RF-NFE-74/75). PURA: recebe o que o leitor entendeu da resposta (já conferida contra a pergunta) e devolve a AÇÃO — nunca
  * grava, nunca consulta.
  *
  * - `voice`: a voz do fisco a gravar (A autorizada, D denegada, R rejeitada, P em processamento), com o protocolo e o `digVal` quando há;

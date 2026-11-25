@@ -121,7 +121,7 @@ export type ProtocolFact =
   | { readonly status: 'processing'; readonly cStat: '105' }
   /**
    * 204 (duplicidade, mesma chave) e 539 (chave diferente — D-NE36), mais 205 (denegada na base), 218 (cancelada), 206 (inutilizada) e 635 (mesmo número e série
-   * aguardando processamento — RF-NFE-73 proposta): NUNCA concluem como rejeição — o número pode já ser de uma nota; a saída é a consulta da chave.
+   * aguardando processamento — RF-NFE-75): NUNCA concluem como rejeição — o número pode já ser de uma nota; a saída é a consulta da chave.
    */
   | { readonly status: 'duplicate'; readonly cStat: DuplicateCStat }
 

@@ -84,5 +84,10 @@ describe('as cercas do 217 (RF-NFE-72)', () => {
     expect(t).not.toMatch(/storage\.find\(/)
     expect(r.match(/storage\.find\(/g)?.length).toBe(1)                                      // só `buildProc` LÊ o `-nfe.xml` guardado para montar o procNFe
     expect(`${t}\n${r}`).not.toMatch(/\bwriteFile(Sync)?\b/)
+    // NFE.E6.P2: os módulos novos que gravam arquivo fiscal também só gravam pelo `save` do núcleo (gravação única) — nunca `writeFile`
+    for (const f of ['cancellation.ts', 'void-range.ts', 'refresh-all.ts', 'proc-evento.ts']) {
+      const file = path.join(SRC, 'nfe', f)
+      if (fs.existsSync(file)) expect([f, /\bwriteFile(Sync)?\b/.test(code(file))]).toEqual([f, false])
+    }
   })
 })

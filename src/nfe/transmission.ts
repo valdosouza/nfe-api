@@ -72,6 +72,9 @@ export interface NfeDeps {
   readonly request?: (c: HttpsCall) => Promise<HttpsResult>
 }
 
+/** A T3 de qualquer operação que fala com o fisco sobre a família: o catálogo injetado (testes) ou o do núcleo — o ÚNICO ponto do `src/` que nomeia `VOICE_READINGS` (cerca do P9). */
+export const assertFamilyOf = (deps: Pick<NfeDeps, 'catalog'>): void => assertFamilyInCatalog(deps.catalog ?? VOICE_READINGS)
+
 /** T3 — a nfe-api NÃO monta a reserva enquanto a família não estiver no catálogo de leituras do núcleo (D-NE158). */
 export function assertFamilyInCatalog(catalog: Readonly<Record<string, { readonly transmissionView: string }>>): void {
   const ok = Object.values(catalog).some(r => r.transmissionView === MERCHANDISE_VOICE_READING.transmissionView)

@@ -13,6 +13,18 @@ export const NfeErrors = Object.freeze({
   RETURN_REFERENCE_MISMATCH: 'FISCAL_RETURN_REFERENCE_MISMATCH',
   /** A família da NF-e não está no catálogo de leituras do núcleo (D-NE158): a nfe-api não monta a reserva (NFE.E6.P1.T3). */
   FAMILY_NOT_IN_CATALOG:     'FISCAL_FAMILY_NOT_IN_CATALOG',
+  /** NFE.E6.P2: a NF-e foi denegada — a nota existe no fisco e não se cancela no fisco (RF-NFE-82; o cancelamento é local, no ERP). */
+  DENIED:                    'FISCAL_DENIED',
+  /** NFE.E6.P2 (D-NE256): passaram mais de 480 horas da autorização — recusa local, nada vai ao fisco (RF-NFE-83). */
+  CANCEL_DEADLINE_EXCEEDED:  'FISCAL_CANCEL_DEADLINE_EXCEEDED',
+  /** NFE.E6.P2 (D-NE169): o 1062 da UNIQUE da prova da faixa retirada (um `ProcInutNFe` por Id e ambiente) — a faixa já está retirada. */
+  NUMBER_VOID_ALREADY_WITHDRAWN: 'NUMBER_VOID_ALREADY_WITHDRAWN',
+  /** NFE.E6.P2: a faixa cobre número de que alguma tentativa ainda é dona (viva, autorizada, denegada, rejeitada, ou com o 217 provado). */
+  VOID_RANGE_IN_USE:         'FISCAL_VOID_RANGE_IN_USE',
+  /** NFE.E6.P2: a faixa já tem pedido pendente (reserva sem resposta). */
+  VOID_IN_FLIGHT:            'FISCAL_VOID_IN_FLIGHT',
+  /** NFE.E6.P2: o fisco rejeitou a inutilização (256, 241, 201…): história, a faixa não é retirada (D-NE207). */
+  VOID_REJECTED:             'FISCAL_VOID_REJECTED',
 } as const)
 
 /** Motivo (dentro de `fields[].message`) do que o builder do 1º release não escreve — nunca XML incompleto. */

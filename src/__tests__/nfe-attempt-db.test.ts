@@ -94,6 +94,10 @@ d('a tentativa da NF-e no banco descartável', () => {
     expect([life?.attempt, life?.lastKind]).toEqual([2, 'R'])
     expect(numberPolicy(life)).toEqual({ action: 'reuse', number: 15, serie: 1 })
     expect((await attemptsOfLife(pool, REF(7001), 1)).map(a => a.attempt)).toEqual([1, 2])
+    // a 7002 tem o fato "não registrada" (o teste anterior): o 217 PROVADO solta a nota, mesmo número (D-NE292); sem o fato, em voo barra com 409
+    const proven = await latestAttempt(pool, REF(7002), 1)
+    expect(numberPolicy(proven)).toMatchObject({ action: 'reuse' })
+    await pool.query(`UPDATE ${T} SET nfe_not_registered_at = NULL WHERE tb_institution_id = ? AND tb_invoice_id = 7002 AND attempt = 1`, [INST])
     const flying = await latestAttempt(pool, REF(7002), 1)
     expect(() => numberPolicy(flying)).toThrow(/não está fechada|em andamento/)
   })

@@ -300,6 +300,27 @@ describe('o rodízio (refreshAll — S3, teto de idade, disjuntor)', () => {
     await expect(refreshAll(t.deps, ACTOR, {}, async () => { throw new Error('defeito') })).rejects.toThrow('defeito')   // o que não é 409/429 sobe
   })
 
+  it('gate socrático da 3ª rodada (A2): a lista de candidatas pede só a ÚLTIMA tentativa de cada nota e só o que cabe no maior teto (o parâmetro `since` sai da tabela de prazos)', async () => {
+    const t = setup([{ kind: 'A' }, { kind: 'K', createdAt: ago(H) }])
+    const seen: { sql: string; params: unknown[] }[] = []
+    const pool = t.deps.pool as unknown as { query: (sql: string, params?: unknown[]) => Promise<[any, any]> }
+    const original = pool.query
+    pool.query = async (sql: string, params: unknown[] = []) => { if (/AS invoiceId/.test(sql)) seen.push({ sql: sql.replace(/\s+/g, ' '), params }); return original(sql, params) }
+    t.say(() => ok(sit('101')))
+    await refreshAll(t.deps, ACTOR)
+    expect(seen).toHaveLength(1)
+    expect(seen[0].sql).toMatch(/t\.attempt = \(SELECT MAX\(y\.attempt\) FROM tb_invoice_merchandise_transmission y WHERE y\.tb_institution_id = t\.tb_institution_id AND y\.tb_invoice_id = t\.tb_invoice_id AND y\.terminal = t\.terminal AND y\.deleted = 'N'\)/)
+    expect(seen[0].sql).toMatch(/COALESCE\(e\.created_at, t\.created_at\) >= \?/)
+    expect(seen[0].params).toEqual([98, fmt(new Date(NOW.getTime() - (168 + ROUNDROBIN_AGE_MARGIN_HOURS) * H)), 50])   // PR 168 h + 24 h é o maior teto hoje
+  })
+
+  it('gate socrático da 3ª rodada (A3): a consulta diz cancelada SEM o evento: a voz C entra, mas sem prova é pendência crítica (cancel-proof-missing)', async () => {
+    const t = setup([{ kind: 'A' }, { kind: 'K' }])
+    t.say(() => ok(sit('101')))
+    const r = await refresh(t)
+    expect([r.outcome.kind, r.incident, kinds(t)]).toEqual(['cancelled', 'cancel-proof-missing', ['A', 'K', 'C']])
+  })
+
   it('sem tentativa aberta (autorizada e cancelada): nada a olhar', async () => {
     const t = setup([{ kind: 'A' }, { kind: 'K' }, { kind: 'C', authority_code: '110111' }])
     const rep = await refreshAll(t.deps, ACTOR)

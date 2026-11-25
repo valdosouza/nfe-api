@@ -177,8 +177,9 @@ async function applyCancelRequest(deps: ReconcileDeps, actor: NfeActor, ref: Inv
       return 'written' as const
     })
     if (wrote === 'changed') return done({ kind: 'none', reason: 'voz-mudou-depois-da-pergunta' })
-    // a PROVA do cancelamento (gate adversarial H1): o procEventoNFe = o NOSSO evento guardado (o último pedido: `-r<n>`) + o retEvento da consulta; conflito = pendência crítica, falta = log
-    const incident = fact.event && c.outcome && (c.outcome.kind === 'answered' || c.outcome.kind === 'rejected') ? await saveCancelProof(deps, actor, c.row, c.outcome.xml) : null
+    // a PROVA do cancelamento: o procEventoNFe = o NOSSO evento que o fisco REGISTROU (casado pelo dhEvento — D-NE295) + o retEvento da consulta; sem o evento na consulta, ou sem igual
+    // entre os guardados, é pendência crítica `cancel-proof-missing` (nunca prova montada com outro evento); conflito = `file-conflict`
+    const incident = fact.event && c.outcome && (c.outcome.kind === 'answered' || c.outcome.kind === 'rejected') ? await saveCancelProof(deps, actor, c.row, c.outcome.xml) : 'cancel-proof-missing' as const
     return done({ kind: 'cancelled', authorityCode: '110111' }, { incident })
   }
   if (c.row.lastKind === 'K' && fact && (fact.status === 'authorized' || fact.status === 'denied')) {
@@ -196,7 +197,7 @@ async function applyCancelRequest(deps: ReconcileDeps, actor: NfeActor, ref: Inv
   return done({ kind: 'none', reason: c.row.lastKind === 'K' ? 'cancelamento-em-voo' : 'nota-autorizada' })
 }
 
-/** Guarda o `procEventoNFe` do cancelamento confirmado pela CONSULTA, a partir do evento NOSSO mais recente guardado; devolve `file-conflict` no conflito da gravação única, senão `null` (falta = log, sem conteúdo). */
+/** Guarda o `procEventoNFe` do cancelamento confirmado pela CONSULTA a partir do evento NOSSO que o fisco registrou (o `dhEvento` igual); `cancel-proof-missing` se nenhum casar, `file-conflict` no conflito da gravação única, `null` se gravou (ou outra falha do disco: log sem conteúdo). */
 async function saveCancelProof(deps: ReconcileDeps, actor: NfeActor, row: AttemptRow, responseXml: string): Promise<'file-conflict' | 'cancel-proof-missing' | null> {
   try {
     const zone = await deps.zoneOf(deps.pool as never, actor)

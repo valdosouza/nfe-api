@@ -1,6 +1,6 @@
 import { ErrorCodes, HttpError, type InvoiceRef, invoiceRef } from 'fiscal-api'
 import type { Environment, Uf } from '../authority/authorizers'
-import { cancelDeadlineHours } from '../authority/cancel-deadlines'
+import { CANCEL_DEADLINES, NATIONAL_CANCEL_DEADLINE, cancelDeadlineHours } from '../authority/cancel-deadlines'
 import { ufOfCode } from '../authority/messages'
 import { refreshInvoice, type ReconcileDeps, type RefreshResult } from './reconcile'
 import { assertFamilyOf, type NfeActor, type NfeDeps } from './transmission'
@@ -83,7 +83,9 @@ export async function refreshAll(deps: RefreshAllDeps, actor: NfeActor, opts: { 
   assertFamilyOf(deps)
   const limit = Number.isInteger(opts.limit) && (opts.limit as number) > 0 ? Math.min(opts.limit as number, 500) : ROUNDROBIN_DEFAULT_LIMIT
   const now = deps.now().getTime()
-  const widest = Math.max(ROUNDROBIN_INFLIGHT_MAX_HOURS, 168 + ROUNDROBIN_AGE_MARGIN_HOURS)
+  // o maior teto possível: o das tentativas em voo ou o maior prazo de cancelamento da tabela + a margem (gate socrático da 3ª rodada: nunca um número escrito à mão)
+  const longestDeadline = Math.max(NATIONAL_CANCEL_DEADLINE.hours, ...Object.values(CANCEL_DEADLINES).flatMap(rules => (rules ?? []).map(r => r.hours)))
+  const widest = Math.max(ROUNDROBIN_INFLIGHT_MAX_HOURS, longestDeadline + ROUNDROBIN_AGE_MARGIN_HOURS)
   const since = new Date(now - widest * 3_600_000).toISOString().slice(0, 19).replace('T', ' ')
   const candidates = await openAttempts(deps.pool as never, actor.institutionId, since, limit)
   const results: RefreshResult[] = []

@@ -20,8 +20,8 @@ import { MERCHANDISE_VOICE_FAMILY } from './voice-family'
  * - Só a voz A vigente cancela no fisco. D = 409 `FISCAL_DENIED` (a nota existe, não se cancela no fisco); R, F ou sem tentativa = 409 `FISCAL_NOT_AUTHORIZED`; em voo = 409; K vigente = 409
  *   `FISCAL_CANCEL_IN_FLIGHT`; C já gravada = idempotente (nada ao fisco).
  * - A TRAVA de 480 h da autorização (D-NE256) recusa SEM enviar (409 `FISCAL_CANCEL_DEADLINE_EXCEEDED`); sem o `dhRecbto` da autorização não há como medir: falha fechado. O prazo da UF só AVISA.
- * - O evento assinado é gravado ANTES do envio (gravação única do núcleo): conflito = 409 `FISCAL_FILE_CONFLICT` e a transação desfaz, sem K. Num 2º pedido (depois de N) o evento GUARDADO é
- *   reaproveitado byte a byte — nunca se gera outro `dhEvento` para o mesmo nSeq (a gravação única o recusaria).
+ * - O evento assinado é gravado ANTES do envio (gravação única do núcleo). Cada pedido depois de um N gera um evento NOVO — a hora, o certificado e o motivo de agora — no seu arquivo
+ *   `-evt110111-1-r<n>.xml` (D-NE295); só a SOBRA de uma reserva desfeita (o evento guardado que nunca foi ao fisco, achado pelo conflito do nome) é reaproveitada byte a byte.
  * - K = `reserveCancelRequest`, N = `releaseCancelRequest`, C = `recordKindOnce` (peças do núcleo, com o escritor da família). C só com 135/155; rejeição do evento libera com N; o que o serviço
  *   recusou (656…), 136/573/580 e a resposta sem eco MANTÊM o K — a consulta da chave reconcilia (S5). O nProt do evento vive no `-evt110111-1-proc.xml` guardado (Q1).
  */

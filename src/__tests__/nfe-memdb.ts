@@ -2,7 +2,7 @@
  * O banco EM MEMÓRIA dos testes da transmissão e da reconciliação da NF-e (NFE.E6.P1): só o SQL que `attempt.ts`, `not-registered.ts` e o escritor de voz do núcleo usam,
  * mais a trava da nota (`lockInvoice`). Não é um motor: é a prova de que o código fala o SQL certo e reage ao que o banco devolve. O motor real é o `nfe-attempt-db.test.ts`.
  */
-import type { HttpsCall, HttpsResult } from 'fiscal-api'
+import { FiscalFileConflictError, type HttpsCall, type HttpsResult } from 'fiscal-api'
 import { SOAP12_NS } from '../authority/soap'
 
 export const fmt = (d: Date): string => d.toISOString().slice(0, 19).replace('T', ' ')
@@ -94,7 +94,14 @@ export function memStorage() {
   const id = (key: any, name: string) => `${key.cnpj}/${key.environment}/${key.serie}/${name}`
   return {
     files,
-    save: (key: any, name: string, xml: string) => { files.set(id(key, name), xml); return id(key, name) },
+    /** Gravação única do núcleo 5.2.0: mesmos bytes = o caminho; bytes diferentes = `FiscalFileConflictError` (nunca sobrescreve). */
+    save: (key: any, name: string, xml: string, _when?: Date) => {
+      const at = id(key, name)
+      const had = files.get(at)
+      if (had !== undefined) { if (had === xml) return at; throw new FiscalFileConflictError(at) }
+      files.set(at, xml)
+      return at
+    },
     find: (key: any, name: string) => (files.has(id(key, name)) ? id(key, name) : null),
     read: (ref: string) => String(files.get(ref)),
     probe: () => true,

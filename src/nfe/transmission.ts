@@ -11,7 +11,7 @@ import { validateMessage } from '../authority/xsd'
 import { barrierOf, drawCnf, fillAuthorityData, fillReceipt, generateNumber, getAttempt, insertAttempt, latestAttempt, numberPolicy, voicesOfLife } from './attempt'
 import { dhEmiOf } from './dh-emi'
 import { documentInvalid, NfeErrors } from './errors'
-import { merchandiseFileKey } from './fiscal-file'
+import { isFileConflict, merchandiseFileKey } from './fiscal-file'
 import { buildAccessKey } from './access-key'
 import { assertLayer1 } from './layer1'
 import { buildNfeXml, type NfeInput } from './nfe-builder'
@@ -66,6 +66,8 @@ export interface NfeDeps {
   readonly credentialsFor: (q: Queryable, actor: NfeActor, scope: { uf: Uf; environment: Environment; at: Date }) => Promise<{ codeId: string; codeValue: string } | null>
   /** O `ca` do servidor do fisco (D-NE57/D-NE187). */
   readonly ca: () => HttpsCall['ca']
+  /** Injetável: o sorteador do `cNF` (os testes forçam o conflito do arquivo fiscal com uma chave conhecida). */
+  readonly random?: (max: number) => number
   /** Injetável: nos testes nada vai à rede. */
   readonly request?: (c: HttpsCall) => Promise<HttpsResult>
 }
@@ -94,7 +96,7 @@ export interface TransmitResult {
   /** O cStat da voz gravada (150 = autorizada fora de prazo: o aviso da D-NE279 sai por aqui). */
   readonly authorityCode: string | null
   /** Pendência crítica do `digVal` do `protNFe` (D-NE41): divergente NÃO grava; ausente grava o A que o fisco afirma. */
-  readonly incident: 'digest-mismatch' | 'digest-absent' | null
+  readonly incident: 'digest-mismatch' | 'digest-absent' | 'file-conflict' | null
 }
 
 const fiscalEnvironment = (e: Environment): 'H' | 'P' => e
@@ -164,7 +166,7 @@ export async function transmitInvoice(deps: NfeDeps, actor: NfeActor, ref: Invoi
     const attemptRow = await insertAttempt(itx, {
       lifeEvent: life, environment, authorizer: authorizer.authorizer, dhEmissionUtc: utc(dhEmi) as string,
       make: async () => {
-        const accessKey = buildAccessKey({ uf: facts.uf, emissionDate: dhEmi.slice(0, 10), cnpj: facts.cnpj, model: '55', serie: facts.serie, number, emissionType: 1, cnf: drawCnf(number) })
+        const accessKey = buildAccessKey({ uf: facts.uf, emissionDate: dhEmi.slice(0, 10), cnpj: facts.cnpj, model: '55', serie: facts.serie, number, emissionType: 1, cnf: drawCnf(number, deps.random) })
         const csrt = cred ? { idCSRT: cred.codeId, hashCSRT: hashCsrt(cred.codeValue, accessKey) } : null
         const input = facts.buildInput({ dhEmi, csrt })
         const built = buildNfeXml(input, accessKey)
@@ -181,10 +183,13 @@ export async function transmitInvoice(deps: NfeDeps, actor: NfeActor, ref: Invoi
       },
     }, actor.userId)
 
-    // o XML assinado no arquivo fiscal ANTES do envio — write-once (D-NE41): o `find` antes do `save`
+    // o XML assinado no arquivo fiscal ANTES do envio — gravação única do núcleo 5.2.0 (D-NE41): conflito = 409 e a transação desfaz, nada vai ao fisco
     const signed = (made as { signedXml: string } | null)?.signedXml
     if (!signed) throw new Error('candidato assinado ausente depois do INSERT da tentativa')
-    saveWriteOnce(deps, { cnpj: facts.cnpj, serie: facts.serie, environment, zone }, `${attemptRow.accessKey}-nfe.xml`, signed, now)
+    try { saveWriteOnce(deps, { cnpj: facts.cnpj, serie: facts.serie, environment, zone }, `${attemptRow.accessKey}-nfe.xml`, signed, now) } catch (e) {
+      if (isFileConflict(e)) throw new HttpError(409, 'O arquivo fiscal da NF-e já existe com outro conteúdo — nada foi enviado ao fisco (D-NE41)', [{ field: 'file', message: `${attemptRow.accessKey}-nfe.xml` }], ErrorCodes.FISCAL_FILE_CONFLICT)
+      throw e
+    }
     return { attempt: attemptRow.attempt, accessKey: attemptRow.accessKey, signedXml: signed, number, serie: facts.serie, environment, authorizer: authorizer.authorizer, url: endpoint.url, action: binding.action, namespace: binding.namespace, cnpj: facts.cnpj, zone, opened }
   })
 
@@ -214,12 +219,15 @@ export async function transmitInvoice(deps: NfeDeps, actor: NfeActor, ref: Invoi
     return true
   })
   if (!wrote) return finish(ref, reserved, { kind: 'none', reason: 'voz-mudou-depois-da-pergunta' }, null, null, null)
-  // o `-procNFe.xml` da autorizada e da denegada (D-NE35); falhar ao gravar só avisa (a reconciliação o refaz pela consulta)
+  // o `-procNFe.xml` da autorizada e da denegada (D-NE35): conflito de gravação única = pendência crítica (nunca silêncio); outra falha do `save` só avisa (a consulta da chave o refaz)
+  let conflict = false
   if (voice.kind === 'A' || voice.kind === 'D') {
     const xml = outcome.kind === 'answered' || outcome.kind === 'rejected' ? procNfeXml(reserved.signedXml, outcome.xml, reserved.accessKey) : null
-    if (xml) { try { saveWriteOnce(deps, { cnpj: reserved.cnpj, serie: reserved.serie, environment: reserved.environment, zone: reserved.zone }, `${reserved.accessKey}-procNFe.xml`, xml, deps.now()) } catch { /* só avisa */ } }
+    if (xml) {
+      try { saveWriteOnce(deps, { cnpj: reserved.cnpj, serie: reserved.serie, environment: reserved.environment, zone: reserved.zone }, `${reserved.accessKey}-procNFe.xml`, xml, deps.now()) } catch (e) { conflict = isFileConflict(e) }
+    }
   }
-  return finish(ref, reserved, { kind: voice.kind, authorityCode: voice.authorityCode, message: voice.message }, d.nProt, d.nRec, d.nRec || voice.kind === 'P' ? 'consult-receipt' : null, digestCheck === 'absent' ? 'digest-absent' : null)
+  return finish(ref, reserved, { kind: voice.kind, authorityCode: voice.authorityCode, message: voice.message }, d.nProt, d.nRec, d.nRec || voice.kind === 'P' ? 'consult-receipt' : null, conflict ? 'file-conflict' : digestCheck === 'absent' ? 'digest-absent' : null)
 }
 
 /**
@@ -255,11 +263,9 @@ async function readFactsGuarded(deps: NfeDeps, conn: ConnLike, actor: NfeActor, 
   return facts
 }
 
+/** Gravação única: o `save` do núcleo devolve o caminho se os bytes são iguais e lança `FiscalFileConflictError` se são outros — nunca sobrescreve. */
 function saveWriteOnce(deps: NfeDeps, p: { cnpj: string; serie: number; environment: Environment; zone: string }, name: string, xml: string, when: Date): void {
-  const key = merchandiseFileKey({ cnpj: p.cnpj, model: '55', serie: p.serie, environment: fiscalEnvironment(p.environment), zone: p.zone })
-  const { serie, ...lookup } = key
-  if (deps.storage.find({ ...lookup, serie }, name, [when]) !== null) throw new Error(`${name}: o arquivo fiscal já existe — não se sobrescreve XML guardado (D-NE41)`)
-  deps.storage.save(key, name, xml, when)
+  deps.storage.save(merchandiseFileKey({ cnpj: p.cnpj, model: '55', serie: p.serie, environment: fiscalEnvironment(p.environment), zone: p.zone }), name, xml, when)
 }
 
 /** O que o `SoapOutcome` diz à tentativa (D-NE34: só o retorno legível e o cStat decidem; o resto não grava ou fecha como F). */

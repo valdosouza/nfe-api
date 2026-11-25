@@ -82,6 +82,17 @@ describe('refresh pela chave', () => {
     expect(t.calls[0].url).toMatch(/^https:\/\/homologacao\.nfe\.sefa\.pr\.gov\.br\//)
   })
 
+  it('o `-procNFe.xml` já existe com OUTROS bytes (gravação única do núcleo 5.2.0): o A fica gravado e o incidente é file-conflict — nunca silêncio, nunca sobrescreve', async () => {
+    const t = setup(); seed(t)
+    const nfeKey = [...t.storage.files.keys()].find(k => k.endsWith('-nfe.xml')) as string
+    const planted = nfeKey.replace('-nfe.xml', '-procNFe.xml')
+    t.storage.files.set(planted, 'OUTROS BYTES')
+    t.say(() => ok(sit('100', prot('100'))))
+    const r = await refreshInvoice(t.deps, ACTOR, REF)
+    expect([r.outcome.kind, r.incident]).toEqual(['A', 'file-conflict'])
+    expect(t.storage.files.get(planted)).toBe('OUTROS BYTES')
+  })
+
   it('digVal DIVERGENTE: pendência crítica, nada é gravado (o XML guardado não serve como nfeProc), nunca sobrescreve', async () => {
     const t = setup(); seed(t)
     t.say(() => ok(sit('100', prot('100', { digVal: 'B'.repeat(27) + '=' }))))

@@ -243,14 +243,42 @@ describe('o que recusa ANTES de abrir tentativa e de enviar', () => {
     expect([t.db.inserted, t.calls.length]).toEqual([0, 0])
   })
 
-  it('o arquivo fiscal com o mesmo nome já existe: não se sobrescreve (write-once) e a transação desfaz', async () => {
-    const t = setup()
+  /** Planta, no momento do `save` do nome que termina em `suffix`, um arquivo de mesmo nome com OUTROS bytes (o conflito da gravação única do núcleo 5.2.0). */
+  const plantConflict = (t: ReturnType<typeof setup>, suffix: string): void => {
+    const real = t.storage.save
+    t.storage.save = ((key: any, name: string, xml: string, when?: Date) => {
+      if (name.endsWith(suffix)) t.storage.files.set(`${key.cnpj}/${key.environment}/${key.serie}/${name}`, 'OUTROS BYTES')
+      return real(key, name, xml, when)
+    }) as never
+  }
+
+  it('o `-nfe.xml` já existe com outros bytes: 409 FISCAL_FILE_CONFLICT, a transação desfaz, nada vai ao fisco e o conteúdo antigo fica (gravação única, D-NE41)', async () => {
+    const t = setup({ random: () => 48271936 })
     t.say(c => ok(ret(prot(c, '100'))))
-    const original = t.storage.find
-    t.storage.find = () => 'ja-existe'
-    await expect(run(t)).rejects.toThrow(/já existe/)
-    t.storage.find = original
-    expect([t.calls.length, t.conn.rollback.mock.calls.length > 0]).toEqual([0, true])
+    plantConflict(t, '-nfe.xml')
+    await expect(run(t)).rejects.toMatchObject({ statusCode: 409, code: 'FISCAL_FILE_CONFLICT' })
+    expect([t.calls.length, t.conn.rollback.mock.calls.length > 0]).toEqual([0, true])           // o banco em memória não desfaz: o `rollback` pedido é a prova
+    expect([...t.storage.files.values()]).toEqual(['OUTROS BYTES'])
+  })
+
+  it('o `-nfe.xml` com os MESMOS bytes não é conflito (o núcleo devolve o caminho)', async () => {
+    const t = setup({ random: () => 48271936 })
+    t.say(c => ok(ret(prot(c, '100'))))
+    const first = await run(t)
+    expect(first.outcome.kind).toBe('A')
+    const [key, bytes] = [...t.storage.files.entries()].find(([k]) => k.endsWith('-nfe.xml'))!
+    const [cnpj, environment, serie] = key.split('/')
+    expect(t.storage.save({ cnpj, environment, serie } as never, key.split('/').pop() as string, bytes, NOW)).toBe(key)
+  })
+
+  it('o `-procNFe.xml` já existe com outros bytes depois do envio: o A fica gravado e o resultado leva incident file-conflict (nunca silêncio)', async () => {
+    const t = setup({ random: () => 48271936 })
+    t.say(c => ok(ret(prot(c, '100'))))
+    plantConflict(t, '-procNFe.xml')
+    const r = await run(t)
+    expect([r.outcome.kind, r.incident]).toEqual(['A', 'file-conflict'])
+    expect(t.db.events.map(e => e.kind)).toEqual(['A'])
+    expect([...t.storage.files.values()]).toContain('OUTROS BYTES')
   })
 
   it('série fora de 0 a 909 e hora do dhEmi sem created_at: 422, nada aberto', async () => {

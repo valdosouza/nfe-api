@@ -40,3 +40,6 @@ export interface MerchandiseFileKeyInput {
 export function merchandiseFileKey(p: MerchandiseFileKeyInput): FiscalFileKey {
   return { cnpj: p.cnpj, kind: merchandiseDocumentKind(String(p.model)), serie: merchandiseSerie(p.serie), environment: p.environment, zone: p.zone }
 }
+
+/** O conflito de gravação única do núcleo 5.2.0, reconhecido pelo `.code` (nunca pela mensagem, que leva o caminho). */
+export const isFileConflict = (e: unknown): boolean => (e as { code?: unknown } | null)?.code === 'FISCAL_FILE_CONFLICT'

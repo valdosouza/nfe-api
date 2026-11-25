@@ -286,6 +286,7 @@ paths:
         '409':
           description: >-
             FISCAL_ISSUER_MISSING · FISCAL_CERT_MISSING/EXPIRED/INVALID · FISCAL_TRANSMISSION_IN_PROGRESS · FISCAL_ALREADY_AUTHORIZED ·
+            FISCAL_FILE_CONFLICT (o `-nfe.xml` já existe no arquivo fiscal com OUTRO conteúdo — gravação única do núcleo 5.2.0: a transação desfaz e nada vai ao fisco) ·
             FISCAL_DENIED (voz D gravada — 110/301/302/303: a nota EXISTE no fisco; não se retransmite nem se cancela no fisco — cancele a
             nota no ERP, que a mantém e leva o pedido a 'C' + cópia — D-E7/D-E8) · FISCAL_CANCEL_IN_FLIGHT · FISCAL_EFFECT_PENDING ·
             INVOICE_NOT_ISSUER (nota de terceiro) · INVOICE_LEGACY_NOT_TRANSMITTABLE (nota sincronizada do desktop) · FISCAL_NUMBER_VOIDED
@@ -828,7 +829,7 @@ components:
         receipt: { type: string, nullable: true }
         kind: { type: string, enum: [A, P] }
         authorityCode: { type: string, nullable: true, description: 'cStat da voz gravada — 150 = autorizada fora de prazo (o aviso da D-NE279 sai por aqui)' }
-        incident: { type: string, nullable: true, enum: [digest-mismatch, digest-absent, null], description: 'pendência crítica do digVal (D-NE41)' }
+        incident: { type: string, nullable: true, enum: [digest-mismatch, digest-absent, file-conflict, null], description: 'pendência crítica: digVal (D-NE41) ou o `-procNFe.xml` que já existe com outros bytes (file-conflict vence digest-absent)' }
     RefreshResult:
       type: object
       properties:
@@ -841,7 +842,7 @@ components:
         accessKey: { type: string }
         via: { type: string, enum: [key, receipt] }
         reason: { type: string, nullable: true, description: 'por que nada foi gravado (ambíguo, 217, 106, voz que mudou…)' }
-        incident: { type: string, nullable: true, enum: [digest-mismatch, digest-absent, authorized-in-closed-attempt, null], description: 'pendência crítica ou incidente: pede a mão de alguém, nunca vira voz' }
+        incident: { type: string, nullable: true, enum: [digest-mismatch, digest-absent, authorized-in-closed-attempt, file-conflict, null], description: 'pendência crítica ou incidente: pede a mão de alguém, nunca vira voz' }
         notRegistered: { type: boolean, description: 'o fisco respondeu 217 com a nossa chave — a consulta NÃO grava; só o reconfirm' }
         next: { type: string, nullable: true, enum: [consult-key, consult-receipt, null] }
     ReconfirmResult:

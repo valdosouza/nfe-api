@@ -5,7 +5,7 @@ import { consReciNFe, consSitNFe } from '../authority/messages'
 import { readProtocol, readReceipt, type ProtocolFact, type ReadResult } from '../authority/responses'
 import { callSoap, type SoapOutcome } from '../authority/soap'
 import { barrierOf, fillAuthorityData, fillReceipt, getAttempt, attemptsOfLife, latestAttempt, touchQueriedAt, type AttemptRow } from './attempt'
-import { merchandiseFileKey } from './fiscal-file'
+import { isFileConflict, merchandiseFileKey } from './fiscal-file'
 import { recordNfeNotRegistered } from './not-registered'
 import { digestValueOf, procNfeXml } from './proc-nfe'
 import { MERCHANDISE_VOICE_FAMILY } from './voice-family'
@@ -48,7 +48,7 @@ export interface RefreshResult {
   /** A conferência do `digVal` do `protNFe` com o `digest_value` da tentativa: `null` quando a resposta não traz protNFe. */
   readonly digestCheck: 'ok' | 'absent' | 'mismatch' | null
   /** O que pede a mão de alguém (pendência crítica / incidente) — nunca é gravado como voz. */
-  readonly incident: 'digest-mismatch' | 'digest-absent' | 'authorized-in-closed-attempt' | null
+  readonly incident: 'digest-mismatch' | 'digest-absent' | 'authorized-in-closed-attempt' | 'file-conflict' | null
   /** O fisco respondeu 217 com a nossa chave (a consulta NUNCA o grava — só a `reconfirm`). */
   readonly notRegistered: boolean
   readonly next: 'consult-key' | 'consult-receipt' | null
@@ -202,16 +202,16 @@ export async function refreshInvoice(deps: ReconcileDeps, actor: NfeActor, ref: 
     const consulted = await ask(deps, p.row, p.via, chosen.opened as Opened)                 // o fisco, FORA de transação
     const applied = await apply(deps, actor, ref, consulted)
     const { proc, ...result } = applied
+    let fileConflict = false
     if (proc) {
       try {
         const zone = await deps.zoneOf(deps.pool as never, actor)
         const key = merchandiseFileKey({ cnpj: p.row.accessKey.slice(6, 20), model: '55', serie: p.row.serie, environment: p.row.environment, zone })
-        const name = `${p.row.accessKey}-procNFe.xml`
-        if (deps.storage.find({ ...key }, name, [p.row.dhEmission]) === null) deps.storage.save(key, name, proc, deps.now())
-      } catch { /* falhar ao gravar só avisa */ }
+        deps.storage.save(key, `${p.row.accessKey}-procNFe.xml`, proc, deps.now())         // gravação única do núcleo 5.2.0: bytes iguais = ok, outros = conflito
+      } catch (e) { fileConflict = isFileConflict(e) }                                     // conflito = incidente; outra falha só avisa
     }
-    last = result
-    if (result.outcome.kind === 'A' || result.outcome.kind === 'D' || result.incident !== null) break
+    last = fileConflict ? { ...result, incident: 'file-conflict' } : result
+    if (result.outcome.kind === 'A' || result.outcome.kind === 'D' || (last as RefreshResult).incident !== null) break
   }
   return last as RefreshResult
 }

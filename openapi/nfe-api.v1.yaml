@@ -383,8 +383,12 @@ paths:
         gravada antes da chamada, sob a trava da nota (2º pedido = 409 FISCAL_CANCEL_IN_FLIGHT). Decide o cStat do `retEvento` (135/155
         = C; 136 não vinculado = ambíguo até a consulta), nunca o 128 do lote (D-NE39). Recusa do fisco (501 fora do prazo, 221
         confirmação da operação pelo destinatário, 580…) → 409 FISCAL_CANCEL_REFUSED com o código, N libera a reserva. Prazo: DADO por UF
-        (`AUTORIZADORES.md` — 24 h nacional; PR 168 h) — vencido só AVISA (warnings FISCAL_CANCEL_DEADLINE); quem recusa é a SEFAZ.
-        Ambíguo → o K FICA e bloqueia até a consulta reconciliar. Nota mercadoria+serviço = dois documentos: o app pede aqui e na
+        (`src/authority/cancel-deadlines.ts` — 24 h nacional; PR 168 h) — vencido o prazo da UF só AVISA (warnings FISCAL_CANCEL_DEADLINE) e a SEFAZ decide
+        (501 recusa; 155 aceita fora do prazo); a ÚNICA trava é de 480 h da autorização, para qualquer UF (D-NE256): passou disso, 409 FISCAL_CANCEL_DEADLINE_EXCEEDED e
+        nada vai ao fisco (sem a hora da autorização gravada não há como medir: falha fechado). O evento assinado é gravado ANTES do envio (`<chave>-evt110111-1.xml`, gravação
+        única — conflito = 409 FISCAL_FILE_CONFLICT) e REAPROVEITADO num 2º pedido depois de N; o `-evt110111-1-proc.xml` (com o protocolo do evento) é guardado com o C. O 656
+        devolvido pelo fisco abre o disjuntor (429 RESOURCE_BUSY por 1 h, só neste serviço). Ambíguo → o K FICA e bloqueia até a consulta reconciliar: C se o fisco cancelou
+        (também depois do N), N se a nota segue autorizada depois da carência de 10 minutos. Nota mercadoria+serviço = dois documentos: o app pede aqui e na
         nfse-api (saga — D-NE22). Privilégio CANCELAR do ramo.
       requestBody:
         required: true
@@ -530,7 +534,7 @@ paths:
       tags: [numeração]
       summary: Numeração do 55 por série — números usados pelo ERP, BURACOS derivados e faixas inutilizadas (D-NE8)
       description: >-
-        Leitura DERIVADA, nunca tabela: buracos = números sem nota viva entre 1 e o maior número do ERP na série, descontadas as faixas
+        Leitura DERIVADA, nunca tabela: buracos = números sem nota viva entre 1 e o último número GERADO da série (D-NE257/D-NE263; o contador é da nfe-api, não do ERP), descontadas as faixas
         homologadas (102/563). Obrigação legal de inutilizar até o 10º dia do mês seguinte (Ajuste SINIEF 07/05 cl. 14ª) — a tela avisa.
         Admin.
       parameters:
@@ -582,8 +586,11 @@ paths:
         traz o nProt do pedido anterior) → pousa como inutilizada com o 563 como prova (D-NE40)**; 256 = faixa sobrepõe número já
         inutilizado (rejeição, sem nProt); demais = rejeição legível. Não existe consulta de inutilização (CONFERENCIAS 32): ambíguo
         (timeout/Fault) → reenviar a MESMA faixa é a reconciliação (o 563 fecha). Emitente sem IE: a NT 2026.007 não trata a
-        inutilização (CONFERENCIAS 19 — no PR, sem credenciamento = 203). AC, BA e SP deixam de usar o pedido a partir de 01/11/2026
-        (AUTORIZADORES §4 — a conferir).
+        inutilização (CONFERENCIAS 19 — no PR, sem credenciamento = 203). AC, BA e SP deixam de usar o pedido a partir de 11/11/2026
+        (NT 2023.002 v1.02 — FT-MRC-19). A faixa só vale até o último número gerado (D-NE263: acima dele, 422 sem ir ao fisco); número de que alguma tentativa ainda
+        é dona (viva, autorizada, denegada, rejeitada que reaproveita o número ou com o 217 provado) = 409 FISCAL_VOID_RANGE_IN_USE. A linha nasce PENDENTE antes do fisco e a
+        resposta a preenche UMA vez (D-NE293); o `<Id43>-inut.xml` (ProcInutNFe) é a prova arquivada. O reenvio da MESMA faixa pendente só depois de 10 minutos (antes: 409
+        FISCAL_VOID_IN_FLIGHT).
       requestBody:
         required: true
         content:
@@ -611,13 +618,13 @@ paths:
         '400': { $ref: '#/components/responses/Invalid' }
         '403': { $ref: '#/components/responses/Forbidden' }
         '409':
-          description: FISCAL_VOID_RANGE_IN_USE · FISCAL_VOID_IN_FLIGHT (a mesma faixa já está em voo) · FISCAL_ISSUER_MISSING · FISCAL_CERT_*
+          description: FISCAL_VOID_RANGE_IN_USE · FISCAL_VOID_IN_FLIGHT (a mesma faixa já está em voo) · NUMBER_VOID_ALREADY_WITHDRAWN (a faixa cobre número já inutilizado — o 1062 da prova, D-NE169) · FISCAL_ISSUER_MISSING · FISCAL_CERT_* · RESOURCE_BUSY (429, o disjuntor do 656)
           content:
             application/json:
               schema: { $ref: '#/components/schemas/Error' }
         '415': { $ref: '#/components/responses/UnsupportedMediaType' }
         '422':
-          description: FISCAL_VOID_REJECTED (256, 201, 203, 241… — `authorityCode`) · VALIDATION_FAILED (from > to, faixa > 10.000)
+          description: FISCAL_VOID_REJECTED (256, 201, 203, 241… — `authorityCode`) · VALIDATION_FAILED (from > to, faixa > 10.000, acima do último número gerado, ano 453/454, emitente sem IE ou em AC/BA/SP depois de 11/11/2026)
           content:
             application/json:
               schema: { $ref: '#/components/schemas/Error' }

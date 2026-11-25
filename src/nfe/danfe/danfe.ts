@@ -130,9 +130,9 @@ function fitChars(doc: Doc, part: DanfePartName, text: string, widthPt: number, 
 function wrapLines(doc: Doc, part: DanfePartName, text: string, widthPt: number, sizePt: number): string[] {
   const out: string[] = []
   for (const rawParagraph of text.split('\n')) {
-    // 3 ou mais espaços seguidos valem 2: o XSD aceita centenas de espaços no meio do texto, e cada espaço extra seria uma "palavra" vazia medida de novo
+    // 3 ou mais brancos seguidos (espaço ou NBSP, que a base mede como espaço) valem 2: o XSD aceita centenas de espaços no meio do texto, e cada espaço extra seria uma "palavra" vazia medida de novo
     // (custo quadrático: 5.000 espaços levavam 89 s de CPU síncrona — HIGH-N1 do gate adversarial); só espaço em branco muda, nenhum caractere visível
-    const paragraph = rawParagraph.replace(/ {3,}/g, '  ')
+    const paragraph = rawParagraph.replace(/[  ]{3,}/g, '  ')
     let line = ''
     for (const word of paragraph.split(' ')) {
       const candidate = line === '' ? word : `${line} ${word}`

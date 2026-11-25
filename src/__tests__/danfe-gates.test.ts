@@ -328,6 +328,14 @@ describe('gates — HIGH-N1 (espaços), quadros longos dentro da folha e o grupo
     expect(stream).toMatch(/\ba {1,3}b\b/)
   })
 
+  it('espaço alternado com NBSP (texto colado de HTML) também não explode o custo: 4.800 caracteres em poucos segundos', async () => {
+    const xml = authorizedProc().xml.replace(/<infCpl>[\s\S]*?<\/infCpl>/, `<infCpl>a${'  '.repeat(2400)}b</infCpl>`)
+    const started = Date.now()
+    const r = await render(xml)
+    expect(Date.now() - started).toBeLessThan(5_000)
+    expect(r.texts[0].join(' ')).toMatch(/a[ \u00a0]{1,3}b/)
+  })
+
   it('muitas duplicatas e transportador com textos longos: NENHUM trecho cai abaixo do pé nem fora da folha, e FOLHA k/N segue certa', async () => {
     const dups = Array.from({ length: 75 }, (_, i) => `<dup><nDup>${String(i + 1).padStart(3, '0')}</nDup><dVenc>2026-12-22</dVenc><vDup>1.00</vDup></dup>`).join('')
     let xml = authorizedProc().xml.replace('</cobr>', `${dups}</cobr>`)

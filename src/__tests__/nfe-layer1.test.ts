@@ -11,7 +11,7 @@ import { MAX_FIELDS } from '../nfe/errors'
 import { numberItems } from '../nfe/item-numbering'
 import { assertLayer1, LAYER1_FORBIDDEN_CNF, LAYER1_RULES, validateCandidate, type Layer1Context, type Layer1Violation } from '../nfe/layer1'
 import { buildNfeXml } from '../nfe/nfe-builder'
-import { returnKey, returnSaleInput, SETES_CNPJ, saleInput, saleItem, saleKey } from './nfe-fixtures'
+import { returnKey, returnSaleInput, sale2027, SETES_CNPJ, saleInput, saleItem, saleKey } from './nfe-fixtures'
 
 jest.setTimeout(120_000)
 
@@ -555,6 +555,20 @@ describe('escapes achados pelo gate adversarial (sondas permanentes)', () => {
     expect(of(await run('R11', swap(sale(), '<xFant>SETES</xFant>', '<xFant>SETES </xFant>')), 'R11').length).toBe(1)
     expect(rejs(await run('R11', '<?xml version="1.0" encoding="utf-8"?>' + sale()), 'R11')).toEqual([])
     expect(rejs(await run('R11', sale().replace('<NFe ', '<NFex ').replace('</NFe>', '</NFex>')), 'R11')).toEqual([587])
+  })
+})
+
+describe('NFE.E5.P6 — a nota do Simples de 2027 com o grupo passa nas 14 regras (o XSD é o do PL_010h)', () => {
+  const SALE27: Layer1Context = { ...SALE, now: new Date('2027-01-15T10:20:00-03:00') }
+  const s27 = sale2027()
+  const xml27 = (): string => buildNfeXml(s27.input, s27.key).xml
+  it('venda de 15/01/2027 com cAtivSN, IBSCBS e IBSCBSTot: nenhuma violação (a camada 1 não recusa o grupo)', async () => {
+    expect(await validateCandidate(xml27(), SALE27)).toEqual([])
+    expect(await thrown(xml27(), SALE27)).toEqual({ fields: [{ field: '(não recusou)', message: '' }] })
+  })
+  it('o total do Simples sem vBCIBSCBS é pego pela R10 (XSD, rej. 215) — o esquema vigente exige o campo', async () => {
+    const v = await validateCandidate(swap(xml27(), '<vBCIBSCBS>4000.00</vBCIBSCBS>', ''), SALE27)
+    expect(rules(v)).toEqual(['R10'])
   })
 })
 

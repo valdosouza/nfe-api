@@ -1,12 +1,13 @@
 import type { TechnicalResponsible } from 'fiscal-api'
 import type {
-  MerchandiseInvoiceHeader, MerchandiseItemFact, PartyAddressFact, PartyFact, PaymentFacts, ReturnOriginFact, ShippingFacts, TradeUnitFact,
+  ItemSimplesFact, MerchandiseInvoiceHeader, MerchandiseItemFact, PartyAddressFact, PartyFact, PaymentFacts, ReturnOriginFact, ShippingFacts, TradeUnitFact,
 } from '../facts/merchandise-facts'
 import { OUT_OF_FIRST_RELEASE, Violations } from './errors'
 import { decimalText, divideExact, divideRounded, FormatError, multiply, parseDecimal, roundToCents, subtract, toCents, type Decimal } from './formats'
 import type { TpAmbCode } from './homologation'
 import { ItemNumberingError, numberItems, type ItemNumbering } from './item-numbering'
-import type { NfeAddressInput, NfeInput, NfeItemInput, NfePisCofinsInput } from './nfe-builder'
+import { IBSCBS_SIMPLES_FROM, type NfeAddressInput, type NfeInput, type NfeItemInput, type NfeItemSimples, type NfePisCofinsInput } from './nfe-builder'
+import type { OriginItemSimples } from './return-reference'
 import type { CsrtProof } from './tech-responsible'
 
 /**
@@ -39,9 +40,19 @@ export interface NfeInputSources {
   shipping: ShippingFacts
   returnOrigins: readonly ReturnOriginFact[]
   /** Devolução: por nota de origem — chave `originRef(id da nota, terminal)` —, a chave AUTORIZADA e a numeração dos itens dela. */
-  origins?: ReadonlyMap<string, { accessKey: string; numbering: ItemNumbering }>
+  origins?: ReadonlyMap<string, { accessKey: string; numbering: ItemNumbering; simples?: ReadonlyMap<number, OriginItemSimples> }>
+  /**
+   * IBS/CBS do Simples que o faturamento congelou (`readItemSimples`) — só para a VENDA de 01/01/2027 em diante do CRT 1 (NFE.E5.P6); em nota anterior é ignorado.
+   * Opcional: quem compõe a transmissão só o lê no caso em que a nota o leva. Na devolução o grupo vem de `origins[].simples` (D-NE288, XML da origem).
+   */
+  simples?: readonly ItemSimplesFact[]
   techResponsible: TechnicalResponsible
   csrt?: CsrtProof | null
+}
+
+/** Duas quantidades decimais iguais (texto); ilegível = diferente (a devolução parcial é recusada, nunca presumida inteira). */
+const sameQuantity = (a: string | null, b: string | null): boolean => {
+  try { return subtract(parseDecimal(a), parseDecimal(b)).units === 0n } catch (e) { if (e instanceof FormatError) return false; throw e }
 }
 
 /** A identidade de uma nota de origem: o id sozinho não basta (o mesmo id pode existir em dois terminais). */
@@ -109,6 +120,8 @@ export function nfeInputFromFacts(src: NfeInputSources): NfeInput {
     if (!(e instanceof ItemNumberingError)) throw e
     v.add('det', e.code === 'EMPTY' ? 'Nota sem item' : 'Itens com id repetido ou inválido')
   }
+  // NFE.E5.P6 (D-NE286): de 01/01/2027 em diante o item do CRT 1 leva o grupo do Simples; a data é a do `dhEmi` (D-NE278).
+  const withSimples = emissionDate !== '' && emissionDate >= IBSCBS_SIMPLES_FROM && src.emitter.tax?.crt === '1'
   const isReturn = src.returnOrigins.length > 0
   const originOf = new Map<number, ReturnOriginFact>()
   for (const r of src.returnOrigins) {
@@ -144,6 +157,7 @@ export function nfeInputFromFacts(src: NfeInputSources): NfeInput {
     const trib = tributable(v, p, it.saleUnit, it.taxableUnit, q, vProdCents, it)
 
     let origin: NfeItemInput['origin'] = null
+    let simples: NfeItemSimples | null | undefined
     if (isReturn) {
       const link = originOf.get(it.itemId)
       const source = link ? src.origins?.get(originRef(link.originInvoiceId, link.originTerminal)) : undefined
@@ -152,6 +166,28 @@ export function nfeInputFromFacts(src: NfeInputSources): NfeInput {
       else if (!source) v.add(`${p}.origin`, 'A nota de origem do item não tem NF-e autorizada conhecida')
       else if (!originNumbered) v.add(`${p}.origin`, 'O item de origem não está na nota de origem')
       else origin = { accessKey: source.accessKey, numbered: originNumbered }
+      // D-NE288/D-NE289: a devolução de 2027 copia o grupo do item de origem do XML AUTORIZADO da origem; origem sem grupo → sem grupo. A devolução PARCIAL de
+      // item que leva o grupo é recusada (S6: a NT não diz como ficam os valores).
+      if (withSimples && origin) {
+        const entry = source?.simples?.get(originNumbered!.nItem)
+        if (!source?.simples) v.add(`${p}.origin`, 'O grupo do Simples da nota de origem não foi lido do XML autorizado (D-NE288)')
+        else if (!entry) v.add(`${p}.origin`, 'O item de origem não está no XML autorizado da nota de origem')
+        else if (entry.simples && !sameQuantity(it.quantity, entry.qCom)) v.add(`${p}.qCom`, `Devolução parcial de item com o grupo do Simples — ${OUT_OF_FIRST_RELEASE}`)
+        else simples = entry.simples
+      }
+    } else if (withSimples && Array.isArray(src.simples)) {
+      const found = src.simples.filter(s => s && s.itemId === it.itemId), f = found[0]
+      if (!f) v.add(`${p}.simples`, `O faturamento não guardou o IBS/CBS do Simples do item (ou regime regular) — ${OUT_OF_FIRST_RELEASE}`)
+      else if (found.length > 1) v.add(`${p}.simples`, 'Mais de uma linha do IBS/CBS do Simples para o item')
+      else if (f.competence !== emissionDate.slice(0, 7)) v.add(`${p}.simples`, 'A competência do percentual congelado é diferente do mês da emissão (A-IB138a)')
+      else if ([f.baseValue, f.ibsValue, f.cbsValue].some(x => x === null || x === undefined || x === '')) v.add(`${p}.simples`, 'Linha do IBS/CBS do Simples com valor ausente')
+      else {
+        simples = {
+          activity: f.activityCode, classification: f.classificationCode, ibsRate: f.ibsRate, cbsRate: f.cbsRate,
+          ibsCents: cents(v, `${p}.vIBSSN`, f.ibsValue, 'IBS do Simples'), cbsCents: cents(v, `${p}.vCBSSN`, f.cbsValue, 'CBS do Simples'),
+          baseCents: cents(v, `${p}.vBCIBSCBS`, f.baseValue, 'Base do IBS/CBS'),
+        }
+      }
     }
 
     items.push({
@@ -166,7 +202,7 @@ export function nfeInputFromFacts(src: NfeInputSources): NfeInput {
       vTotTribCents: cents(v, `${p}.vTotTrib`, it.icms.approximateTax, 'Tributos aproximados'),
       icms: { orig: it.icms.origin, CSOSN: it.icms.cst, pCredSN: it.icms.credCalcAliq ?? '0', vCredICMSSN: it.icms.credExplValue ?? '0' },
       pis: pisCofins(v, `${p}.pis`, 'PIS', it.pis), cofins: pisCofins(v, `${p}.cofins`, 'COFINS', it.cofins),
-      origin,
+      origin, ...(simples !== undefined ? { simples } : {}),
     })
   }
   // GTIN: quem tem o da unidade comercial tem de ter o da tributável, e o inverso (rej. 885, 886).

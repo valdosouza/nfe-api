@@ -3,7 +3,7 @@
 import { signXml } from 'fiscal-api'
 import { buildAccessKey } from '../nfe/access-key'
 import { numberItems } from '../nfe/item-numbering'
-import type { NfeInput, NfeItemInput } from '../nfe/nfe-builder'
+import type { NfeInput, NfeItemInput, NfeItemSimples } from '../nfe/nfe-builder'
 import { testA1 } from './test-a1'
 
 export const SETES_CNPJ = '07742094000113'
@@ -72,3 +72,18 @@ export const returnSaleInput = (over: Partial<NfeInput> = {}): NfeInput => {
     items: [item(0), item(1)], erpTotalCents: 250000, installments: [], payments: [{ tPag: '90', cents: 0 }], note: null, ...over,
   })
 }
+
+/** NFE.E5.P6 — o grupo do Simples que o faturamento congela para os dois itens da venda de exemplo (IBS 0,1000 % e CBS 0,9000 %; atividades 01 e 02). */
+export const simplesFor = (index: 0 | 1, over: Partial<NfeItemSimples> = {}): NfeItemSimples => ({
+  activity: index === 0 ? '01' : '02', classification: '000001', ibsRate: '0.1000', cbsRate: '0.9000',
+  ibsCents: index === 0 ? 300 : 100, cbsCents: index === 0 ? 2700 : 900, baseCents: index === 0 ? 300000 : 100000, ...over,
+})
+
+/** Venda do Simples de 2027 (dhEmi e parcela da data pedida), com o grupo do Simples nos dois itens. Totais: base 4.000,00, IBS 4,00, CBS 36,00. */
+export const sale2027 = (dhEmi = '2027-01-15T10:15:30-03:00', over: Partial<NfeInput> = {}): { input: NfeInput; key: string } => ({
+  input: saleInput({
+    dhEmi, installments: [{ dueDate: `${dhEmi.slice(0, 4)}-${String(Number(dhEmi.slice(5, 7)) % 12 + 1).padStart(2, '0')}-20`, cents: 400000 }],
+    items: [saleItem(0, { simples: simplesFor(0) }), saleItem(1, { simples: simplesFor(1) })], ...over,
+  }),
+  key: saleKey({ emissionDate: dhEmi.slice(0, 10) }),
+})

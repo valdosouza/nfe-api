@@ -7,8 +7,8 @@ import { ELEMENT, elementsOf, parseXml } from 'fiscal-api'
 import { validateMessage } from '../authority/xsd'
 import { numberItems } from '../nfe/item-numbering'
 import { buildNfeXml, type NfeInput, type NfeItemInput } from '../nfe/nfe-builder'
-import { assertReturnMatchesOrigin, type ReturnItemCheck } from '../nfe/return-reference'
-import { CLIENT_CNPJ, saleInput, saleItem, saleKey, signNfe, SETES_CNPJ } from './nfe-fixtures'
+import { assertReturnMatchesOrigin, readOriginSimples, type ReturnItemCheck } from '../nfe/return-reference'
+import { CLIENT_CNPJ, sale2027, saleInput, saleItem, saleKey, signNfe, simplesFor, SETES_CNPJ } from './nfe-fixtures'
 
 jest.setTimeout(60_000)
 
@@ -139,5 +139,52 @@ describe('NFE.E5.P3.T3 — a devolução confere com o procNFe da origem (D-NE10
   it('elemento de outro namespace com o mesmo nome não engana a conferência', () => {
     const forged = ORIGIN().replace('<protNFe versao="4.00">', `<x:det xmlns:x="urn:outro" nItem="1"><x:prod><x:cProd>911</x:cProd></x:prod></x:det><protNFe versao="4.00">`)
     expect(() => assertReturnMatchesOrigin(checks(), forged, SETES_CNPJ)).not.toThrow()
+  })
+})
+
+describe('NFE.E5.P6 — o grupo do Simples da origem, lido do procNFe autorizado (D-NE288, D-NE289; S9)', () => {
+  const s27 = sale2027()
+  const origin27 = (mutate: (x: string) => string = x => x) => procNfe(mutate(signNfe(buildNfeXml(s27.input, s27.key))), s27.key)
+  const group = (index: 0 | 1) => { const s = simplesFor(index); return { activity: s.activity, classification: s.classification, ibsRate: '0.10', cbsRate: '0.90', ibsCents: s.ibsCents, cbsCents: s.cbsCents, baseCents: s.baseCents } }
+  it('origem de 2027: por nItem, o cAtivSN, o CST/cClassTrib, os percentuais, os valores e a base (vProd + frete + outras − desconto) do XML', () => {
+    const map = readOriginSimples(origin27())
+    expect([...map.keys()]).toEqual([1, 2])
+    expect(map.get(1)).toEqual({ qCom: '2', simples: group(0) })
+    expect(map.get(2)).toEqual({ qCom: '3', simples: group(1) })
+  })
+  it('a base do item sai do prod da origem: frete e outras despesas somam, desconto subtrai, o seguro fica fora (S9, S10)', () => {
+    const withParcels = sale2027('2027-01-15T10:15:30-03:00', { items: [saleItem(0, { simples: simplesFor(0, { baseCents: 301000 }), vFreteCents: 2000, vOutroCents: 500, vDescCents: 1500, vSegCents: 700 }), saleItem(1, { simples: simplesFor(1) })], erpTotalCents: 401700, installments: [{ dueDate: '2027-02-20', cents: 401700 }], payments: [{ tPag: '15', cents: 401700 }] })
+    const xml = procNfe(signNfe(buildNfeXml(withParcels.input, withParcels.key)), withParcels.key)
+    expect(readOriginSimples(xml).get(1)?.simples?.baseCents).toBe(300000 + 2000 + 500 - 1500)
+  })
+  it('origem de 2026, sem o grupo → `simples: null` em todos os itens', () => {
+    const map = readOriginSimples(ORIGIN())
+    expect([...map.values()].map(x => x.simples)).toEqual([null, null])
+  })
+  it('grupo incompleto na origem (sem gCBSSN, sem cClassTrib) ou procNFe fora da forma → recusa citando o item', () => {
+    const noCbs = readOriginSimples
+    expect(mismatch(() => noCbs(origin27(x => x.replace(/<gCBSSN>.*?<\/gCBSSN>/, '')))).fields).toEqual(['origin.det[1]: O grupo do Simples da origem está incompleto ou malformado'])
+    expect(mismatch(() => readOriginSimples(origin27(x => x.replace('<cClassTrib>000001</cClassTrib>', '')))).fields).toEqual(['origin.det[1]: O grupo do Simples da origem está incompleto ou malformado'])
+    expect(mismatch(() => readOriginSimples('<NFe xmlns="http://www.portalfiscal.inf.br/nfe"></NFe>')).fields).toEqual(['origin: O XML da origem deve ser um procNFe com exatamente uma NF-e'])
+    expect(mismatch(() => readOriginSimples('<x')).fields).toEqual(['origin: XML da nota de origem ilegível'])
+  })
+})
+
+describe('NFE.E5.P6 — a leitura da origem recusa o que não espelha com fidelidade (gates)', () => {
+  const s27 = sale2027()
+  const origin27 = (mutate: (x: string) => string) => procNfe(mutate(signNfe(buildNfeXml(s27.input, s27.key))), s27.key)
+  const fieldsOf = (xml: string) => mismatch(() => readOriginSimples(xml)).fields
+  it('IBSCBS sem gTribSN na origem (regime regular) → recusa, não "sem grupo"', () => {
+    expect(fieldsOf(origin27(x => x.replace(/<gTribSN>.*?<\/gTribSN>/, '')))).toEqual(['origin.det[1]: O IBSCBS da origem não é o do Simples (regime regular) — fora-do-primeiro-release'])
+  })
+  it('origem sem gIBSSN → o item sai `withoutIbs` (a devolução o espelha sem gIBSSN)', () => {
+    const map = readOriginSimples(origin27(x => x.replace(/<gIBSSN>.*?<\/gIBSSN>/, '')))
+    expect(map.get(1)?.simples).toMatchObject({ withoutIbs: true, ibsRate: null, ibsCents: 0, cbsCents: 2700 })
+    expect(map.get(2)?.simples?.withoutIbs).toBeUndefined()
+  })
+  it('qCom ilegível com grupo, nItem 0 e desconto maior que o item → recusa citando o item', () => {
+    expect(fieldsOf(origin27(x => x.replace(/<qCom>[^<]*<\/qCom>/, '<qCom>abc</qCom>')))).toEqual(['origin.det[1]: A quantidade do item da origem está ilegível'])
+    expect(fieldsOf(origin27(x => x.replace('nItem="1"', 'nItem="0"')))).toEqual(['origin: A nota de origem tem item sem número ou repetido'])
+    expect(fieldsOf(origin27(x => x.replace('<indTot>1</indTot><cAtivSN>01</cAtivSN>', '<vDesc>5000.00</vDesc><indTot>1</indTot><cAtivSN>01</cAtivSN>')))).toEqual(['origin.det[1]: Desconto do item da origem maior que o valor do item'])
   })
 })

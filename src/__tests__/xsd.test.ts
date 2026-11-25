@@ -6,7 +6,9 @@ import fs from 'fs'
 import os from 'os'
 import path from 'path'
 import { DEFAULT_XSD_DIR, SCHEMA_SETS, XsdManifestError, loadSchemaSets, validateMessage, type MessageKind } from '../authority/xsd'
+import { buildNfeXml } from '../nfe/nfe-builder'
 import * as fx from './xsd-fixtures'
+import { saleInput, saleKey, signNfe } from './nfe-fixtures'
 
 jest.setTimeout(60_000)
 
@@ -141,5 +143,21 @@ describe('NFe — o documento do builder da NE-4 (NFE.E5.P3; raiz nfe_v4.00.xsd 
   })
   it('raiz de outra mensagem não passa como NFe', async () => {
     expect((await validateMessage('NFe', '<enviNFe xmlns="http://www.portalfiscal.inf.br/nfe" versao="4.00"></enviNFe>')).ok).toBe(false)
+  })
+})
+
+describe('NFe — o conjunto é o PL_010h (NFE.E5.P6, D-NE285): o total do Simples exige vBCIBSCBS', () => {
+  // O grupo do Simples só passa a ser escrito pelo builder na mudança 3; aqui o XSD é provado com o `IBSCBSTot` escrito à mão.
+  const sale = () => buildNfeXml(saleInput({ dhEmi: '2026-11-24T10:15:30-03:00', installments: [{ dueDate: '2026-12-22', cents: 400000 }] }), saleKey({ emissionDate: '2026-11-24' }))
+  const withTotal = (inner: string) => { const b = sale(); return signNfe({ ...b, xml: b.xml.replace('</ICMSTot>', `</ICMSTot><IBSCBSTot>${inner}</IBSCBSTot>`) }) }
+  const GROUP = '<gTribSN><vIBSSN>4.00</vIBSSN><vCBSSN>36.00</vCBSSN></gTribSN>'
+  it('IBSCBSTot só com gTribSN, sem vBCIBSCBS → recusa (o esquema é o 010h, que o exige)', async () => {
+    const r = await validateMessage('NFe', withTotal(GROUP))
+    expect(r.ok).toBe(false)
+    expect((r as { errors: readonly string[] }).errors.join(' ')).toMatch(/Expected is \( \{http:\/\/www\.portalfiscal\.inf\.br\/nfe\}vBCIBSCBS \)/)
+  })
+  it('IBSCBSTot com vBCIBSCBS e gTribSN passa; a nota de 2026 sem o grupo continua passando', async () => {
+    expect(await validateMessage('NFe', withTotal(`<vBCIBSCBS>4000.00</vBCIBSCBS>${GROUP}`))).toEqual({ ok: true })
+    expect(await validateMessage('NFe', signNfe(sale()))).toEqual({ ok: true })
   })
 })

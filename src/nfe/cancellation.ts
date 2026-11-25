@@ -153,7 +153,8 @@ export async function cancelInvoice(deps: NfeDeps, actor: NfeActor, ref: Invoice
       body: envEvento110111(p.signedEvento, 1), message: 'envEvento110111', cert: p.opened.cert, key: p.opened.key, ca: deps.ca(),
     }, deps.request)
   } catch (e) {
-    // não se sabe se o pedido chegou ao fisco (o erro pode vir DEPOIS da resposta): o K FICA e a consulta reconcilia (C, ou N depois da carência) — gate adversarial L8
+    // o `callSoap` só LANÇA antes de enviar (ação inválida, XSD) ou por erro de programação ao ler a resposta — os erros de transporte viram resultado. Na dúvida o K FICA (o lado seguro):
+    // a consulta reconcilia (C, ou N depois da carência de 10 minutos) — gate adversarial L8
     throw e
   }
   const base = { invoiceId: ref.invoiceId, attempt, warnings, incident: null as 'file-conflict' | null }

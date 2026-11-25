@@ -272,6 +272,14 @@ describe('o rodízio (refreshAll — S3, teto de idade, disjuntor)', () => {
     expect([second.consulted, second.circuitOpen, t.calls.length]).toEqual([0, true, 1])
   })
 
+  it('a consulta da nota recusa com 409 (a nota mudou de vida, foi apagada): pulada, a passada NÃO aborta; a lista pede só a última tentativa de cada nota e o maior teto', async () => {
+    const t = setup([{ kind: 'A' }, { kind: 'K', createdAt: ago(H) }])
+    const { HttpError } = jest.requireActual('fiscal-api')
+    const rep = await refreshAll(t.deps, ACTOR, {}, async () => { throw new HttpError(409, 'A nota não tem tentativa de transmissão', undefined, 'FISCAL_NOT_TRANSMITTED') })
+    expect([rep.scanned, rep.consulted, rep.skipped, rep.circuitOpen]).toEqual([1, 0, 1, false])
+    await expect(refreshAll(t.deps, ACTOR, {}, async () => { throw new Error('defeito') })).rejects.toThrow('defeito')   // o que não é 409/429 sobe
+  })
+
   it('sem tentativa aberta (autorizada e cancelada): nada a olhar', async () => {
     const t = setup([{ kind: 'A' }, { kind: 'K' }, { kind: 'C', authority_code: '110111' }])
     const rep = await refreshAll(t.deps, ACTOR)

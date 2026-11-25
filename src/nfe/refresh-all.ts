@@ -31,6 +31,8 @@ export interface RefreshRunReport {
   readonly throttled: number
   /** Puladas pelo teto de idade (prazo da UF + margem). */
   readonly tooOld: number
+  /** A consulta da nota recusou (409: a nota mudou de vida, foi apagada ou não tem tentativa na vida atual) — pulada, sem abortar a passada. */
+  readonly skipped: number
   /** O disjuntor da consulta estava (ou ficou) aberto: a passada parou. */
   readonly circuitOpen: boolean
   /** Notas cuja voz mudou (A, D, R, P, C, N…). */
@@ -45,7 +47,11 @@ export type RefreshAllDeps = ReconcileDeps & Pick<NfeDeps, 'breaker' | 'catalog'
 interface Candidate { readonly ref: InvoiceRef; readonly accessKey: string; readonly environment: Environment; readonly lastKind: string | null; readonly since: string | null }
 
 /** As tentativas abertas do estabelecimento (sem voz, P ou K na ÚLTIMA voz), as menos consultadas primeiro; uma por nota. */
-async function openAttempts(q: { query(sql: string, params?: unknown[]): Promise<[any, any]> }, institutionId: number, limit: number): Promise<Candidate[]> {
+/**
+ * Só a ÚLTIMA tentativa de cada nota (a anterior com o 217 provado, por exemplo, nunca mais é consultada pela rota por nota e prenderia vaga no `LIMIT` — gate socrático da 2ª rodada) e só o que cabe no
+ * maior teto (`since`); o teto exato por tipo é conferido depois.
+ */
+async function openAttempts(q: { query(sql: string, params?: unknown[]): Promise<[any, any]> }, institutionId: number, since: string, limit: number): Promise<Candidate[]> {
   const EV = MERCHANDISE_VOICE_FAMILY.eventTable
   const [rows] = await q.query(
     `SELECT t.tb_invoice_id AS invoiceId, t.terminal, t.attempt, t.access_key AS accessKey, t.environment, e.kind AS lastKind, DATE_FORMAT(COALESCE(e.created_at, t.created_at), '%Y-%m-%d %H:%i:%s') AS since
@@ -53,8 +59,10 @@ async function openAttempts(q: { query(sql: string, params?: unknown[]): Promise
        LEFT JOIN ${EV} e ON e.tb_institution_id = t.tb_institution_id AND e.tb_invoice_id = t.tb_invoice_id AND e.terminal = t.terminal AND e.attempt = t.attempt AND e.deleted = 'N'
         AND e.event = (SELECT MAX(x.event) FROM ${EV} x WHERE x.tb_institution_id = t.tb_institution_id AND x.tb_invoice_id = t.tb_invoice_id AND x.terminal = t.terminal AND x.attempt = t.attempt AND x.deleted = 'N')
       WHERE t.tb_institution_id = ? AND t.deleted = 'N' AND (e.kind IS NULL OR e.kind IN ('P', 'K'))
+        AND t.attempt = (SELECT MAX(y.attempt) FROM ${MERCHANDISE_TRANSMISSION_TABLE} y WHERE y.tb_institution_id = t.tb_institution_id AND y.tb_invoice_id = t.tb_invoice_id AND y.terminal = t.terminal AND y.deleted = 'N')
+        AND COALESCE(e.created_at, t.created_at) >= ?
       ORDER BY t.last_queried_at IS NOT NULL, t.last_queried_at ASC, t.tb_invoice_id ASC LIMIT ?`,
-    [institutionId, limit])
+    [institutionId, since, limit])
   const seen = new Set<string>()
   const out: Candidate[] = []
   for (const r of Array.isArray(rows) ? rows : []) {
@@ -71,14 +79,16 @@ const utcMs = (dbUtc: string | null): number | null => {
   return Number.isNaN(t) ? null : t
 }
 
-export async function refreshAll(deps: RefreshAllDeps, actor: NfeActor, opts: { limit?: number } = {}): Promise<RefreshRunReport> {
+export async function refreshAll(deps: RefreshAllDeps, actor: NfeActor, opts: { limit?: number } = {}, refresh: typeof refreshInvoice = refreshInvoice): Promise<RefreshRunReport> {
   assertFamilyOf(deps)
   const limit = Number.isInteger(opts.limit) && (opts.limit as number) > 0 ? Math.min(opts.limit as number, 500) : ROUNDROBIN_DEFAULT_LIMIT
-  const candidates = await openAttempts(deps.pool as never, actor.institutionId, limit)
   const now = deps.now().getTime()
+  const widest = Math.max(ROUNDROBIN_INFLIGHT_MAX_HOURS, 168 + ROUNDROBIN_AGE_MARGIN_HOURS)
+  const since = new Date(now - widest * 3_600_000).toISOString().slice(0, 19).replace('T', ' ')
+  const candidates = await openAttempts(deps.pool as never, actor.institutionId, since, limit)
   const results: RefreshResult[] = []
   const incidents: { invoiceId: number; incident: string }[] = []
-  let consulted = 0, throttled = 0, tooOld = 0, changed = 0, circuitOpen = false
+  let consulted = 0, throttled = 0, tooOld = 0, skipped = 0, changed = 0, circuitOpen = false
   for (const c of candidates) {
     const uf = ufOfCode(c.accessKey.slice(0, 2)) as Uf | null
     // K (cancelamento em voo): o prazo de cancelamento da UF + a margem; sem voz ou P (o envio que pode ter sido autorizado): 7 dias
@@ -91,7 +101,7 @@ export async function refreshAll(deps: RefreshAllDeps, actor: NfeActor, opts: { 
       throw e
     }
     try {
-      const r = await refreshInvoice(deps, actor, c.ref)
+      const r = await refresh(deps, actor, c.ref)
       consulted++
       results.push(r)
       if (r.incident) incidents.push({ invoiceId: r.invoiceId, incident: r.incident })
@@ -100,8 +110,9 @@ export async function refreshAll(deps: RefreshAllDeps, actor: NfeActor, opts: { 
       if (r.outcome.kind === 'none' && r.outcome.reason === 'consulta-recusada') { deps.breaker?.recordRefused(scope, '656'); circuitOpen = true; break }
     } catch (e) {
       if (e instanceof HttpError && e.statusCode === 429) { throttled++; continue }                   // a cota por chave/recibo: a próxima volta a pega
+      if (e instanceof HttpError && e.statusCode === 409) { skipped++; continue }                     // a nota mudou de vida ou não tem tentativa na vida atual: não aborta a passada
       throw e
     }
   }
-  return { scanned: candidates.length, consulted, throttled, tooOld, circuitOpen, changed, incidents, results }
+  return { scanned: candidates.length, consulted, throttled, tooOld, skipped, circuitOpen, changed, incidents, results }
 }

@@ -58,7 +58,7 @@ export interface NfeDeps {
   readonly now: () => Date
   /** Abre o emissor (A1) travando a habilitação: a implementação real é `openIssuer(…, { conn, forUpdate: true, schemaName })`. */
   readonly openIssuer: (conn: ConnLike, actor: NfeActor) => Promise<Opened>
-  readonly readFacts: (q: Queryable, actor: NfeActor, ref: InvoiceRef) => Promise<ComposedFacts>
+  readonly readFacts: (q: Queryable, actor: NfeActor, ref: InvoiceRef, environment: Environment) => Promise<ComposedFacts>
   readonly zoneOf: (q: Queryable, actor: NfeActor) => Promise<string>
   /** O CNPJ do ESTABELECIMENTO (`establishmentCnpj` do núcleo) — a camada 1 confere o emitente contra ele. */
   readonly establishmentCnpj: (q: Queryable, actor: NfeActor) => Promise<string | null>
@@ -125,8 +125,8 @@ export async function transmitInvoice(deps: NfeDeps, actor: NfeActor, ref: Invoi
     const barrier = barrierOf(latest)
     if (barrier) throw barrier
     const policy = numberPolicy(latest)
-    const facts = await readFactsGuarded(deps, conn, actor, ref)
     const environment = opened.issuer.environment as Environment
+    const facts = await readFactsGuarded(deps, conn, actor, ref, environment)
     const now = deps.now()
 
     // o número: novo (peça do núcleo) ou o da tentativa fechada por R/F (D-NE282)
@@ -226,8 +226,8 @@ async function writeVoice(itx: InvoiceTx, attempt: number, userId: number | null
 }
 
 /** A leitura dos fatos: qualquer falha de leitura é do chamador (HttpError já tipado) — nada a traduzir aqui. */
-async function readFactsGuarded(deps: NfeDeps, conn: ConnLike, actor: NfeActor, ref: InvoiceRef): Promise<ComposedFacts> {
-  const facts = await deps.readFacts(conn, actor, ref)
+async function readFactsGuarded(deps: NfeDeps, conn: ConnLike, actor: NfeActor, ref: InvoiceRef, environment: Environment): Promise<ComposedFacts> {
+  const facts = await deps.readFacts(conn, actor, ref, environment)
   if (!Number.isInteger(facts.serie) || facts.serie < 0 || facts.serie > 909) throw documentInvalid('Série da nota fora do intervalo', [{ field: 'ide.serie', message: 'Série de 0 a 909' }])
   return facts
 }

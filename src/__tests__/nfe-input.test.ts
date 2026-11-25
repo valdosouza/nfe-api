@@ -2,59 +2,16 @@
  * NFE.E5.P3 (mudança 8 da ficha, S7) — a ponte PURA fatos do ERP web → entrada do builder: finNFe/tpNF/idDest (S10), valores do item pela
  * fórmula do faturamento (S11), unidade tributável (S8), pagamento e cobrança (S4), PIS/COFINS registrados (S2) e a lista inteira de violações.
  */
-import type { MerchandiseItemFact, PartyFact } from '../facts/merchandise-facts'
 import { validateMessage } from '../authority/xsd'
 import { numberItems } from '../nfe/item-numbering'
 import { buildNfeXml } from '../nfe/nfe-builder'
 import { nfeInputFromFacts, originRef, type NfeInputSources } from '../nfe/nfe-input'
+import type { MerchandiseItemFact, PartyFact } from '../facts/merchandise-facts'
 import { CLIENT_CNPJ, saleKey, signNfe, SETES_CNPJ } from './nfe-fixtures'
+import { address, emitter, item, recipient, sources, unit } from './nfe-source-fixtures'
 
 jest.setTimeout(60_000)
 
-const NIL_ICMS = {
-  determBase: null, determBaseSt: null, discharge: null, aliqRdBase: null, baseValue: '0.000000', aliq: '0.00', aliqRd: null, value: '0.000000',
-  aliqRdBaseSt: null, baseValueSt: null, aliqSt: null, aliqRdSt: null, valueSt: null, mva: null, withheldBaseValue: null, withheldValue: null,
-  withheldBaseValueSt: null, withheldValueSt: null, operationValue: null, deferredAliq: null, deferredValue: null,
-}
-const unit = (abbr: string, level = 1, factor = '1.000000', gtin: string | null = null) => ({ level, measureAbbreviation: abbr, factor, gtin })
-const contribution = (cst: string) => ({ cst, baseValue: '0.00', aliqValue: '0.00', tagValue: '0.00', qtSaleQtty: null, qtAliqValue: null })
-
-const item = (itemId: number, over: Partial<MerchandiseItemFact> = {}): MerchandiseItemFact => ({
-  itemId, kind: 'Sale', merchandiseId: 900 + itemId, description: `Peça ${itemId}`, ncm: '73259990', cest: null, source: '0', manufScale: 'S', factoryCnpj: null,
-  saleUnit: unit('PC'), taxableUnit: unit('PC'), quantity: '2.0000', unitValue: '1500.000000', discountValue: '0.000000', approxTaxAliq: '13.4500',
-  icms: { ...NIL_ICMS, cst: '101', origin: '0', cfopId: '5101', credCalcAliq: '2.86', credExplValue: '85.800000', freightValue: '0.00', insuranceValue: '0.00', expensesValue: '0.00', approximateTax: '403.50' },
-  fcp: null, ipi: null, pis: contribution('07'), cofins: contribution('07'),
-  ...over,
-})
-
-const address = (cityIbge: string, cityName: string, stateCode = 'PR') =>
-  ({ kind: 'COMERCIAL', main: 'S', street: 'Rua A', number: '100', complement: null, neighborhood: 'Centro', zipCode: '81925530', cityName, cityIbge, stateCode })
-const emitter: PartyFact = {
-  entityId: 98, nameCompany: 'SETES USINAGEM DE TESTE LTDA', nickTrade: 'SETES', cnpj: SETES_CNPJ, cpf: null, stateRegistration: '9053273308',
-  addresses: [{ ...address('4199999', 'Outra'), main: 'N' }, address('4106902', 'Curitiba')],
-  tax: { taxRegime: '1 - Simples Nacional', crt: '1', indIeDest: null, consumer: 'N' },
-}
-const recipient: PartyFact = {
-  entityId: 321, nameCompany: 'CLIENTE DE TESTE S.A.', nickTrade: null, cnpj: CLIENT_CNPJ, cpf: null, stateRegistration: '1234567890',
-  addresses: [address('4125506', 'São José dos Pinhais')], tax: { taxRegime: null, crt: null, indIeDest: '1', consumer: 'N' },
-}
-
-const sources = (over: Partial<NfeInputSources> = {}): NfeInputSources => ({
-  environment: '2', dhEmi: '2026-11-24T10:15:30-03:00',
-  header: { invoiceId: 5001, number: null, serie: '1', model: '55', dtEmission: '2026-11-24', createdAt: '2026-11-24 13:15:30', entityId: 321, status: '0', note: 'Pedido 5001', totalValue: '4000.00', indPres: 3 },
-  items: [item(30, { quantity: '3', unitValue: '333.333333', icms: { ...item(30).icms, credExplValue: '28.600000', approximateTax: '134.50' } }), item(10)],
-  operationNature: 'Venda de produção do estabelecimento', emitter, recipient,
-  payments: {
-    billing: { paymentTypeId: 4, nfePaymentCode: '15', plots: '2', deadline: '028/056' },
-    installments: [
-      { parcel: 1, dueDate: '2026-12-22', value: '2000.00', paymentTypeId: 4, nfePaymentCode: '15' },
-      { parcel: 2, dueDate: '2027-01-19', value: '2000.00', paymentTypeId: 4, nfePaymentCode: '15' },
-    ],
-  },
-  shipping: { freightMode: '0', carrierId: null, carrier: null }, returnOrigins: [],
-  techResponsible: { cnpj: SETES_CNPJ, contactName: 'Suporte Setes', email: 'suporte@setes.example', phone: '4133334444' },
-  ...over,
-})
 const violations = (src: NfeInputSources): string[] => {
   try { nfeInputFromFacts(src) } catch (e: any) { return e.code === 'FISCAL_DOCUMENT_INVALID' ? e.fields.map((f: any) => `${f.field}: ${f.message}`) : [`outro erro: ${e.message}`] }
   return []

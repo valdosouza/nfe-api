@@ -139,6 +139,7 @@ export async function transmitInvoice(deps: NfeDeps, actor: NfeActor, ref: Invoi
     // o número: novo (peça do núcleo) ou o da tentativa fechada por R/F (D-NE282)
     let number: number
     if (policy.action === 'reuse') {
+      if (latest && latest.environment !== environment) throw documentInvalid('O ambiente da habilitação mudou desde a tentativa anterior — o número não pode ser reaproveitado', [{ field: 'environment', message: 'Ambiente diferente da tentativa anterior' }])
       if (policy.serie !== facts.serie) throw documentInvalid('A série da nota mudou desde a tentativa anterior — o número não pode ser reaproveitado', [{ field: 'ide.serie', message: 'Série diferente da tentativa anterior' }])
       number = policy.number
     } else {

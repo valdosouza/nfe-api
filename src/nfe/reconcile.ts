@@ -4,7 +4,7 @@ import { checkDigest, voiceOfCStat, type VoiceDecision, type VoiceEvent } from '
 import { consReciNFe, consSitNFe } from '../authority/messages'
 import { readProtocol, readReceipt, type ProtocolFact, type ReadResult } from '../authority/responses'
 import { callSoap, type SoapOutcome } from '../authority/soap'
-import { barrierOf, fillAuthorityData, fillReceipt, getAttempt, attemptsOfLife, latestAttempt, touchQueriedAt, type AttemptRow } from './attempt'
+import { barrierOf, provenNotRegistered, fillAuthorityData, fillReceipt, getAttempt, attemptsOfLife, latestAttempt, touchQueriedAt, type AttemptRow } from './attempt'
 import { isFileConflict, merchandiseFileKey } from './fiscal-file'
 import { recordNfeNotRegistered } from './not-registered'
 import { digestValueOf, procNfeXml } from './proc-nfe'
@@ -132,7 +132,8 @@ async function apply(deps: ReconcileDeps, actor: NfeActor, ref: InvoiceRef, c: C
   const applied = await withInvoiceTx(deps.pool, actor, ref, { label: 'reconciliação da NF-e pelo fisco' }, async itx => {
     const current = await getAttempt(itx.conn, ref, c.row.attempt)
     if (!current || current.lastEvent !== c.row.lastEvent) return 'changed' as const                  // outra rota gravou depois da pergunta: nada se grava
-    if ((voice.kind === 'A' || voice.kind === 'D') && (current.lastKind === 'R' || current.lastKind === 'F') && current.protocol === null) return 'closed' as const
+    // R/F e a tentativa com o 217 PROVADO (o fato gravado) estão fechadas: o A/D que o fisco devolve para elas é incidente — a prova do 217 estava errada, nada se grava
+    if ((voice.kind === 'A' || voice.kind === 'D') && (((current.lastKind === 'R' || current.lastKind === 'F') && current.protocol === null) || provenNotRegistered(current))) return 'closed' as const
     if (decision.nProt) await fillAuthorityData(itx, c.row.attempt, { protocol: decision.nProt, dhRecbtoUtc: decision.dhRecbto ? toUtcDb(decision.dhRecbto) : null })
     if (decision.nRec) await fillReceipt(itx, c.row.attempt, decision.nRec)
     await writeVoice(itx, c.row.attempt, actor.userId, voice)

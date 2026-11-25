@@ -148,6 +148,33 @@ describe('rejeitada, ambígua, denegada e as saídas que só consultam', () => {
     expect(nextInvoiceNumber).toHaveBeenCalledTimes(1)                                            // o número NÃO foi gerado de novo
   })
 
+  it('o 217 provado (fato gravado) solta a nota: a nova tentativa, por ato explícito, sai com o MESMO número e a mesma série e cNF NOVO; sem o fato segue barrada (D-NE292)', async () => {
+    const t = setup()
+    t.say(() => { throw Object.assign(new Error('timeout'), { code: 'ETIMEDOUT' }) })
+    const first = await run(t)
+    expect(first.outcome.kind).toBe('none')
+    await expect(run(t)).rejects.toMatchObject({ statusCode: 409, code: 'FISCAL_TRANSMISSION_IN_PROGRESS' })
+    t.db.attempts[0].nfeNotRegisteredAt = '2026-11-24 13:40:00'                                   // a rota `reconfirm` provou o 217
+    t.say(c => ok(ret(prot(c, '100'))))
+    const second = await run(t)
+    expect([second.attempt, second.number, second.serie, second.outcome.kind]).toEqual([2, first.number, first.serie, 'A'])
+    expect(second.accessKey).not.toBe(first.accessKey)
+    expect(second.accessKey.slice(25, 34)).toBe(first.accessKey.slice(25, 34))                    // número (posições 26–34 da chave) igual
+    expect(nextInvoiceNumber).toHaveBeenCalledTimes(1)
+    expect(t.db.attempts[0].nfeNotRegisteredAt).not.toBeNull()                                    // a antiga segue sem voz, com o fato
+    expect(t.db.events.filter(e => e.attempt === 1)).toEqual([])
+  })
+
+  it('com o fato gravado, a tentativa anterior de OUTRO ambiente não libera o número (o ambiente da habilitação mudou)', async () => {
+    const t = setup()
+    t.say(() => { throw Object.assign(new Error('timeout'), { code: 'ETIMEDOUT' }) })
+    await run(t)
+    t.db.attempts[0].nfeNotRegisteredAt = '2026-11-24 13:40:00'
+    t.db.attempts[0].environment = 'P'
+    await expect(run(t)).rejects.toMatchObject({ statusCode: 422 })
+    expect(t.calls).toHaveLength(1)
+  })
+
   it('Fault, HTTP 500, timeout: nada é gravado (a tentativa fica em voo) e a nova tentativa é barrada com 409 — sem 2º envio', async () => {
     for (const scripted of [
       () => { throw Object.assign(new Error('timeout'), { code: 'ETIMEDOUT' }) },

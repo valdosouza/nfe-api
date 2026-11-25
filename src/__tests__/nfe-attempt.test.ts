@@ -98,11 +98,17 @@ describe('a barreira de nova tentativa e a política do número (D-NE7, D-NE257,
     }
   })
 
-  it('com o fato "não registrada" gravado a barreira CONTINUA (a liberação é do notRegisteredProven do núcleo — PM-8) e o número não é reaproveitado', () => {
+  it('com o fato "não registrada" gravado (217 provado) a barreira SOLTA e o número é reaproveitado (D-NE292, RF-NFE-78); sem o fato, ou com recibo, voz ou protocolo, continua', () => {
     const a = att({ lastKind: null, nfeNotRegisteredAt: '2026-11-24 14:00:00' })
-    expect(code(barrierOf(a))).toBe('FISCAL_TRANSMISSION_IN_PROGRESS')
-    expect(thrown(() => numberPolicy(a)).status).toBe(409)
+    expect(barrierOf(a)).toBeNull()
+    expect(numberPolicy(a)).toEqual({ action: 'reuse', number: a.number, serie: a.serie })
+    for (const over of [{ nfeNotRegisteredAt: null }, { receipt: '411000000000001' }, { lastKind: 'P' as const, lastEvent: 1 }, { protocol: '141260000000001' }]) {
+      const b = att({ lastKind: null, nfeNotRegisteredAt: '2026-11-24 14:00:00', ...over })
+      expect(barrierOf(b)?.statusCode).toBe(409)
+      expect(thrown(() => numberPolicy(b)).status).toBe(409)
+    }
   })
+})
 })
 
 describe('drawCnf — o cNF sorteado e conferido', () => {

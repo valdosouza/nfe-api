@@ -113,9 +113,16 @@ export async function findKeyHolder(q: Q, ref: InvoiceRef, accessKey: string): P
 const registered = (a: AttemptRow): boolean => a.protocol !== null
 const kindOf = (a: AttemptRow) => ({ lastKind: a.lastKind, authorityRecorded: registered(a), attempt: a.attempt, accessKey: a.accessKey })
 
+/**
+ * O 217 PROVADO (D-NE292, RF-NFE-78): a tentativa está SEM voz, sem recibo e sem protocolo e a rota `reconfirm` gravou o fato `nfe_not_registered_at` pela peça
+ * `notRegisteredProven` do núcleo. O fato NÃO é voz (D-NE235): a tentativa continua sem voz e o núcleo ainda a conta como viva; aqui ele só solta a NOVA tentativa.
+ */
+export const provenNotRegistered = (a: AttemptRow): boolean => a.lastKind === null && a.nfeNotRegisteredAt !== null && a.receipt === null && a.protocol === null
+
 /** O 409 da barreira de nova tentativa (D-NE7/D-NE56): viva (sem voz, P ou outra não final), autorizada ou registrada (denegada). Null = pode abrir. */
 export function barrierOf(latest: AttemptRow | null): HttpError | null {
   if (!latest) return null
+  if (provenNotRegistered(latest)) return null                                   // o 217 provado solta a nova tentativa — por ato explícito do usuário (D-NE292)
   const view = kindOf(latest)
   if (isAuthorized(view)) return new HttpError(409, `A nota já tem NF-e autorizada (tentativa ${latest.attempt}) — nada a transmitir`, undefined, ErrorCodes.FISCAL_ALREADY_AUTHORIZED)
   if (isLiveTransmission(view)) {
@@ -132,7 +139,7 @@ export type NumberPolicy =
   | { readonly action: 'reuse'; readonly number: number; readonly serie: number }
 
 /**
- * O número da próxima tentativa (D-NE257/D-NE282): sem tentativa na vida → gera; a última fechada SEM registro do fisco por R ou F → reaproveita o mesmo número e a
+ * O número da próxima tentativa (D-NE257/D-NE282): sem tentativa na vida → gera; a última fechada SEM registro do fisco por R ou F, ou em voo com o 217 PROVADO (fato gravado — D-NE292) → reaproveita o mesmo número e a
  * mesma série; qualquer outra coisa (viva, autorizada, denegada, cancelada, inutilizada) é a barreira e quem chama já recusou — aqui recusa de novo, nunca reaproveita.
  */
 export function numberPolicy(latest: AttemptRow | null): NumberPolicy {
@@ -140,6 +147,7 @@ export function numberPolicy(latest: AttemptRow | null): NumberPolicy {
   const blocked = barrierOf(latest)
   if (blocked) throw blocked
   if ((latest.lastKind === 'R' || latest.lastKind === 'F') && !registered(latest)) return { action: 'reuse', number: latest.number, serie: latest.serie }
+  if (provenNotRegistered(latest)) return { action: 'reuse', number: latest.number, serie: latest.serie }
   throw new HttpError(409, `A tentativa ${latest.attempt} não está fechada por rejeição ou falha — o número não pode ser reaproveitado`, undefined, ErrorCodes.FISCAL_TRANSMISSION_IN_PROGRESS)
 }
 

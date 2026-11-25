@@ -174,6 +174,16 @@ describe('refresh pela chave', () => {
   })
 })
 
+describe('o A tardio na tentativa com o 217 provado (D-NE292)', () => {
+  it('o fisco devolve A para a tentativa que tem o fato: incidente authorized-in-closed-attempt — nada se grava e o procNFe não é guardado', async () => {
+    const t = setup(); seed(t, { nfeNotRegisteredAt: '2026-11-24 13:00:00', lastQueriedAt: null })
+    t.say(() => ok(sit('100', prot('100'))))
+    const r = await refreshInvoice(t.deps, ACTOR, REF)
+    expect(r.incident).toBe('authorized-in-closed-attempt')
+    expect([t.db.events, t.db.attempts[0].protocol, hasProc(t)]).toEqual([[], null, false])
+  })
+})
+
 describe('a cota: o intervalo mínimo por last_queried_at (D-NE254) e a espera do recibo (RF-NFE-17)', () => {
   it('consultar a mesma chave de novo dentro de 6 min = 429; depois de 6 min passa', async () => {
     const t = setup(); seed(t)

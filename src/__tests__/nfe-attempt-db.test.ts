@@ -13,6 +13,8 @@ import { MIGRATION_SETS } from '../migrations'
 import { MERCHANDISE_TRANSMISSION_TABLE as T, MERCHANDISE_VOICE_FAMILY } from '../nfe/voice-family'
 import { attemptsOfLife, drawCnf, fillAuthorityData, fillReceipt, insertAttempt, latestAttempt, numberPolicy } from '../nfe/attempt'
 import { assertNfeNotRegisteredColumn, recordNfeNotRegistered } from '../nfe/not-registered'
+import { voidId } from '../nfe/number-void'
+import { fillVoidAnswer, findCoveringRange, findNumberOwner, reserveRange } from '../nfe/void-range'
 
 /** O `mysql2` que o pool do núcleo usa (a mesma instância de módulo — D-F228). */
 const CORE_MYSQL2 = require.resolve('mysql2/promise', { paths: [path.dirname(require.resolve('fiscal-api/package.json'))] })
@@ -100,5 +102,36 @@ d('a tentativa da NF-e no banco descartável', () => {
     await pool.query(`UPDATE ${T} SET nfe_not_registered_at = NULL WHERE tb_institution_id = ? AND tb_invoice_id = 7002 AND attempt = 1`, [INST])
     const flying = await latestAttempt(pool, REF(7002), 1)
     expect(() => numberPolicy(flying)).toThrow(/não está fechada|em andamento/)
+  })
+
+  it('NFE.E6.P2 (T2): a faixa inutilizada no MOTOR — dono do número, reserva pendente, cobertura, 1062, preenchimento write-once e a rejeição que libera a faixa', async () => {
+    const reason = 'Inutilizacao de numeracao de teste em homologacao'
+    const id = (from: number, to: number) => voidId({ serie: 1, from, to })
+    // o dono do número: a tentativa da nota 7001 é a de número 15 (série 1, H) — por ambiente e série separa
+    expect(await findNumberOwner(pool, INST, 'H', 1, 15, 15)).toBe(15)
+    expect(await findNumberOwner(pool, INST, 'H', 1, 16, 20)).toBeNull()
+    expect(await findNumberOwner(pool, INST, 'P', 1, 15, 15)).toBeNull()
+    expect(await findNumberOwner(pool, INST, 'H', 2, 15, 15)).toBeNull()
+    // a reserva nasce PENDENTE (authority_code nulo = retirada) e cobre, em parte ou por inteiro, o que o pedido tocar
+    const first = await reserveRange(pool, INST, 7, { voidId: id(30, 32), environment: 'H', authorizer: 'PR', reason })
+    expect(first).toBe(1)
+    expect((await findCoveringRange(pool, INST, 'H', 1, 31, 40))?.voidId).toBe(id(30, 32))
+    expect(await findCoveringRange(pool, INST, 'H', 1, 33, 40)).toBeNull()
+    expect(await findCoveringRange(pool, INST, 'P', 1, 30, 32)).toBeNull()
+    // a MESMA faixa enquanto retirada (pendente): a UNIQUE da faixa recusa (1062) — quem chama traduz em 409 tipado (D-NE169)
+    await expect(reserveRange(pool, INST, 7, { voidId: id(30, 32), environment: 'H', authorizer: 'PR', reason })).rejects.toMatchObject({ errno: 1062 })
+    // o preenchimento é UMA vez (write-once); a 2ª resposta não muda nada
+    expect(await fillVoidAnswer(pool, INST, first, { code: '102', message: 'Inutilizacao de numero homologado', protocol: '141260000000003', dh: '2026-11-25 13:00:00' })).toBe(true)
+    expect(await fillVoidAnswer(pool, INST, first, { code: '256', message: 'outra', protocol: null, dh: null })).toBe(false)
+    const [row] = await pool.query(`SELECT authority_code AS code, protocol, withdrawn FROM tb_invoice_number_void WHERE tb_institution_id = ? AND id = ?`, [INST, first])
+    expect([(row as any[])[0].code, (row as any[])[0].protocol, (row as any[])[0].withdrawn]).toEqual(['102', '141260000000003', 'S'])
+    // retirada (102): a UNIQUE da prova segue recusando a mesma faixa
+    await expect(reserveRange(pool, INST, 7, { voidId: id(30, 32), environment: 'H', authorizer: 'PR', reason })).rejects.toMatchObject({ errno: 1062 })
+    // a REJEIÇÃO (256) é história: preenche a linha, a faixa deixa de estar retirada e um novo pedido da mesma faixa vira NOVA linha
+    const second = await reserveRange(pool, INST, 7, { voidId: id(40, 42), environment: 'H', authorizer: 'PR', reason })
+    expect(await fillVoidAnswer(pool, INST, second, { code: '256', message: 'Rejeicao: numero ja inutilizado', protocol: null, dh: null })).toBe(true)
+    expect(await findCoveringRange(pool, INST, 'H', 1, 40, 42)).toBeNull()
+    const third = await reserveRange(pool, INST, 7, { voidId: id(40, 42), environment: 'H', authorizer: 'PR', reason })
+    expect([second, third]).toEqual([2, 3])
   })
 })

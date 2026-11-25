@@ -29,12 +29,15 @@ describe('núcleo 5.1.0 ou posterior — o pacote instalado (DEPLOY.E1.P11, D-F2
     // NFE.E6.P1 (mudança 6): `src/nfe/attempt.ts` passa a ser o ÚNICO que chama `nextInvoiceNumber` (o número gerado na transmissão — D-NE257); `lockNumberSequence` e
     // `openNumberSequence` seguem em lugar nenhum (a abertura da produção é do Valdo — D-NE265)
     const ATTEMPT = path.join('nfe', 'attempt.ts')
+    // NFE.E6.P2 (T2): `src/nfe/void-range.ts` é o ÚNICO que chama `lockNumberSequence` (a trava da inutilização — D-NE263); `nextInvoiceNumber` e `openNumberSequence` seguem fora dele
+    const VOID = path.join('nfe', 'void-range.ts')
     const callers = (dir: string, skip: string | null): string[] => !fs.existsSync(dir) ? [] : fs.readdirSync(dir, { withFileTypes: true }).flatMap(e => {
       const full = path.join(dir, e.name)
       if (e.isDirectory()) return full === skip || e.name === 'node_modules' ? [] : callers(full, skip)
       if (!/\.(ts|tsx|mts|cts|js|mjs)$/.test(e.name)) return []
       const text = fs.readFileSync(full, 'utf8')
-      const names = path.relative(SRC, full) === ATTEMPT ? /\b(lockNumberSequence|openNumberSequence)\b/ : /\b(nextInvoiceNumber|lockNumberSequence|openNumberSequence)\b/
+      const rel = path.relative(SRC, full)
+      const names = rel === ATTEMPT ? /\b(lockNumberSequence|openNumberSequence)\b/ : rel === VOID ? /\b(nextInvoiceNumber|openNumberSequence)\b/ : /\b(nextInvoiceNumber|lockNumberSequence|openNumberSequence)\b/
       return names.test(text) ? [path.relative(SRC, full)] : []
     })
     expect([...callers(SRC, path.join(SRC, '__tests__')), ...callers(path.resolve(SRC, '..', 'scripts'), null)]).toEqual([])

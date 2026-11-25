@@ -26,9 +26,9 @@ import { MERCHANDISE_VOICE_FAMILY } from './voice-family'
  * TRANSAÇÃO 1 (reserva), sob a trava da nota e NESTA ordem (contrato do núcleo — number-sequence.d.ts): a habilitação travada (`openIssuer` forUpdate) ANTES de qualquer
  * leitura comum; a barreira e a política do número; os fatos do ERP; o número (novo, ou o da tentativa fechada por R/F); a chave com `cNF` sorteado; as credenciais DEPOIS do
  * lock e o `hashCSRT` da chave; o `dhEmi` (data do `dt_emission` + hora do `created_at` na zona — D-NE284); o candidato, a CAMADA 1 (recusa com a lista inteira, sem abrir
- * tentativa), a assinatura, o XSD da NFe assinada e o `digVal`; o INSERT da tentativa com o digest e o `-nfe.xml` no arquivo fiscal ANTES do envio (write-once: `find` antes
- * do `save`). O fisco é chamado FORA de qualquer transação. TRANSAÇÃO 2: a voz (A, D, R, P ou F) — nunca em Fault/500/timeout (D-NE34) —, com o protocolo e o
- * `dhRecbto` write-once; 204/539/205/206/218/635 só mandam consultar a chave (nenhuma voz — D-NE36). O `-procNFe.xml` (autorizada ou denegada — D-NE35) vai ao arquivo depois.
+ * tentativa), a assinatura, o XSD da NFe assinada e o `digVal`; o INSERT da tentativa com o digest e o `-nfe.xml` no arquivo fiscal ANTES do envio (gravação única do núcleo 5.2.0: conflito = 409
+ * `FISCAL_FILE_CONFLICT`, nada vai ao fisco). O fisco é chamado FORA de qualquer transação. TRANSAÇÃO 2: a voz (A, D, R, P ou F) — nunca em Fault/500/timeout (D-NE34) —, com o protocolo e o
+ * `dhRecbto` write-once; 204/539/205/206/218/635 só mandam consultar a chave (nenhuma voz — D-NE36). O `-procNFe.xml` (autorizada ou denegada — D-NE35) vai ao arquivo depois (conflito = `incident: file-conflict`).
  * Nenhum envio real acontece em teste: o `request` do `callSoap` é injetado.
  */
 

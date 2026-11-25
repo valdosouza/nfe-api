@@ -1,6 +1,6 @@
 /// <reference types="jest" />
 // nfe-api DEPLOY.E1.P11.T1 (D-NE255, D-NE257, D-NE265, D-F237 — 2026-11-24; ficha
-// `projetos/nfe-api/SUBJECT/NFE_SEFAZ/ficha-deploy-e1-p11-pacote-5-1-0.md` no Vault): o núcleo 5.1.0 entra com a nfse-api (o mesmo tgz). O último número da NF-e
+// `projetos/nfe-api/SUBJECT/NFE_SEFAZ/ficha-deploy-e1-p11-pacote-5-1-0.md` no Vault): o núcleo 5.1.0 entrou com a nfse-api (o mesmo tgz; o 5.2.0 veio na DEPLOY.E1.P12). O último número da NF-e
 // (`tb_fiscal_number_sequence`, migration 008) e as peças que o geram vivem no núcleo e têm a prova na suíte DELE (FAMILIA.E5.P5); aqui se prova a LIGAÇÃO: o pacote
 // instalado, a migration 008 que o boot aplica e a sonda dos domínios no boot, na posição certa. Esta adoção NÃO gera número, NÃO abre sequência e NÃO cria rota.
 import fs from 'fs'
@@ -12,7 +12,7 @@ import { CORE_MIGRATIONS_DIR } from 'fiscal-api'
 const SRC = path.resolve(__dirname, '..')
 const PKG_DIR = path.dirname(require.resolve('fiscal-api/package.json'))
 
-describe('núcleo 5.1.0 — o pacote instalado (DEPLOY.E1.P11, D-F237)', () => {
+describe('núcleo 5.1.0 ou posterior — o pacote instalado (DEPLOY.E1.P11, D-F237)', () => {
   it('a versão instalada é a 5.1.0 ou posterior e o vendor é o do package.json', () => {
     const [major, minor] = String(JSON.parse(fs.readFileSync(path.join(PKG_DIR, 'package.json'), 'utf8')).version).split('.').map(Number)
     expect(major > 5 || (major === 5 && minor >= 1)).toBe(true)

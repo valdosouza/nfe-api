@@ -19,8 +19,9 @@ import type { NfeActor, NfeDeps } from './transmission'
  *  - o `digVal` do `protNFe` contra o `digest_value` da tentativa (D-NE41): divergência = pendência crítica, NADA se grava (o XML guardado não serve como nfeProc) — nunca
  *    sobrescreve; ausência = pendência crítica, mas o A que o fisco afirma pela NOSSA chave é gravado;
  *  - A numa tentativa FECHADA (R/F) = a D-NE7 violada = incidente crítico: nada se grava (D-NE36); 204/539 só mandam consultar as chaves de TODAS as tentativas (`all`);
- *  - o 217 NUNCA vira voz nem fato pelo refresh (D-NE235): só `reconfirmNotRegistered` grava `nfe_not_registered_at`, com as cinco condições, e a nova tentativa continua
- *    barrada até o `notRegisteredProven` do núcleo existir (PM-8);
+ *  - o 217 NUNCA vira voz nem fato pelo refresh (D-NE235): só `reconfirmNotRegistered` grava `nfe_not_registered_at`, e só quando a peça `notRegisteredProven` do núcleo prova
+ *    (RF-NFE-72); gravado o fato, a nota pode ser transmitida de novo por ato do usuário, com o mesmo número (D-NE292);
+ *  - A/D numa tentativa FECHADA (R/F) ou com o fato gravado é incidente (`authorized-in-closed-attempt`); o `-procNFe.xml` em conflito de gravação única é `file-conflict`;
  *  - 101/151 (cancelada) não são ignorados: voltam como `cancelled` (a voz C é da P2).
  * Tudo sob a trava da nota na hora de gravar, relendo a tentativa: a voz que a pergunta viu é a que ainda vale, senão nada se grava. O fisco é chamado FORA de transação.
  */
@@ -235,8 +236,8 @@ export interface ReconfirmResult {
 
 /**
  * A ROTA PRÓPRIA do 217 (D-NE111, D-NE235): só com o 217 e a `chNFe` igual (o leitor já exige o eco), sem recibo 103/105 em aberto, no autorizador gravado na tentativa e se a
- * última voz ainda é a que a pergunta viu, grava o FATO `nfe_not_registered_at` (nunca voz). A tentativa continua em voo e a nova tentativa segue barrada até o
- * `notRegisteredProven` do núcleo (PM-8). Qualquer outra resposta do fisco é tratada como o `refresh` trata (pousa A, D…), sem gravar o fato.
+ * última voz ainda é a que a pergunta viu — tudo decidido pela peça `notRegisteredProven` do núcleo (RF-NFE-72), depois da idade mínima da D-NE291 —, grava o FATO
+ * `nfe_not_registered_at` (nunca voz). A tentativa continua sem voz (e viva para o núcleo); a nova tentativa sai por ato do usuário, com o mesmo número (D-NE292). Qualquer outra resposta do fisco é tratada como o `refresh` trata (pousa A, D…), sem gravar o fato.
  */
 /** A razão da peça → o motivo que a rota devolve; o que não está aqui (falha fechado) vira `peca-recusou` com a razão em `detail`. */
 const REFUSAL: Partial<Record<string, ReconfirmResult['reason']>> = {

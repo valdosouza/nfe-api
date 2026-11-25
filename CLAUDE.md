@@ -64,6 +64,16 @@ homologação e CNPJ do destinatário, R6 responsável técnico, R7 `nItem`, R8 
 texto, R12 tamanho, R13 pagamento, R14 devolução e chave referenciada). O tamanho é conferido ANTES de ler. Quem compõe a transmissão (NFE.E6.P1) monta o
 contexto e chama `assertLayer1` antes de assinar e de abrir tentativa; os limites aceitos (indTot, PISST, CPF, NFref em venda, ISSQN, emitente trocado) estão
 na ficha §9 e na árvore. Teste: `src/__tests__/nfe-layer1.test.ts` (a cerca do catálogo confere as regras que de fato acenderam).
+**Transmitir, consultar e reconferir** (NFE.E6.P1, D-NE282/D-NE283/D-NE284 — ficha `projetos/nfe-api/SUBJECT/NFE_SEFAZ/ficha-nfe-e6-p1-transmitir-consultar-reconferir.md`): `src/nfe/dh-emi.ts` (o `dhEmi` =
+data do `dt_emission` + hora de parede do `created_at` UTC na zona do estabelecimento — nunca o relógio); `src/nfe/compose.ts` (os fatos do ERP só por `src/facts`; na devolução cada item é
+conferido contra o `-procNFe.xml` ARQUIVADO da origem antes de qualquer tentativa); `src/nfe/attempt.ts` (o ÚNICO escritor da tabela das tentativas e o ÚNICO que chama `nextInvoiceNumber`:
+INSERT com `cNF` por `crypto`, write-once de `receipt`/`protocol`/`dh_recbto`, a barreira de nova tentativa e a política do número — R e F reaproveitam número e série, em voo/autorizada/
+denegada/cancelada/"não registrada" barram); `src/nfe/transmission.ts` (`transmitInvoice`: habilitação travada antes de qualquer leitura comum → número → chave → CSRT por nota depois do lock →
+camada 1 → assinatura → XSD → `digVal` → INSERT + `-nfe.xml` write-once; o fisco FORA de transação; a voz A/D/R/P/F com o `kind` literal; `assertFamilyInCatalog` é a T3); `src/nfe/reconcile.ts`
+(`refreshInvoice` pela chave ou recibo com cota por intervalo mínimo e `digVal`; `reconfirmNotRegistered` com as cinco condições — a barreira só cai com o `notRegisteredProven` do núcleo, PM-8,
+que ainda não tem passo); `src/nfe/not-registered.ts` (o ÚNICO escritor de `nfe_not_registered_at`, migration 002); `src/authority/cstat-voice.ts` (cStat → voz; 204/539/205/206/218/635 só
+consultam a chave, nunca R). Rotas `GET /v1/nfe/invoices/{id}`, `POST …/transmit`, `…/refresh`, `…/reconfirm` (`src/modules/invoices`), guardas TRANSMITIR/CONSULTAR por ramo. Testes com fisco
+simulado e banco em memória (`__tests__/nfe-memdb.ts`); o motor real é `nfe-attempt-db.test.ts` (só com `NFE_ADV_E6P1_DB=1`, banco descartável — não rodado). Nenhum envio real à SEFAZ.
 Ao concluir tarefa que gere conhecimento novo, siga `Infra-IA/skills-genericas/atualizar-infra-ia.md`.
 
 ## Estado (2026-10-20) — NE-2 EXECUTADA em worktree (`D:\Gestao2027\ne2\{fiscal-api,nfe-api}`, branch `ne2`) — `prompt_onda_nfe_sefaz.md` §15.9
@@ -97,7 +107,7 @@ cerca por AST sem `eval`/`Function`/nome montado/`erp` sombreado, sonda do boot 
 estrito, eco do modelo cortado, leitor das faixas pelo índice. Q-NE169 (UNIQUE da prova sem institution) aberta — rec. manter.
 
 **Scripts**: `npm run dev` (porta 3003; `.env` a partir do `.env.example` — o MESMO usuário `fiscal_api` e a MESMA `FISCAL_MASTER_KEYS` da
-nfse-api) · `npm test` (34 suítes / 638 — 2026-11-24) · `npm run typecheck` · `npm run db:migrate` (aplica núcleo 001–008 + nfe-api 001 — na publicação, no `fiscal_api`
+nfse-api) · `npm test` (44 suítes / 789 — 2026-11-25) · `npm run typecheck` · `npm run db:migrate` (aplica núcleo 001–008 + nfe-api 001 — na publicação, no `fiscal_api`
 do dev; D-NE168) · `npm run prove:001` (SÓ em `FISCAL_DB_NAME=fiscal_api_adv*` — recusa o real) · `npm run explain:leituras` · `npm run token:dev`.
 ⚠️ A nfe-api **não fica no ar** (D-NE168 — sobe só para o passeio); nenhuma rota de NF-e é servida antes da NE-3/NE-5.
 

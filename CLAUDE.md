@@ -107,7 +107,7 @@ cerca por AST sem `eval`/`Function`/nome montado/`erp` sombreado, sonda do boot 
 estrito, eco do modelo cortado, leitor das faixas pelo índice. Q-NE169 (UNIQUE da prova sem institution) aberta — rec. manter.
 
 **Scripts**: `npm run dev` (porta 3003; `.env` a partir do `.env.example` — o MESMO usuário `fiscal_api` e a MESMA `FISCAL_MASTER_KEYS` da
-nfse-api) · `npm test` (52 arquivos de teste, 51 rodam / 975 testes, 969 passam — 2026-11-25, com o DANFE; a `voice-kind-fence` só passa na pasta `nfe-api`) · `npm run typecheck` · `npm run db:migrate` (aplica núcleo 001–008 + nfe-api 001 — na publicação, no `fiscal_api`
+nfse-api) · `npm test` (58 arquivos de teste, 57 rodam / 1072 testes, 1066 passam e 6 do motor real pulados — 2026-11-25, com a NFE.E6.P2; a `voice-kind-fence` só passa na pasta `nfe-api`) · `npm run typecheck` · `npm run db:migrate` (aplica núcleo 001–008 + nfe-api 001 — na publicação, no `fiscal_api`
 do dev; D-NE168) · `npm run prove:001` (SÓ em `FISCAL_DB_NAME=fiscal_api_adv*` — recusa o real) · `npm run explain:leituras` · `npm run token:dev`.
 ⚠️ A nfe-api **não fica no ar** (D-NE168 — sobe só para o passeio); nenhuma rota de NF-e é servida antes da NE-3/NE-5.
 

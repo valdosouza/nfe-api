@@ -110,6 +110,7 @@ export async function voidRange(deps: VoidDeps, actor: NfeActor, req: VoidReques
     const emitter = await deps.emitterOf(conn, actor)
     const zone = await deps.zoneOf(conn, actor)
     const now = deps.now()
+    deps.breaker?.check({ cnpj: emitter.cnpj, environment, service: 'inutilizacao' })     // o disjuntor (D-NE254): 429 sem reservar e sem ir ao fisco
     const currentYear = Number(nowIsoIn(zone, now).slice(0, 4))
     const year = req.year ?? currentYear
     if (!Number.isInteger(year) || year > currentYear) throw documentInvalid('A inutilização não foi aceita', [{ field: 'year', message: 'Ano superior ao ano corrente (rejeição 453 do fisco)' }])
@@ -187,7 +188,12 @@ export async function voidRange(deps: VoidDeps, actor: NfeActor, req: VoidReques
 
   // (3) a resposta decide: retira (102/563), rejeita (história) ou deixa pendente
   const decided = voiceOfVoid(readVoid({ tpAmb: tpAmbOf(r.environment), cUF: CUF[r.uf], ano: r.yy, CNPJ: r.cnpj, mod: '55', serie: req.serie, nNFIni: req.from, nNFFin: req.to }, outcome.xml))
-  if (decided.action === 'pending') return resultOf(r.row, req, r.environment, decided.breaker, null)
+  const scope = { cnpj: r.cnpj, environment: r.environment, service: 'inutilizacao' } as const
+  if (decided.action === 'pending') {
+    if (decided.breaker) deps.breaker?.recordRefused(scope, decided.breaker)                       // o serviço RECUSOU (656…): o disjuntor abre por 1 h, a linha fica pendente
+    return resultOf(r.row, req, r.environment, decided.breaker, null)
+  }
+  if (decided.action === 'rejected') deps.breaker?.recordRejection(scope, decided.cStat)           // a rejeição da faixa conta na hora (até 20 iguais)
   const answer = decided.action === 'withdrawn'
     ? { code: decided.cStat, message: decided.message, protocol: decided.nProt, dh: decided.dhRecbto }
     : { code: decided.cStat, message: decided.message, protocol: null, dh: null }

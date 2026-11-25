@@ -119,7 +119,8 @@ export type ProtocolFact =
   /** `digVal` e `dhRecbto` do `protNFe` (NFE.E6.P1): a reconciliação confere o `digVal` (D-NE41) e o `dh_recbto` é gravado write-once. */
   | { readonly status: 'authorized'; readonly cStat: string; readonly nProt: string; readonly digVal: string | null; readonly dhRecbto: string | null }
   | { readonly status: 'denied'; readonly cStat: string; readonly nProt: string | null; readonly digVal: string | null; readonly dhRecbto: string | null }
-  | { readonly status: 'cancelled'; readonly cStat: string }
+  /** `event`: o `retEvento` 135/155 do 110111 da nossa chave, quando a consulta o traz em `procEventoNFe` (NFE.E6.P2 — dá o dh e o motivo da voz C); ausente = a consulta só disse cancelada. */
+  | { readonly status: 'cancelled'; readonly cStat: string; readonly event?: { readonly nProt: string; readonly dhRegEvento: string; readonly xMotivo: string | null } }
   | { readonly status: 'not-found'; readonly cStat: '217'; /** o `chNFe` DO RETORNO (já igual à pergunta): a peça `notRegisteredProven` do núcleo o compara com a chave da tentativa */ readonly chNFe: string }
   | { readonly status: 'processing'; readonly cStat: '105' }
   /**
@@ -153,6 +154,22 @@ function protStatusOf(cStat: string): 'authorized' | 'denied' | null {
   return AUTHORIZED.has(cStat) ? 'authorized' : DENIED.has(cStat) ? 'denied' : null
 }
 
+/** O `retEvento` 135/155 do 110111 (nSeq 1) da NOSSA chave dentro do `procEventoNFe` da consulta; `null` se não vier ou vier torto — a consulta cancelada segue valendo sem ele. */
+function cancelEventOf(ret: XmlNode, chNFe: string): { nProt: string; dhRegEvento: string; xMotivo: string | null } | null {
+  for (const proc of children(ret, 'procEventoNFe')) {
+    const re = children(proc, 'retEvento')
+    if (re.length !== 1) continue
+    const inf = child(re[0], 'infEvento')
+    if (!inf) continue
+    const cStat = text(inf, 'cStat')
+    if ((cStat !== '135' && cStat !== '155') || text(inf, 'chNFe') !== chNFe || text(inf, 'tpEvento') !== '110111' || !sameNumber(text(inf, 'nSeqEvento'), 1)) continue
+    const nProt = text(inf, 'nProt'), dh = text(inf, 'dhRegEvento')
+    if (!nProt || !NPROT_FORM.test(nProt) || !dh || !DH_FORM.test(dh) || Number.isNaN(Date.parse(dh)) || toUtcDb(dh) === null) continue
+    return { nProt, dhRegEvento: dh, xMotivo: text(inf, 'xMotivo') }
+  }
+  return null
+}
+
 /** Consulta de protocolo (`retConsSitNFe` — RF-NFE-21; D-NE209: cancelada = 101/151 no topo; 155 só dentro do evento). */
 export function readProtocol(q: ProtocolQuestion, xml: string): ReadResult<ProtocolFact> {
   return guarded<ProtocolFact>(() => {
@@ -163,7 +180,10 @@ export function readProtocol(q: ProtocolQuestion, xml: string): ReadResult<Proto
     const located = AUTHORIZED.has(cStat) || DENIED.has(cStat) || cStat === '101' || cStat === '151'
     if (!located) return cStat === '155' ? ambiguous('situacao-ilegivel') : rejection(cStat, text(ret, 'xMotivo'))
     if (text(ret, 'chNFe') !== q.chNFe || text(ret, 'tpAmb') !== q.tpAmb) return ambiguous('nao-classificada')   // D-NE42, D-NE210
-    if (cStat === '101' || cStat === '151') return { kind: 'fact', fact: { status: 'cancelled', cStat } }
+    if (cStat === '101' || cStat === '151') {
+      const event = cancelEventOf(ret, q.chNFe)
+      return { kind: 'fact', fact: event ? { status: 'cancelled', cStat, event } : { status: 'cancelled', cStat } }
+    }
     const prot = readProt(ret, q.chNFe, q.tpAmb)
     return prot.kind === 'rejection' ? ambiguous('nao-classificada') : prot       // nota LOCALIZADA no topo e rejeitada no protNFe é inconsistente: a consulta pela chave nunca fecha por rejeição
   })

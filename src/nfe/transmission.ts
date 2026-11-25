@@ -17,6 +17,7 @@ import { assertLayer1 } from './layer1'
 import { buildNfeXml, type NfeInput } from './nfe-builder'
 import { digestValueOf, procNfeXml } from './proc-nfe'
 import { hashCsrt, type CsrtProof } from './tech-responsible'
+import type { Breaker } from './breaker'
 import { MERCHANDISE_VOICE_FAMILY } from './voice-family'
 
 /**
@@ -66,6 +67,8 @@ export interface NfeDeps {
   readonly credentialsFor: (q: Queryable, actor: NfeActor, scope: { uf: Uf; environment: Environment; at: Date }) => Promise<{ codeId: string; codeValue: string } | null>
   /** O `ca` do servidor do fisco (D-NE57/D-NE187). */
   readonly ca: () => HttpsCall['ca']
+  /** O disjuntor contra o 656 (NFE.E6.P2.T3): opcional — sem ele não há freio por serviço (o freio por nota da autorização segue). */
+  readonly breaker?: Breaker
   /** Injetável: o sorteador do `cNF` (os testes forçam o conflito do arquivo fiscal com uma chave conhecida). */
   readonly random?: (max: number) => number
   /** Injetável: nos testes nada vai à rede. */

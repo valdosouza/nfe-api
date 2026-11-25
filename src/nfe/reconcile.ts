@@ -1,4 +1,4 @@
-import { ErrorCodes, HttpError, logger, notRegisteredProven, recordVoiceOnce, toUtcDb, withInvoiceTx, type InvoiceRef, type InvoiceTx } from 'fiscal-api'
+import { ErrorCodes, HttpError, logger, notRegisteredProven, recordKindOnce, recordVoiceOnce, releaseCancelRequest, toUtcDb, withInvoiceTx, type InvoiceRef, type InvoiceTx } from 'fiscal-api'
 import { endpointOf, soapBindingOf, type Environment } from '../authority/authorizers'
 import { checkDigest, voiceOfCStat, type VoiceDecision, type VoiceEvent } from '../authority/cstat-voice'
 import { consReciNFe, consSitNFe } from '../authority/messages'
@@ -34,6 +34,8 @@ export const MIN_RECEIPT_WAIT_MS = 15_000              // RF-NFE-17: ≥ 15 s an
  * D-NE291 (Valdo, 2026-11-25): 10 minutos — folga sobre o timeout do envio (60 s) e sobre a janela de gravação.
  */
 export const MIN_ATTEMPT_AGE_BEFORE_217_MS = 10 * 60_000
+/** S5 (NFE.E6.P2): a carência do K (cancelamento em voo) sem o 135/155 pela consulta antes de o rodízio liberar a nota com N — o molde da NFS-e (D-N28). */
+export const MIN_CANCEL_REQUEST_AGE_BEFORE_RELEASE_MS = 10 * 60_000
 
 type Opened = { readonly cert: Buffer; readonly key: Buffer }
 export type ReconcileDeps = Pick<NfeDeps, 'pool' | 'storage' | 'now' | 'openIssuer' | 'zoneOf' | 'ca' | 'request'>
@@ -65,6 +67,7 @@ const tooSoon = (what: string, waitMs: number): HttpError =>
 
 /** A saída em aberto de uma tentativa: viva sem recibo → pela chave; P com recibo → pelo recibo. Fechada (A, D, R, F, C): nada a perguntar. */
 function viaOf(a: AttemptRow): 'key' | 'receipt' | null {
+  if (a.lastKind === 'K' || a.lastKind === 'N') return 'key'                     // NFE.E6.P2 (S5): o cancelamento em voo (ou liberado) pergunta pela chave — C se o fisco cancelou, N depois da carência
   if (a.protocol !== null) return null                                          // registrada: autorizada, denegada ou cancelada
   if (a.lastKind === 'R' || a.lastKind === 'F') return 'key'                    // fechada sem registro: só para detectar um A tardio (incidente)
   if (a.receipt !== null && a.lastKind === 'P') return 'receipt'
@@ -118,6 +121,7 @@ async function apply(deps: ReconcileDeps, actor: NfeActor, ref: InvoiceRef, c: C
   const base = { invoiceId: ref.invoiceId, attempt: c.row.attempt, accessKey: c.row.accessKey, via: c.via }
   const done = (outcome: RefreshResult['outcome'], extra: Partial<RefreshResult> = {}, proc: string | null = null): RefreshResult & { proc: string | null } =>
     ({ ...base, outcome, digestCheck: null, incident: null, notRegistered: false, next: null, ...extra, proc })
+  if (c.row.lastKind === 'K' || c.row.lastKind === 'N') return applyCancelRequest(deps, actor, ref, c, done)
   const decision = voiceOfCStat(c.result, 'Q')
   if (decision.action === 'ambiguous') return done({ kind: 'none', reason: decision.reason })
   if (decision.action === 'consult-key') return done({ kind: 'none', reason: decision.reason }, { next: 'consult-key' })
@@ -146,6 +150,45 @@ async function apply(deps: ReconcileDeps, actor: NfeActor, ref: InvoiceRef, c: C
     ? await buildProc(deps, actor, c) : null
   return done({ kind: voice.kind, authorityCode: voice.authorityCode, message: voice.message },
     { digestCheck: check, incident: check === 'absent' ? 'digest-absent' : null, next: voice.kind === 'P' ? 'consult-receipt' : null }, proc)
+}
+
+/**
+ * O cancelamento em voo (K) ou liberado (N) reconciliado pela CONSULTA da chave (S5, NFE.E6.P2): a nota cancelada no fisco (101/151) grava a voz C — com o dh e o motivo do `retEvento` quando a
+ * consulta o traz —, MESMO se a reserva já tinha sido liberada com N (o fisco cancelou depois: a nota está cancelada); a autorizada sem cancelamento libera o K com N só depois da carência de 10 minutos;
+ * o resto (ambíguo, recusa da pergunta, 217…) mantém tudo como está. Um C por tentativa (`recordKindOnce`).
+ */
+async function applyCancelRequest(deps: ReconcileDeps, actor: NfeActor, ref: InvoiceRef, c: Consulted,
+  done: (outcome: RefreshResult['outcome'], extra?: Partial<RefreshResult>, proc?: string | null) => RefreshResult & { proc: string | null }): Promise<RefreshResult & { proc: string | null }> {
+  const insertTransmissionEvent = MERCHANDISE_VOICE_FAMILY.insertTransmissionEvent
+  const findTransmissionEventByKind = MERCHANDISE_VOICE_FAMILY.findTransmissionEventByKind
+  const fact = c.result.kind === 'fact' ? c.result.fact : null
+  if (fact && fact.status === 'cancelled') {
+    const dh = fact.event ? toUtcDb(fact.event.dhRegEvento) : null
+    const message = (fact.event ? `Cancelada no fisco: ${fact.event.xMotivo ?? ''}` : 'Cancelada no fisco (confirmada pela consulta)').slice(0, 255)
+    const wrote = await withInvoiceTx(deps.pool, actor, ref, { label: 'voz C pela consulta da NF-e' }, async itx => {
+      const current = await getAttempt(itx.conn, ref, c.row.attempt)
+      if (!current || current.lastEvent !== c.row.lastEvent) return 'changed' as const        // outra rota gravou depois da pergunta
+      await recordKindOnce({ insertTransmissionEvent, findTransmissionEventByKind }, itx, c.row.attempt, actor.userId, {
+        kind: 'C', source: 'Q', dh, message, authorityCode: '110111',
+      })
+      return 'written' as const
+    })
+    if (wrote === 'changed') return done({ kind: 'none', reason: 'voz-mudou-depois-da-pergunta' })
+    return done({ kind: 'cancelled', authorityCode: '110111' })
+  }
+  if (c.row.lastKind === 'K' && fact && (fact.status === 'authorized' || fact.status === 'denied')) {
+    const since = ms(c.row.lastEventAt)
+    if (since === null || deps.now().getTime() - since < MIN_CANCEL_REQUEST_AGE_BEFORE_RELEASE_MS) return done({ kind: 'none', reason: 'cancelamento-em-voo' })
+    const released = await withInvoiceTx(deps.pool, actor, ref, { label: 'cancelamento não confirmado pelo fisco' }, async itx => {
+      const current = await getAttempt(itx.conn, ref, c.row.attempt)
+      if (!current || current.lastEvent !== c.row.lastEvent) return false
+      return releaseCancelRequest(insertTransmissionEvent, itx, c.row.attempt, actor.userId, 'Cancelamento não confirmado pelo fisco depois da carência: a nota segue autorizada', current)
+    })
+    return done({ kind: 'none', reason: released ? 'cancelamento-nao-confirmado' : 'voz-mudou-depois-da-pergunta' })
+  }
+  const asked = voiceOfCStat(c.result, 'Q')
+  if (asked.action === 'none' && asked.reason === 'consulta-recusada') return done({ kind: 'none', reason: 'consulta-recusada' })   // o serviço recusou a PERGUNTA (656…): o rodízio abre o disjuntor
+  return done({ kind: 'none', reason: c.row.lastKind === 'K' ? 'cancelamento-em-voo' : 'nota-autorizada' })
 }
 
 /** O `-procNFe.xml` a partir do `-nfe.xml` guardado e do `protNFe` da resposta (D-NE35); `null` se algo faltar — falhar ao gravar só avisa. */

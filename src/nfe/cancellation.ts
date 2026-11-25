@@ -101,6 +101,7 @@ export async function cancelInvoice(deps: NfeDeps, actor: NfeActor, ref: Invoice
     if (elapsedHours > limit) warnings.push(`FISCAL_CANCEL_DEADLINE: passaram ${Math.floor(elapsedHours)} horas da autorização e o prazo de ${uf} é de ${limit} — a SEFAZ pode recusar (501)`)
 
     const environment = latest.environment as Environment
+    deps.breaker?.check({ cnpj: latest.accessKey.slice(6, 20), environment, service: 'evento' })   // o disjuntor (D-NE254): 429 sem reservar e sem ir ao fisco
     const binding = soapBindingOf(latest.authorizer as never, environment, 'RecepcaoEvento')
     const endpoint = endpointOf(latest.authorizer as never, environment, 'RecepcaoEvento')
     if (!binding || !endpoint.ok) {
@@ -168,8 +169,13 @@ export async function cancelInvoice(deps: NfeDeps, actor: NfeActor, ref: Invoice
 
   // (3) a resposta decide: C (135/155), N (rejeição do evento) ou K mantido
   const decided = voiceOfCancel(readCancelEvent({ chNFe: p.attempt.accessKey, tpAmb: tpAmbOf(p.environment), nSeqEvento: 1 }, outcome.xml))
-  if (decided.action === 'keep') return { ...base, atAuthority: false, state: 'in-flight', eventSequence: null, protocol: null, nextStep: 'consult-key', refusedCStat: decided.breaker }
+  const scope = { cnpj: p.cnpj, environment: p.environment, service: 'evento' } as const
+  if (decided.action === 'keep') {
+    if (decided.breaker) deps.breaker?.recordRefused(scope, decided.breaker)                       // o serviço RECUSOU (656…): o disjuntor abre por 1 h, o K fica
+    return { ...base, atAuthority: false, state: 'in-flight', eventSequence: null, protocol: null, nextStep: 'consult-key', refusedCStat: decided.breaker }
+  }
   if (decided.action === 'release') {
+    deps.breaker?.recordRejection(scope, decided.cStat)                                             // a rejeição do evento conta na hora (até 20 iguais)
     await release(decided.message)
     throw new HttpError(409, `O fisco recusou o cancelamento (${decided.cStat}): ${decided.message}`, [{ field: 'authorityCode', message: decided.cStat }, { field: 'attempt', message: String(attempt) }], ErrorCodes.FISCAL_CANCEL_REFUSED)
   }

@@ -109,7 +109,6 @@ describe('a barreira de nova tentativa e a política do número (D-NE7, D-NE257,
     }
   })
 })
-})
 
 describe('drawCnf — o cNF sorteado e conferido', () => {
   it('8 dígitos com zeros à esquerda', () => { expect(drawCnf(15, () => 48213057)).toBe('48213057'); expect(drawCnf(15, () => 7)).toBe('00000007') })

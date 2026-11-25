@@ -24,6 +24,11 @@ async function main(): Promise<void> {
   // migrations: núcleo primeiro, depois a família (trava nomeada — duas instâncias sobem juntas — D-F35)
   const applied = await runMigrations(ctx.db, MIGRATION_SETS)
   if (applied.length) logger.info('Migrations aplicadas no boot', { applied })
+  // DEPLOY.E1.P12 (núcleo 5.2.0): o índice de gravação única do arquivo fiscal (`.once/` por série) é preparado ANTES de atender — sem isso a 1ª gravação de cada série grande
+  // varre os dias dentro da requisição. SEM try/catch de propósito: raiz inexistente (volume desmontado) ou série ilegível derruba o boot — intencional. Chamada opcional: o
+  // armazenamento injetado nos testes pode não ter `warm`.
+  const warmedSeries = ctx.storage.warm?.()
+  if (warmedSeries !== undefined) logger.info(`Arquivo fiscal: índice de gravação única preparado (${warmedSeries} série(s))`)
   await assertSessionInvariants(ctx.pool)
   await assertIssuerModelDomainEnforced(ctx.pool)          // D-F45/D-NE84: CHECK BINÁRIO do domínio do modelo (migrations 004/005 do núcleo)
   await assertIssuerEnvironmentDomainEnforced(ctx.pool)    // D-F120: CHECK BINÁRIO do ambiente da habilitação (migration 005 do núcleo)

@@ -28,6 +28,11 @@ import type { NfeActor, NfeDeps } from './transmission'
 export const MIN_KEY_INTERVAL_MS = 6 * 60_000          // D-NE254: 10 consultas/h da mesma chave
 export const MIN_RECEIPT_INTERVAL_MS = 90_000          // D-NE254: 40 consultas/h do mesmo recibo
 export const MIN_RECEIPT_WAIT_MS = 15_000              // RF-NFE-17: ≥ 15 s antes de consultar o recibo
+/**
+ * Idade mínima de uma tentativa SEM voz antes de o `reconfirm` aceitar o 217 (gate adversarial M2: com o envio ainda no ar, o 217 é verdadeiro e a resposta do envio pode ser A).
+ * PROVISÓRIO: o valor é do Valdo (pergunta aberta da FAMILIA.E5.P6); 10 minutos é a proposta — folga sobre o timeout do envio (60 s) e sobre a janela de gravação.
+ */
+export const MIN_ATTEMPT_AGE_BEFORE_217_MS = 10 * 60_000
 
 type Opened = { readonly cert: Buffer; readonly key: Buffer }
 export type ReconcileDeps = Pick<NfeDeps, 'pool' | 'storage' | 'now' | 'openIssuer' | 'zoneOf' | 'ca' | 'request'>
@@ -236,6 +241,8 @@ export async function reconfirmNotRegistered(deps: ReconcileDeps, actor: NfeActo
     if (row.protocol !== null || row.lastKind === 'R' || row.lastKind === 'F') return { row, early: 'tentativa-fechada' as const, opened: null as Opened | null }
     if (row.nfeNotRegisteredAt !== null) return { row, early: 'ja-registrada' as const, opened: null as Opened | null }
     if (row.receipt !== null || row.lastKind === 'P') return { row, early: 'recibo-em-aberto' as const, opened: null as Opened | null }
+    const born = ms(row.createdAt)
+    if (row.lastKind === null && born !== null && now - born < MIN_ATTEMPT_AGE_BEFORE_217_MS) throw tooSoon('Tentativa criada há pouco (o envio pode estar no ar)', MIN_ATTEMPT_AGE_BEFORE_217_MS - (now - born))
     const last = ms(row.lastQueriedAt)
     if (last !== null && now - last < MIN_KEY_INTERVAL_MS) throw tooSoon('Chave consultada há pouco', MIN_KEY_INTERVAL_MS - (now - last))
     await touchQueriedAt(itx.conn, ref, row.attempt)

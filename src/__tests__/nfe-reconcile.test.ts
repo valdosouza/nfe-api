@@ -6,7 +6,7 @@
  */
 import type { HttpsCall, InvoiceRef } from 'fiscal-api'
 import { invoiceRef } from 'fiscal-api'
-import { MIN_KEY_INTERVAL_MS, MIN_RECEIPT_INTERVAL_MS, MIN_RECEIPT_WAIT_MS, reconfirmNotRegistered, refreshInvoice, type ReconcileDeps } from '../nfe/reconcile'
+import { MIN_ATTEMPT_AGE_BEFORE_217_MS, MIN_KEY_INTERVAL_MS, MIN_RECEIPT_INTERVAL_MS, MIN_RECEIPT_WAIT_MS, reconfirmNotRegistered, refreshInvoice, type ReconcileDeps } from '../nfe/reconcile'
 import type { NfeActor } from '../nfe/transmission'
 import { buildNfeXml } from '../nfe/nfe-builder'
 import { digestValueOf } from '../nfe/proc-nfe'
@@ -355,6 +355,35 @@ describe('as cotas pinadas e as saídas que o gate adversarial mostrou sem prova
     t.say(() => { t.db.events.push({ attempt: 1, event: 1, kind: 'D', authority_code: '110', message: 'x', dh: null, source: 'P', createdAt: '2026-11-24 13:29:00' }); return ok(sit('217')) })
     const r = await reconfirmNotRegistered(t.deps, ACTOR, REF)
     expect([r.recorded, t.db.attempts[0].nfeNotRegisteredAt]).toEqual([false, null])
+  })
+})
+
+describe('o 217 não vale para a tentativa recém-criada e a denegada sem protocolo não fecha (gate adversarial M2 e M3)', () => {
+  it('reconfirm de uma tentativa SEM voz criada há menos do mínimo: 429, sem perguntar ao fisco e sem gravar o fato (o envio pode estar no ar)', async () => {
+    const t = setup(); seed(t, { createdAt: fmt(new Date(NOW.getTime() - (MIN_ATTEMPT_AGE_BEFORE_217_MS - 1000))) })
+    t.say(() => ok(sit('217')))
+    await expect(reconfirmNotRegistered(t.deps, ACTOR, REF)).rejects.toMatchObject({ statusCode: 429, code: 'RESOURCE_BUSY' })
+    expect([t.calls.length, t.db.attempts[0].nfeNotRegisteredAt]).toEqual([0, null])
+    advance(t, 2000)
+    expect((await reconfirmNotRegistered(t.deps, ACTOR, REF)).reason).toBe('registrada-agora')
+  })
+
+  it('o mínimo provisório é de 10 minutos (a proposta; o valor é do Valdo)', () => {
+    expect(MIN_ATTEMPT_AGE_BEFORE_217_MS).toBe(600_000)
+  })
+
+  it('consulta que diz 110 SEM protocolo: nenhuma voz, a saída é consultar a chave — D sem registro liberaria o número', async () => {
+    const t = setup(); seed(t)
+    t.say(() => ok(sit('110', prot('110', { nProt: false }))))
+    const r = await refreshInvoice(t.deps, ACTOR, REF)
+    expect([r.outcome, r.next, t.db.events]).toEqual([{ kind: 'none', reason: 'denegada-sem-protocolo' }, 'consult-key', []])
+  })
+
+  it('o refresh que pousa A grava o dhRecbto do fisco na tentativa (write-once)', async () => {
+    const t = setup(); seed(t)
+    t.say(() => ok(sit('100', prot('100'))))
+    await refreshInvoice(t.deps, ACTOR, REF)
+    expect(t.db.attempts[0].dhRecbto).toBe('2026-11-24 13:20:00')
   })
 })
 

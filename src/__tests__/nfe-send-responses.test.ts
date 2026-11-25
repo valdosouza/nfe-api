@@ -134,8 +134,13 @@ describe('só a rejeição de FATO vira R, e a forma dos campos é conferida (ga
   it('100 sem protocolo e cStat 1xx fora das classes conhecidas no protNFe: ambíguo, nunca R', () => {
     for (const cStat of ['100', '101', '108', '109', '104', '999', '1', '12345']) {
       const withProt = cStat === '100' ? protWith({ cStat, nProt: null }) : protWith({ cStat })
-      expect([cStat, action(voiceOfCStat(readSend(Q, retEnvi('104', withProt)), 'P'))]).toEqual([cStat, cStat === '999' ? 'voice' : 'ambiguous'])
+      expect([cStat, action(voiceOfCStat(readSend(Q, retEnvi('104', withProt)), 'P'))]).toEqual([cStat, 'ambiguous'])
     }
+  })
+
+  it('denegada (301–303) e 217 no TOPO do envio, e 217/656 no protNFe da consulta de recibo, NÃO são rejeição: ambíguo — a denegada queima o número', () => {
+    for (const cStat of ['110', '301', '302', '303', '217', '656']) expect([cStat, action(voiceOfCStat(readSend(Q, retEnvi(cStat)), 'P'))]).toEqual([cStat, 'ambiguous'])
+    for (const cStat of ['217', '656']) expect([cStat, action(voiceOfCStat(readReceipt({ nRec: '411000000000001', ...Q }, recOf('104', protWith({ cStat, nProt: null }))), 'Q'))]).not.toEqual([cStat, 'voice'])
   })
 
   it('cStat de topo do envio que não é rejeição (100, 101, 1xx) é ambíguo; 2xx a 9xx é rejeição do lote', () => {
@@ -156,10 +161,20 @@ describe('só a rejeição de FATO vira R, e a forma dos campos é conferida (ga
   })
 
   it('nProt, digVal e dhRecbto fora da forma: ambíguo (nunca quebram a transação da voz)', () => {
-    for (const bad of [{ nProt: 'abc' }, { nProt: '1234567890123456' }, { digVal: 'curto' }, { digVal: 'A'.repeat(28) }, { dh: 'ontem' }, { dh: '2026-13-45T99:99:99-03:00' }, { dh: '2026-11-24T10:20:00' }]) {
+    for (const bad of [{ dh: '2026-02-31T10:00:00-03:00' }, { dh: '0001-01-01T00:00:00-03:00' }, { nProt: 'abc' }, { nProt: '1234567890123456' }, { digVal: 'curto' }, { digVal: 'A'.repeat(28) }, { dh: 'ontem' }, { dh: '2026-13-45T99:99:99-03:00' }, { dh: '2026-11-24T10:20:00' }]) {
       expect([JSON.stringify(bad), action(voiceOfCStat(readSend(Q, retEnvi('104', protWith(bad))), 'P'))]).toEqual([JSON.stringify(bad), 'ambiguous'])
     }
     expect(action(voiceOfCStat(readSend(Q, retEnvi('104', protWith({ nProt: '14126000000000123' }))), 'P'))).toBe('voice')        // 17 dígitos vale
+  })
+})
+
+describe('a mensagem da voz', () => {
+  it('o xMotivo cortado em 255 nunca deixa meio par substituto (emoji na posição 254)', () => {
+    const text = 'x'.repeat(254) + '\u{1F600}' + 'y'
+    const d = voiceOfCStat({ kind: 'rejection', cStat: '703', xMotivo: text, note: true }, 'P')
+    if (d.action !== 'voice') throw new Error('esperava voz')
+    expect(d.event.message.length).toBeLessThanOrEqual(255)
+    expect(/[\uD800-\uDBFF]$/.test(d.event.message)).toBe(false)
   })
 })
 

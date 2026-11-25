@@ -1,5 +1,5 @@
 import {
-  ELEMENT, XmlUnreadableError, elementsOf, nameIs, parseXml, textOf, type AmbiguousCause, type XmlNode, type XmlReadOptions,
+  ELEMENT, XmlUnreadableError, toUtcDb, elementsOf, nameIs, parseXml, textOf, type AmbiguousCause, type XmlNode, type XmlReadOptions,
 } from 'fiscal-api'
 import { NFE_NS } from './soap'
 
@@ -82,7 +82,10 @@ function guarded<F>(fn: () => ReadResult<F>): ReadResult<F> {
 export type DuplicateCStat = '204' | '539' | '205' | '206' | '218' | '635'
 const DUPLICATE: ReadonlySet<string> = new Set<DuplicateCStat>(['204', '539', '205', '206', '218', '635'])
 /** Rejeição da NOTA de fato: cStat de 3 ou 4 dígitos na faixa 2xx a 9xx. Todo 1xx fora das classes conhecidas (100 sem protocolo, 101 no envio, 108/109, 104 em lugar errado…) NÃO é rejeição: é ambíguo e nada fecha (gate adversarial HIGH-1). */
-const NOTE_REJECTION = /^[2-9][0-9]{2,3}$/
+const NOTE_REJECTION_FORM = /^[2-9][0-9]{2,3}$/
+/** Dentro da faixa mas NÃO rejeição da nota: denegada (110, 301–303), 217 (não consta — só a `reconfirm` conclui), 656 (consumo indevido), 999 (erro interno), 108/109 (serviço). */
+const NOT_A_NOTE_REJECTION = new Set(['110', '301', '302', '303', '217', '656', '999', '108', '109'])
+const NOTE_REJECTION = { test: (cStat: string): boolean => NOTE_REJECTION_FORM.test(cStat) && !NOT_A_NOTE_REJECTION.has(cStat) }
 const NPROT_FORM = /^([0-9]{15}|[0-9]{17})$/
 const DIGVAL_FORM = /^[A-Za-z0-9+/]{27}=$/
 const DH_FORM = /^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}([-+][0-9]{2}:[0-9]{2}|Z)$/
@@ -136,7 +139,7 @@ function readProt(parent: XmlNode, chNFe: string, tpAmb: string): ReadResult<Pro
   const digVal = text(inf, 'digVal')
   const dhRecbto = text(inf, 'dhRecbto')
   // a FORMA dos campos que vão ao banco é conferida AQUI: fora da forma é ambíguo (nProt, digVal e dhRecbto malformados quebrariam a transação da voz e deixariam a tentativa sem saída — gate adversarial M4)
-  if ((nProt !== null && !NPROT_FORM.test(nProt)) || (digVal !== null && !DIGVAL_FORM.test(digVal)) || (dhRecbto !== null && (!DH_FORM.test(dhRecbto) || Number.isNaN(Date.parse(dhRecbto))))) return ambiguous('nao-classificada')
+  if ((nProt !== null && !NPROT_FORM.test(nProt)) || (digVal !== null && !DIGVAL_FORM.test(digVal)) || (dhRecbto !== null && (!DH_FORM.test(dhRecbto) || Number.isNaN(Date.parse(dhRecbto)) || toUtcDb(dhRecbto) === null))) return ambiguous('nao-classificada')
   if (cStat && protStatusOf(cStat) === 'authorized' && nProt) return { kind: 'fact', fact: { status: 'authorized', cStat, nProt, digVal, dhRecbto } }
   if (cStat && protStatusOf(cStat) === 'denied') return { kind: 'fact', fact: { status: 'denied', cStat, nProt, digVal, dhRecbto } }
   if (cStat && DUPLICATE.has(cStat)) return { kind: 'fact', fact: { status: 'duplicate', cStat: cStat as DuplicateCStat } }

@@ -37,7 +37,9 @@ export type VoiceDecision =
 const MAX_MESSAGE = 255
 const clip = (text: string | null | undefined, fallback: string): string => {
   const t = (text ?? '').trim() || fallback
-  return t.length > MAX_MESSAGE ? t.slice(0, MAX_MESSAGE) : t
+  if (t.length <= MAX_MESSAGE) return t
+  const cut = t.slice(0, MAX_MESSAGE)
+  return /[\uD800-\uDBFF]$/.test(cut) ? cut.slice(0, -1) : cut                     // nunca no meio de um par substituto
 }
 const dhOf = (dhRecbto: string | null): string | null => (dhRecbto ? toUtcDb(dhRecbto) : null)
 

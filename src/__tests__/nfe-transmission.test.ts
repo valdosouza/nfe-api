@@ -94,7 +94,7 @@ describe('autorizada (104 com protNFe 100)', () => {
     expect(r).toMatchObject({ invoiceId: 5001, attempt: 1, number: 15, serie: 1, nProt: '141260000000001', next: null })
     expect(r.outcome).toEqual({ kind: 'A', authorityCode: '100', message: 'Autorizado o uso da NF-e' })
     expect(r.accessKey).toMatch(/^41261107742094000113550010000000151[0-9]{8}[0-9]$/)            // cUF AAMM CNPJ mod serie nNF tpEmis cNF cDV
-    expect(t.db.attempts[0]).toMatchObject({ authorizer: 'PR', environment: 'H', protocol: '141260000000001', dhEmission: '2026-11-24 13:15:30' })
+    expect(t.db.attempts[0]).toMatchObject({ authorizer: 'PR', environment: 'H', protocol: '141260000000001', dhRecbto: '2026-11-24 13:20:00', dhEmission: '2026-11-24 13:15:30' })
     expect(t.db.events).toMatchObject([{ attempt: 1, event: 1, kind: 'A', authority_code: '100', message: 'Autorizado o uso da NF-e', dh: '2026-11-24 13:20:00', source: 'P' }])
     const names = [...t.storage.files.keys()].map(k => k.split('/').pop()).sort()
     expect(names).toEqual([`${r.accessKey}-nfe.xml`, `${r.accessKey}-procNFe.xml`])

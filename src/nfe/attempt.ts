@@ -40,6 +40,8 @@ export interface AttemptRow {
   readonly lastCode: string | null
   /** O instante (UTC do banco) em que a última voz foi gravada — o recibo só se consulta depois de 15 s dela (RF-NFE-17). */
   readonly lastEventAt: string | null
+  /** Quando a TENTATIVA foi criada (UTC do banco): o `reconfirm` não aceita o 217 de uma tentativa recém-criada (pode estar sendo enviada agora). */
+  readonly createdAt: string | null
 }
 
 const T = MERCHANDISE_TRANSMISSION_TABLE
@@ -49,7 +51,7 @@ const fmt = (col: string, as: string): string => `DATE_FORMAT(${col}, '%Y-%m-%d 
 /** A tentativa com a ÚLTIMA voz dela (a de maior nº de evento), lida por qualquer chave. */
 const SELECT_ATTEMPT = `SELECT t.attempt, t.life_event AS lifeEvent, t.environment, t.authorizer, t.access_key AS accessKey, ${fmt('t.dh_emission', 'dhEmission')},
          t.digest_value AS digestValue, t.receipt, t.protocol, ${fmt('t.dh_recbto', 'dhRecbto')}, ${fmt('t.last_queried_at', 'lastQueriedAt')},
-         ${fmt('t.nfe_not_registered_at', 'nfeNotRegisteredAt')}, e.event AS lastEvent, e.kind AS lastKind, e.authority_code AS lastCode, ${fmt('e.created_at', 'lastEventAt')}
+         ${fmt('t.nfe_not_registered_at', 'nfeNotRegisteredAt')}, e.event AS lastEvent, e.kind AS lastKind, e.authority_code AS lastCode, ${fmt('e.created_at', 'lastEventAt')}, ${fmt('t.created_at', 'createdAt')}
     FROM ${T} t
     LEFT JOIN ${EV} e
       ON e.tb_institution_id = t.tb_institution_id AND e.tb_invoice_id = t.tb_invoice_id AND e.terminal = t.terminal AND e.attempt = t.attempt AND e.deleted = 'N'
@@ -68,6 +70,7 @@ function mapAttempt(r: any): AttemptRow {
     nfeNotRegisteredAt: r.nfeNotRegisteredAt == null ? null : String(r.nfeNotRegisteredAt),
     lastEvent: r.lastEvent == null ? null : Number(r.lastEvent), lastKind: r.lastKind == null ? null : (String(r.lastKind) as TransmissionEventKind),
     lastCode: r.lastCode == null ? null : String(r.lastCode), lastEventAt: r.lastEventAt == null ? null : String(r.lastEventAt),
+    createdAt: r.createdAt == null ? null : String(r.createdAt),
   }
 }
 

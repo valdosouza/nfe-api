@@ -173,3 +173,51 @@ export function inutNFe(p: VoidParts): { xml: string; id: string } {
 export function signInutNFe(v: { xml: string; id: string }, cert: Buffer, key: Buffer): string {
   return signXml(v.xml, { referenceId: v.id, cert, key, algorithm: 'sha1' })
 }
+
+// ---------------------------------------------------------------------------------------------------------------------------------------
+// NFE.E6.P2 — o evento de cancelamento 110111 (D-NE39, D-NE106, D-NE50; RF-NFE-18/24)
+// ---------------------------------------------------------------------------------------------------------------------------------------
+
+export interface CancelEventParts {
+  readonly tpAmb: TpAmb
+  readonly uf: Uf
+  readonly cnpj: string
+  readonly chNFe: string
+  /** `dhEvento` já com o offset da zona do estabelecimento (`AAAA-MM-DDThh:mm:ss±hh:mm`). */
+  readonly dhEvento: string
+  /** O protocolo de autorização (15 dígitos) — o fisco devolve 222 se divergir do cadastrado. */
+  readonly nProt: string
+  readonly xJust: string
+}
+
+const DH_EVENTO_FORM = /^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}[+-][0-9]{2}:[0-9]{2}$/
+
+/**
+ * O `evento` 110111 SEM assinatura (raiz `evento`, o que se assina e se guarda; o `envEvento` o envolve — `envEvento110111`). `nSeqEvento` é SEMPRE 1 (D-NE106; o
+ * MOC rejeita outro com 594 — P15-10). O `Id` do `infEvento` tem 54 posições: "ID" + 110111 + chave de 44 + nSeq de 2 (RF-NFE-80).
+ */
+export function eventoNFe110111(p: CancelEventParts): { xml: string; id: string } {
+  assertTpAmb(p.tpAmb)
+  if (!CNPJ_FORM.test(p.cnpj)) throw new Error('evento: CNPJ com 14 posições')
+  assertAccessKey(p.chNFe)
+  if (!DH_EVENTO_FORM.test(p.dhEvento)) throw new Error('evento: dhEvento fora de AAAA-MM-DDThh:mm:ss±hh:mm')
+  if (!/^[0-9]{15}$/.test(p.nProt)) throw new Error('evento: nProt com 15 dígitos')
+  if (!SAFE_JUSTIFICATION.test(p.xJust)) throw new Error('evento: xJust fora do conjunto seguro ou do tamanho (15 a 255)')
+  const id = `ID110111${p.chNFe}01`
+  const xml = `<evento xmlns="${NS}" versao="1.00"><infEvento Id="${id}"><cOrgao>${cufOf(p.uf)}</cOrgao><tpAmb>${p.tpAmb}</tpAmb><CNPJ>${p.cnpj}</CNPJ>`
+    + `<chNFe>${p.chNFe}</chNFe><dhEvento>${p.dhEvento}</dhEvento><tpEvento>110111</tpEvento><nSeqEvento>1</nSeqEvento><verEvento>1.00</verEvento>`
+    + `<detEvento versao="1.00"><descEvento>Cancelamento</descEvento><nProt>${p.nProt}</nProt><xJust>${p.xJust}</xJust></detEvento></infEvento></evento>`
+  return { xml, id }
+}
+
+/** Assina o `infEvento` (rsa-sha1, C14N inclusiva + enveloped): a `Signature` vira o último filho do `evento`. */
+export function signEventoNFe(v: { xml: string; id: string }, cert: Buffer, key: Buffer): string {
+  return signXml(v.xml, { referenceId: v.id, cert, key, algorithm: 'sha1' })
+}
+
+/** O lote do evento (D-NE39: 1 evento por lote) com o `evento` JÁ ASSINADO entrando byte a byte — nada de recorte de texto (N17). */
+export function envEvento110111(signedEvento: string, idLote: number): string {
+  if (!Number.isInteger(idLote) || idLote < 1 || idLote > 999_999_999_999_999) throw new Error('envEvento: idLote de 1 a 15 dígitos')
+  const evento = String(signedEvento).replace(/^\s*<\?xml[^?]*\?>\s*/, '').trim()
+  return `<envEvento xmlns="${NS}" versao="1.00"><idLote>${idLote}</idLote>${evento}</envEvento>`
+}

@@ -265,3 +265,35 @@ export async function voicesOfLife(q: Q, ref: InvoiceRef, lifeEvent: number): Pr
     message: r.message == null ? null : String(r.message), dh: r.dh == null ? null : String(r.dh), source: String(r.source) as 'P' | 'Q',
   }))
 }
+
+// ---------------------------------------------------------------------------------------------------------------------------------------
+// Leituras da NFE.E6.P2 (a inutilização e o rodízio) — aqui porque só este arquivo nomeia a tabela das tentativas (cerca de `nfe-attempt.test.ts`)
+// ---------------------------------------------------------------------------------------------------------------------------------------
+
+/** As tentativas cujo número (posições 26–34 da chave) cai na faixa, na série e no ambiente: número, nota, terminal, vida e protocolo (a inutilização decide quem é dono). */
+export async function attemptsInNumberRange(q: Q, institutionId: number, environment: 'H' | 'P', serie: number, from: number, to: number): Promise<{ number: unknown; invoiceId: unknown; terminal: unknown; lifeEvent: unknown; protocol: unknown }[]> {
+  const [rows] = await q.query(
+    `SELECT CAST(SUBSTRING(access_key, 26, 9) AS UNSIGNED) AS number, tb_invoice_id AS invoiceId, terminal, life_event AS lifeEvent, protocol FROM ${T} WHERE tb_institution_id = ? AND environment = ? `
+    + `AND CAST(SUBSTRING(access_key, 23, 3) AS UNSIGNED) = ? AND CAST(SUBSTRING(access_key, 26, 9) AS UNSIGNED) BETWEEN ? AND ? AND deleted = 'N' ORDER BY number`,
+    [institutionId, environment, serie, from, to])
+  return (Array.isArray(rows) ? rows : []) as { number: unknown; invoiceId: unknown; terminal: unknown; lifeEvent: unknown; protocol: unknown }[]
+}
+
+/**
+ * As tentativas ABERTAS do estabelecimento para o rodízio (sem voz, P ou K na última voz), só a ÚLTIMA de cada nota e só o que cabe em [since] (UTC 'AAAA-MM-DD hh:mm:ss'), as menos consultadas
+ * primeiro, no máximo [limit].
+ */
+export async function openAttemptsOfInstitution(q: Q, institutionId: number, since: string, limit: number): Promise<any[]> {
+  const [rows] = await q.query(
+    `SELECT t.tb_invoice_id AS invoiceId, t.terminal, t.attempt, t.access_key AS accessKey, t.environment, e.kind AS lastKind, DATE_FORMAT(COALESCE(e.created_at, t.created_at), '%Y-%m-%d %H:%i:%s') AS since
+       FROM ${T} t
+       LEFT JOIN ${EV} e ON e.tb_institution_id = t.tb_institution_id AND e.tb_invoice_id = t.tb_invoice_id AND e.terminal = t.terminal AND e.attempt = t.attempt AND e.deleted = 'N'
+        AND e.event = (SELECT MAX(x.event) FROM ${EV} x WHERE x.tb_institution_id = t.tb_institution_id AND x.tb_invoice_id = t.tb_invoice_id AND x.terminal = t.terminal AND x.attempt = t.attempt AND x.deleted = 'N')
+      WHERE t.tb_institution_id = ? AND t.deleted = 'N' AND (e.kind IS NULL OR e.kind IN ('P', 'K'))
+        AND t.attempt = (SELECT MAX(y.attempt) FROM ${T} y WHERE y.tb_institution_id = t.tb_institution_id AND y.tb_invoice_id = t.tb_invoice_id AND y.terminal = t.terminal AND y.deleted = 'N')
+        AND COALESCE(e.created_at, t.created_at) >= ?
+      ORDER BY t.last_queried_at IS NOT NULL, t.last_queried_at ASC, t.tb_invoice_id ASC LIMIT ?`,
+    [institutionId, since, limit])
+  return Array.isArray(rows) ? rows : []
+}
+

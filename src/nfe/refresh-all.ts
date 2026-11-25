@@ -2,10 +2,9 @@ import { ErrorCodes, HttpError, type InvoiceRef, invoiceRef } from 'fiscal-api'
 import type { Environment, Uf } from '../authority/authorizers'
 import { CANCEL_DEADLINES, NATIONAL_CANCEL_DEADLINE, cancelDeadlineHours } from '../authority/cancel-deadlines'
 import { ufOfCode } from '../authority/messages'
-import { touchQueriedAt } from './attempt'
+import { openAttemptsOfInstitution, touchQueriedAt } from './attempt'
 import { refreshInvoice, type ReconcileDeps, type RefreshResult } from './reconcile'
 import { assertFamilyOf, type NfeActor, type NfeDeps } from './transmission'
-import { MERCHANDISE_TRANSMISSION_TABLE, MERCHANDISE_VOICE_FAMILY } from './voice-family'
 
 /**
  * O RODÍZIO (NFE.E6.P2.T3 — ficha-nfe-e6-p2-cancelar-inutilizar-rodizio.md §7-6; D-NE26, D-NE54, D-NE254, D-NE256; RF-NFE-17, RF-NFE-74; S3 e S5): reconcilia, estabelecimento por estabelecimento, as tentativas
@@ -53,20 +52,10 @@ interface Candidate { readonly ref: InvoiceRef; readonly attempt: number; readon
  * maior teto (`since`); o teto exato por tipo é conferido depois.
  */
 async function openAttempts(q: { query(sql: string, params?: unknown[]): Promise<[any, any]> }, institutionId: number, since: string, limit: number): Promise<Candidate[]> {
-  const EV = MERCHANDISE_VOICE_FAMILY.eventTable
-  const [rows] = await q.query(
-    `SELECT t.tb_invoice_id AS invoiceId, t.terminal, t.attempt, t.access_key AS accessKey, t.environment, e.kind AS lastKind, DATE_FORMAT(COALESCE(e.created_at, t.created_at), '%Y-%m-%d %H:%i:%s') AS since
-       FROM ${MERCHANDISE_TRANSMISSION_TABLE} t
-       LEFT JOIN ${EV} e ON e.tb_institution_id = t.tb_institution_id AND e.tb_invoice_id = t.tb_invoice_id AND e.terminal = t.terminal AND e.attempt = t.attempt AND e.deleted = 'N'
-        AND e.event = (SELECT MAX(x.event) FROM ${EV} x WHERE x.tb_institution_id = t.tb_institution_id AND x.tb_invoice_id = t.tb_invoice_id AND x.terminal = t.terminal AND x.attempt = t.attempt AND x.deleted = 'N')
-      WHERE t.tb_institution_id = ? AND t.deleted = 'N' AND (e.kind IS NULL OR e.kind IN ('P', 'K'))
-        AND t.attempt = (SELECT MAX(y.attempt) FROM ${MERCHANDISE_TRANSMISSION_TABLE} y WHERE y.tb_institution_id = t.tb_institution_id AND y.tb_invoice_id = t.tb_invoice_id AND y.terminal = t.terminal AND y.deleted = 'N')
-        AND COALESCE(e.created_at, t.created_at) >= ?
-      ORDER BY t.last_queried_at IS NOT NULL, t.last_queried_at ASC, t.tb_invoice_id ASC LIMIT ?`,
-    [institutionId, since, limit])
+  const rows = await openAttemptsOfInstitution(q, institutionId, since, limit)
   const seen = new Set<string>()
   const out: Candidate[] = []
-  for (const r of Array.isArray(rows) ? rows : []) {
+  for (const r of rows) {
     const k = `${r.invoiceId}/${r.terminal}`
     if (seen.has(k)) continue
     seen.add(k)

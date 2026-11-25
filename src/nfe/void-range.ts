@@ -10,7 +10,7 @@ import { isFileConflict, merchandiseFileKey } from './fiscal-file'
 import { NUMBER_VOID_TABLE } from './number-void'
 import { procInutXml, voidFileName } from './proc-evento'
 import { assertFamilyOf, type NfeActor, type NfeDeps } from './transmission'
-import { MERCHANDISE_TRANSMISSION_TABLE } from './voice-family'
+import { attemptsInNumberRange } from './attempt'
 
 /**
  * A INUTILIZAÇÃO de faixa (NFE.E6.P2.T2 — ficha-nfe-e6-p2-cancelar-inutilizar-rodizio.md §7-5; D-NE8, D-NE40, D-NE50, D-NE110, D-NE163, D-NE169, D-NE171, D-NE207, D-NE210, D-NE257, D-NE263,
@@ -235,11 +235,7 @@ export async function findCoveringRange(conn: Queryable, institutionId: number, 
  * ou de vida encerrada deixou o número livre: é o buraco que a inutilização existe para fechar.
  */
 export async function findNumberOwner(conn: Queryable, schemaName: string, institutionId: number, environment: Environment, serie: number, from: number, to: number): Promise<number | null> {
-  const [rows] = await conn.query(
-    `SELECT CAST(SUBSTRING(access_key, 26, 9) AS UNSIGNED) AS number, tb_invoice_id AS invoiceId, terminal, life_event AS lifeEvent, protocol FROM ${MERCHANDISE_TRANSMISSION_TABLE} WHERE tb_institution_id = ? AND environment = ? `
-    + `AND CAST(SUBSTRING(access_key, 23, 3) AS UNSIGNED) = ? AND CAST(SUBSTRING(access_key, 26, 9) AS UNSIGNED) BETWEEN ? AND ? AND deleted = 'N' ORDER BY number`,
-    [institutionId, environment, serie, from, to])
-  const list = (Array.isArray(rows) ? rows : []) as { number: unknown; invoiceId: unknown; terminal: unknown; lifeEvent: unknown; protocol: unknown }[]
+  const list = await attemptsInNumberRange(conn, institutionId, environment, serie, from, to)
   const registered = list.find(r => r.protocol != null)
   let first = registered ? Number(registered.number) : null
   const open = list.filter(r => r.protocol == null && (first === null || Number(r.number) < first))        // só interessa o que vem ANTES do 1º registrado

@@ -28,6 +28,8 @@ export type XsdResult = { readonly ok: true } | { readonly ok: false; readonly e
 const B = 'PL_009_V4_00_NT_2020_006_v1.20/'
 const D = 'PL_010d_v1.03/'
 const F = 'PL_010f_v1.04/'
+/** PL_010h (NT 2026.005/2026.006/2026.008, 13/11/2026): só `leiauteNFe` e `DFeTiposBasicos` mudam; `nfe`, `tiposBasico` e `xmldsig` são byte a byte os do 010f (NFE.E5.P6, D-NE285). */
+const H = 'PL_010h_v1.03/NFe/'
 
 interface SchemaSet {
   /** Arquivo raiz (validado como `schema`). */
@@ -53,19 +55,19 @@ export const SCHEMA_SETS: Readonly<Record<MessageKind | 'detEvento110111', Schem
   consReciNFe: {
     root: B + 'consReciNFe_v4.00.xsd',
     files: {
-      'leiauteNFe_v4.00.xsd': F + 'leiauteNFe_v4.00.xsd',
+      'leiauteNFe_v4.00.xsd': H + 'leiauteNFe_v4.00.xsd',
       'tiposBasico_v4.00.xsd': F + 'tiposBasico_v4.00.xsd',
       'xmldsig-core-schema_v1.01.xsd': F + 'xmldsig-core-schema_v1.01.xsd',
-      'DFeTiposBasicos_v1.00.xsd': F + 'DFeTiposBasicos_v1.00.xsd',
+      'DFeTiposBasicos_v1.00.xsd': H + 'DFeTiposBasicos_v1.00.xsd',
     },
   },
   NFe: {
     root: F + 'nfe_v4.00.xsd',
     files: {
-      'leiauteNFe_v4.00.xsd': F + 'leiauteNFe_v4.00.xsd',
+      'leiauteNFe_v4.00.xsd': H + 'leiauteNFe_v4.00.xsd',
       'tiposBasico_v4.00.xsd': F + 'tiposBasico_v4.00.xsd',
       'xmldsig-core-schema_v1.01.xsd': F + 'xmldsig-core-schema_v1.01.xsd',
-      'DFeTiposBasicos_v1.00.xsd': F + 'DFeTiposBasicos_v1.00.xsd',
+      'DFeTiposBasicos_v1.00.xsd': H + 'DFeTiposBasicos_v1.00.xsd',
     },
   },
   consCad: {

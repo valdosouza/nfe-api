@@ -5,7 +5,7 @@
  */
 import { invoiceRef } from 'fiscal-api'
 import {
-  listMerchandiseItems, MerchandiseFactsErrors, readEmitter, readMerchandiseInvoice, readOperationNature, readPayments, readRecipient,
+  listMerchandiseItems, MerchandiseFactsErrors, readItemSimples, readEmitter, readMerchandiseInvoice, readOperationNature, readPayments, readRecipient,
   readReturnOrigins, readShipping,
 } from '../facts/merchandise-facts'
 
@@ -457,5 +457,46 @@ describe('G3 [FIXED] — transportadora gravada no pedido e sem cadastro não vi
   it('o id gravado no pedido sai cru em carrierId, mesmo com carrier nulo', async () => {
     const db = fakeDb([['tb_order_shipping', [{ freightMode: '1', orderCarrierId: 77, carrierId: null }]]])
     expect(await readShipping(db, SCHEMA, REF)).toEqual({ freightMode: '1', carrierId: 77, carrier: null })
+  })
+})
+
+describe('NFE.E5.P6 — o grupo do Simples que o faturamento congelou (readItemSimples; D-NE286, D-NE290)', () => {
+  const simplesRow = (itemId: number, over: Row = {}): Row => ({
+    itemId, activityCode: '01', competence: '2027-01', ibsRate: '0.1000', cbsRate: '0.9000', baseValue: '3000.00', ibsValue: '3.00', cbsValue: '27.00', ...over,
+  })
+  it('lê as duas tabelas pelo ref (id, institution, terminal), só SELECT, decimais como texto, CST/classificação da 083 casada pelo item', async () => {
+    const db = fakeDb([
+      ['tb_order_item_ibscbs_simples', [simplesRow(10), simplesRow(30, { activityCode: '02', baseValue: '1000.00', ibsValue: '1.00', cbsValue: '9.00' })]],
+      ['tb_order_item_ibscbs', [{ itemId: 10, classificationCode: '000001' }, { itemId: 30, classificationCode: '000001' }]],
+    ])
+    const facts = await readItemSimples(db, SCHEMA, REF)
+    expect(facts).toEqual([
+      { itemId: 10, activityCode: '01', competence: '2027-01', ibsRate: '0.1000', cbsRate: '0.9000', baseValue: '3000.00', ibsValue: '3.00', cbsValue: '27.00', classificationCode: '000001' },
+      { itemId: 30, activityCode: '02', competence: '2027-01', ibsRate: '0.1000', cbsRate: '0.9000', baseValue: '1000.00', ibsValue: '1.00', cbsValue: '9.00', classificationCode: '000001' },
+    ])
+    expect(db.calls).toHaveLength(2)
+    for (const c of db.calls) {
+      expect(c.sql.trim()).toMatch(/^SELECT/i)
+      expect(c.sql).not.toMatch(/(INSERT|UPDATE|DELETE|REPLACE)/i)
+      expect(c.sql).not.toMatch(/JOIN/i)                                  // as duas tabelas à parte, nunca num JOIN pelo kind
+      expect(c.sql).toContain("deleted = 'N'")
+      expect(c.params).toEqual([5001, INST, TERMINAL])
+    }
+    expect(db.calls[0].sql).toContain('CAST(ibs_rate AS CHAR)')
+  })
+  it('o terminal vem do ref: trocar o terminal troca o parâmetro das duas consultas', async () => {
+    const db = fakeDb([['tb_order_item_ibscbs_simples', []], ['tb_order_item_ibscbs', []]])
+    await readItemSimples(db, SCHEMA, invoiceRef(INST, 5001, 3))
+    expect(db.calls.map(c => c.params)).toEqual([[5001, INST, 3], [5001, INST, 3]])
+  })
+  it('item sem linha não aparece; item com linha e sem classificação vem com classificationCode nulo (quem monta recusa)', async () => {
+    const db = fakeDb([['tb_order_item_ibscbs_simples', [simplesRow(10)]], ['tb_order_item_ibscbs', []]])
+    expect(await readItemSimples(db, SCHEMA, REF)).toEqual([expect.objectContaining({ itemId: 10, classificationCode: null })])
+    expect(await readItemSimples(fakeDb([['tb_order_item_ibscbs_simples', []], ['tb_order_item_ibscbs', []]]), SCHEMA, REF)).toEqual([])
+  })
+  it('schema com forma inválida é recusado antes de consultar', async () => {
+    const db = fakeDb([['tb_order_item_ibscbs_simples', []], ['tb_order_item_ibscbs', []]])
+    await expect(readItemSimples(db, 'x; DROP TABLE y', REF)).rejects.toBeTruthy()
+    expect(db.calls).toHaveLength(0)
   })
 })

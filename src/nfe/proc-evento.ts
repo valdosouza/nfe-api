@@ -27,6 +27,18 @@ export const eventFileName = (chNFe: string, tpEvento = '110111', nSeq = 1, retr
 /** O nome do `procEventoNFe` (o evento + o `retEvento` com o protocolo do evento): o par do `-procNFe.xml`. */
 export const eventProcFileName = (chNFe: string, tpEvento = '110111', nSeq = 1, retry = 0): string => `${chNFe}-evt${tpEvento}-${nSeq}${retry > 0 ? `-r${retry}` : ''}-proc.xml`
 
+/** O `dhEvento` do `infEvento` 110111 da chave, lido pelo leitor estrito no documento [xml] (o nosso evento guardado, ou o `procEventoNFe` dentro da consulta); `null` se não houver exatamente um. */
+export function cancelEventDhOf(xml: string, chNFe: string): string | null {
+  let doc: XmlNode
+  try { doc = parseXml(xml) } catch { return null }
+  const found = elementsOf(doc, false).filter(e => e.nodeType === ELEMENT && e.namespaceURI === NS && local(e) === 'evento')
+    .map(ev => child(ev, 'infEvento'))
+    .filter(inf => textOf(child(inf, 'chNFe')) === chNFe && textOf(child(inf, 'tpEvento')) === '110111')
+    .map(inf => textOf(child(inf, 'dhEvento')))
+    .filter((dh): dh is string => !!dh)
+  return new Set(found).size === 1 ? found[0] : null
+}
+
 /** O nome do arquivo da inutilização (D-NE50): `<Id43>-inut.xml`. */
 export const voidFileName = (voidId: string): string => `${voidId}-inut.xml`
 

@@ -29,8 +29,8 @@ const H = 3_600_000
 const MIN = 60_000
 const ago = (ms: number): string => fmt(new Date(NOW.getTime() - ms))
 
-const procEvento = (cStat = '135') =>
-  `<procEventoNFe versao="1.00"><evento versao="1.00"><infEvento Id="ID110111${KEY}01"><tpEvento>110111</tpEvento></infEvento></evento><retEvento versao="1.00"><infEvento><tpAmb>2</tpAmb><verAplic>PR</verAplic><cOrgao>41</cOrgao>`
+const procEvento = (cStat = '135', dhEvento = '2026-11-25T09:00:00-03:00') =>
+  `<procEventoNFe versao="1.00"><evento versao="1.00"><infEvento Id="ID110111${KEY}01"><chNFe>${KEY}</chNFe><dhEvento>${dhEvento}</dhEvento><tpEvento>110111</tpEvento></infEvento></evento><retEvento versao="1.00"><infEvento><tpAmb>2</tpAmb><verAplic>PR</verAplic><cOrgao>41</cOrgao>`
   + `<cStat>${cStat}</cStat><xMotivo>Evento registrado e vinculado a NF-e</xMotivo><chNFe>${KEY}</chNFe><tpEvento>110111</tpEvento><xEvento>Cancelamento registrado</xEvento><nSeqEvento>1</nSeqEvento>`
   + `<dhRegEvento>${DH}</dhRegEvento><nProt>141260000000077</nProt></infEvento></retEvento></procEventoNFe>`
 const sit = (cStat: string, inner = '') =>
@@ -100,6 +100,26 @@ describe('o K (cancelamento em voo) reconciliado pela consulta da chave (S5)', (
     expect(proc).toContain(latest.replace(/^<\?xml[^?]*\?>/, ''))
     expect(await validateMessage('procEventoNFe', proc)).toEqual({ ok: true })
     expect(t.db.events[4].message).toMatch(/protocolo 141260000000077$/)                                  // o nProt do evento também no rastro
+  })
+
+  it('gate adversarial da 2ª rodada (H1): depois de um 573, a prova casa o evento que o FISCO registrou (o r0, pelo dhEvento), nunca o pedido mais recente (r1); sem nenhum igual, incidente e nenhuma prova', async () => {
+    const t = setup([{ kind: 'A' }, { kind: 'K' }, { kind: 'N' }, { kind: 'K' }])
+    const ev = (dh: string) => signEventoNFe(eventoNFe110111({ tpAmb: '2', uf: 'PR', cnpj: KEY.slice(6, 20), chNFe: KEY, dhEvento: dh, nProt: '141260000000001', xJust: 'Cancelamento de teste em homologacao' }), testA1().cert, testA1().key)
+    const dir = `${KEY.slice(6, 20)}/H/${Number(KEY.slice(22, 25))}`
+    const r0 = ev('2026-11-25T08:00:00-03:00')
+    t.storage.files.set(`${dir}/${eventFileName(KEY)}`, r0)
+    t.storage.files.set(`${dir}/${eventFileName(KEY, '110111', 1, 1)}`, ev('2026-11-25T09:00:00-03:00'))
+    t.say(() => ok(sit('101', procEvento('135', '2026-11-25T08:00:00-03:00'))))
+    const r = await refresh(t)
+    expect([r.outcome.kind, r.incident]).toEqual(['cancelled', null])
+    expect(t.storage.files.get(`${dir}/${eventProcFileName(KEY)}`)).toContain(r0.replace(/^<\?xml[^?]*\?>/, ''))
+    expect(t.storage.files.has(`${dir}/${eventProcFileName(KEY, '110111', 1, 1)}`)).toBe(false)
+    const foreign = setup([{ kind: 'A' }, { kind: 'K' }])
+    foreign.storage.files.set(`${dir}/${eventFileName(KEY)}`, r0)
+    foreign.say(() => ok(sit('101', procEvento('135', '2026-11-25T07:00:00-03:00'))))      // cancelado por outro evento (fora da API)
+    const f = await refresh(foreign)
+    expect([f.outcome.kind, f.incident]).toEqual(['cancelled', 'cancel-proof-missing'])
+    expect([...foreign.storage.files.keys()].some(k => k.endsWith('-proc.xml'))).toBe(false)
   })
 
   it('cancelada SEM o retEvento: C com dh nulo e o texto da consulta; 151 também; um C só (a 2ª consulta não duplica)', async () => {
@@ -228,7 +248,7 @@ describe('o rodízio (refreshAll — S3, teto de idade, disjuntor)', () => {
     const t = setup([{ kind: 'A' }, { kind: 'K', createdAt: ago(H) }])
     t.say(() => ok(sit('101', procEvento())))
     const rep = await refreshAll(t.deps, ACTOR)
-    expect(rep).toMatchObject({ scanned: 1, consulted: 1, throttled: 0, tooOld: 0, circuitOpen: false, changed: 1, incidents: [] })
+    expect(rep).toMatchObject({ scanned: 1, consulted: 1, throttled: 0, tooOld: 0, circuitOpen: false, changed: 1, incidents: [{ invoiceId: 5001, incident: 'cancel-proof-missing' }] })   // sem evento NOSSO guardado: a prova não se monta, é incidente
     expect(kinds(t)).toEqual(['A', 'K', 'C'])
   })
 

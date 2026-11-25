@@ -850,7 +850,7 @@ components:
         accessKey: { type: string }
         via: { type: string, enum: [key, receipt] }
         reason: { type: string, nullable: true, description: 'por que nada foi gravado (ambíguo, 217, 106, voz que mudou…)' }
-        incident: { type: string, nullable: true, enum: [digest-mismatch, digest-absent, authorized-in-closed-attempt, file-conflict, null], description: 'pendência crítica ou incidente: pede a mão de alguém, nunca vira voz' }
+        incident: { type: string, nullable: true, enum: [digest-mismatch, digest-absent, authorized-in-closed-attempt, file-conflict, cancel-proof-missing, null], description: 'pendência crítica ou incidente: pede a mão de alguém, nunca vira voz' }
         notRegistered: { type: boolean, description: 'o fisco respondeu 217 com a nossa chave — a consulta NÃO grava; só o reconfirm' }
         next: { type: string, nullable: true, enum: [consult-key, consult-receipt, null] }
     ReconfirmResult:

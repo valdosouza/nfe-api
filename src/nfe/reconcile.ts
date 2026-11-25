@@ -8,7 +8,7 @@ import { barrierOf, provenNotRegistered, fillAuthorityData, fillReceipt, getAtte
 import { isFileConflict, merchandiseFileKey } from './fiscal-file'
 import { recordNfeNotRegistered } from './not-registered'
 import { digestValueOf, procNfeXml } from './proc-nfe'
-import { eventFileName, eventProcFileName, procEventoXml } from './proc-evento'
+import { cancelEventDhOf, eventFileName, eventProcFileName, procEventoXml } from './proc-evento'
 import { MERCHANDISE_VOICE_FAMILY } from './voice-family'
 import type { NfeActor, NfeDeps } from './transmission'
 
@@ -37,6 +37,8 @@ export const MIN_RECEIPT_WAIT_MS = 15_000              // RF-NFE-17: ≥ 15 s an
 export const MIN_ATTEMPT_AGE_BEFORE_217_MS = 10 * 60_000
 /** S5 (NFE.E6.P2): a carência do K (cancelamento em voo) sem o 135/155 pela consulta antes de o rodízio liberar a nota com N — o molde da NFS-e (D-N28). */
 export const MIN_CANCEL_REQUEST_AGE_BEFORE_RELEASE_MS = 10 * 60_000
+/** Quantos eventos (`-r<n>`) a prova procura: o disjuntor barra a 21ª rejeição igual na hora (D-NE254), então mais de 50 pedidos numa nota é defeito, não uso. */
+export const MAX_CANCEL_RETRIES = 50
 
 type Opened = { readonly cert: Buffer; readonly key: Buffer }
 export type ReconcileDeps = Pick<NfeDeps, 'pool' | 'storage' | 'now' | 'openIssuer' | 'zoneOf' | 'ca' | 'request'>
@@ -52,7 +54,7 @@ export interface RefreshResult {
   /** A conferência do `digVal` do `protNFe` com o `digest_value` da tentativa: `null` quando a resposta não traz protNFe. */
   readonly digestCheck: 'ok' | 'absent' | 'mismatch' | null
   /** O que pede a mão de alguém (pendência crítica / incidente) — nunca é gravado como voz. */
-  readonly incident: 'digest-mismatch' | 'digest-absent' | 'authorized-in-closed-attempt' | 'file-conflict' | null
+  readonly incident: 'digest-mismatch' | 'digest-absent' | 'authorized-in-closed-attempt' | 'file-conflict' | 'cancel-proof-missing' | null
   /** O fisco respondeu 217 com a nossa chave (a consulta NUNCA o grava — só a `reconfirm`). */
   readonly notRegistered: boolean
   readonly next: 'consult-key' | 'consult-receipt' | null
@@ -195,21 +197,28 @@ async function applyCancelRequest(deps: ReconcileDeps, actor: NfeActor, ref: Inv
 }
 
 /** Guarda o `procEventoNFe` do cancelamento confirmado pela CONSULTA, a partir do evento NOSSO mais recente guardado; devolve `file-conflict` no conflito da gravação única, senão `null` (falta = log, sem conteúdo). */
-async function saveCancelProof(deps: ReconcileDeps, actor: NfeActor, row: AttemptRow, responseXml: string): Promise<'file-conflict' | null> {
+async function saveCancelProof(deps: ReconcileDeps, actor: NfeActor, row: AttemptRow, responseXml: string): Promise<'file-conflict' | 'cancel-proof-missing' | null> {
   try {
     const zone = await deps.zoneOf(deps.pool as never, actor)
     const key = merchandiseFileKey({ cnpj: row.accessKey.slice(6, 20), model: '55', serie: row.serie, environment: row.environment, zone })
     const hints = [row.dhEmission, row.dhRecbto, row.lastEventAt, deps.now()]
-    for (let retry = 20; retry >= 0; retry--) {
-      const found = deps.storage.find({ ...key }, eventFileName(row.accessKey, '110111', 1, retry), hints)
-      if (found === null) continue
-      const proc = procEventoXml(deps.storage.read(found), responseXml, row.accessKey)
-      if (proc === null) break
-      deps.storage.save(key, eventProcFileName(row.accessKey, '110111', 1, retry), proc, deps.now())
-      return null
+    // o evento que o FISCO registrou é o do `procEventoNFe` da consulta: casa pelo `dhEvento` com um dos NOSSOS guardados (gate socrático da 2ª rodada — depois de um 573, o pedido mais recente NÃO é o registrado)
+    const registered = cancelEventDhOf(responseXml, row.accessKey)
+    if (registered !== null) {
+      for (let retry = 0; retry <= MAX_CANCEL_RETRIES; retry++) {
+        const found = deps.storage.find({ ...key }, eventFileName(row.accessKey, '110111', 1, retry), hints)
+        if (found === null) continue
+        const stored = deps.storage.read(found)
+        if (cancelEventDhOf(stored, row.accessKey) !== registered) continue
+        const proc = procEventoXml(stored, responseXml, row.accessKey)
+        if (proc === null) break
+        deps.storage.save(key, eventProcFileName(row.accessKey, '110111', 1, retry), proc, deps.now())
+        return null
+      }
     }
-    logger.warn('Arquivo fiscal: o procEventoNFe do cancelamento confirmado pela consulta não foi montado (evento guardado ausente ou retorno sem o retEvento)', { accessKey: row.accessKey })
-    return null
+    // nenhum evento NOSSO é o registrado (cancelado fora da API, ou a consulta sem o evento): NUNCA se monta prova com outro evento — pendência crítica (gate adversarial da 2ª rodada, H1)
+    logger.warn('Arquivo fiscal: o procEventoNFe do cancelamento confirmado pela consulta não foi montado (o evento registrado não está entre os guardados, ou a consulta não o trouxe)', { accessKey: row.accessKey })
+    return 'cancel-proof-missing'
   } catch (e) {
     if (isFileConflict(e)) return 'file-conflict'
     logger.warn('Arquivo fiscal: o procEventoNFe do cancelamento não foi gravado', { accessKey: row.accessKey, error: e instanceof Error ? e.name : 'erro' })

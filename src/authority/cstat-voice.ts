@@ -31,7 +31,7 @@ export interface VoiceEvent {
 export type VoiceDecision =
   | { readonly action: 'voice'; readonly event: VoiceEvent; readonly nProt: string | null; readonly digVal: string | null; readonly dhRecbto: string | null; readonly nRec: string | null }
   | { readonly action: 'consult-key'; readonly reason: DuplicateCStat }
-  | { readonly action: 'none'; readonly reason: '106' | '217' | 'cancelled' }
+  | { readonly action: 'none'; readonly reason: '106' | '217' | 'cancelled' | 'consulta-recusada' }
   | { readonly action: 'ambiguous'; readonly reason: string }
 
 const MAX_MESSAGE = 255
@@ -46,6 +46,8 @@ export function voiceOfCStat(result: ReadResult<SendFact>, source: 'P' | 'Q'): V
   if (result.kind === 'ambiguous') return { action: 'ambiguous', reason: result.cause }
   if (result.kind === 'no-voice') return { action: 'none', reason: '106' }
   if (result.kind === 'rejection') {
+    // a CONSULTA recusada (656, 108/109, 999…) recusa a pergunta, não a nota: só o `protNFe` da nossa chave fecha com R (gate socrático H1 — senão o número de uma nota possivelmente autorizada seria reaproveitado)
+    if (source === 'Q' && !result.note) return { action: 'none', reason: 'consulta-recusada' }
     // R só com cStat legível de rejeição (D-NE34): a forma do cStat é conferida, senão é ambíguo
     if (!/^[0-9]{3,4}$/.test(result.cStat)) return { action: 'ambiguous', reason: 'cstat-ilegivel' }
     return { action: 'voice', event: { kind: 'R', authorityCode: result.cStat, message: clip(result.xMotivo, 'Rejeitada pelo fisco'), dh: null, source }, nProt: null, digVal: null, dhRecbto: null, nRec: null }
@@ -73,4 +75,10 @@ export function voiceOfCStat(result: ReadResult<SendFact>, source: 'P' | 'Q'): V
     case 'cancelled':
       return { action: 'none', reason: 'cancelled' }
   }
+}
+
+/** A conferência do `digVal` do `protNFe` com o `DigestValue` da tentativa (D-NE41): Base64 exato (o hash distingue caixa). */
+export function checkDigest(expected: string, digVal: string | null): 'ok' | 'absent' | 'mismatch' {
+  if (digVal === null) return 'absent'
+  return digVal === expected ? 'ok' : 'mismatch'
 }

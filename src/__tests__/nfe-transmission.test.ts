@@ -25,9 +25,10 @@ const SECRET_CSRT = 'CSRT-DE-TESTE-NAO-USAR-EM-PRODUCAO'
 
 const envelope = (inner: string) => `<?xml version="1.0" encoding="utf-8"?><soap:Envelope xmlns:soap="http://www.w3.org/2003/05/soap-envelope"><soap:Body><nfeResultMsg xmlns="urn:x">${inner}</nfeResultMsg></soap:Body></soap:Envelope>`
 const keyOf = (c: HttpsCall): string => /Id="NFe(\d{44})"/.exec(String(c.body))![1]
-const prot = (chave: string, cStat: string, withProt = true) =>
-  `<protNFe versao="4.00"><infProt><tpAmb>2</tpAmb><verAplic>PR</verAplic><chNFe>${chave}</chNFe><dhRecbto>${DH}</dhRecbto>${withProt ? '<nProt>141260000000001</nProt>' : ''}`
-  + `<digVal>AAAAAAAAAAAAAAAAAAAAAAAAAAA=</digVal><cStat>${cStat}</cStat><xMotivo>motivo do fisco</xMotivo></infProt></protNFe>`
+const digOf = (c: HttpsCall): string => /<DigestValue>([^<]+)<\/DigestValue>/.exec(String(c.body))![1]
+const prot = (c: HttpsCall, cStat: string, withProt = true, digVal: string | null | undefined = undefined) =>
+  `<protNFe versao="4.00"><infProt><tpAmb>2</tpAmb><verAplic>PR</verAplic><chNFe>${keyOf(c)}</chNFe><dhRecbto>${DH}</dhRecbto>${withProt ? '<nProt>141260000000001</nProt>' : ''}`
+  + `${digVal === null ? '' : `<digVal>${digVal ?? digOf(c)}</digVal>`}<cStat>${cStat}</cStat><xMotivo>motivo do fisco</xMotivo></infProt></protNFe>`
 const ret = (inner: string, cStat = '104') =>
   envelope(`<retEnviNFe xmlns="${NS}" versao="4.00"><tpAmb>2</tpAmb><verAplic>PR</verAplic><cStat>${cStat}</cStat><xMotivo>Lote</xMotivo><cUF>41</cUF><dhRecbto>${DH}</dhRecbto>${inner}</retEnviNFe>`)
 
@@ -36,6 +37,8 @@ function setup(over: Partial<NfeDeps> = {}, facts: Partial<ComposedFacts> = {}) 
   const db = new MemDb()
   const storage = memStorage()
   const calls: HttpsCall[] = []
+  const txAtCall: number[] = []
+  const order: string[] = []
   let reply: Reply = () => { throw new Error('nenhuma resposta combinada') }
   const a1 = testA1()
   const base = db.connection()
@@ -44,16 +47,24 @@ function setup(over: Partial<NfeDeps> = {}, facts: Partial<ComposedFacts> = {}) 
     serie: 1, cnpj: '07742094000113', uf: 'PR', hasStateRegistration: true, dtEmission: '2026-11-24', createdAt: '2026-11-24 13:15:30',
     buildInput: ({ dhEmi, csrt }) => saleInput({ dhEmi, csrt }), ...facts,
   }
+  const base0 = conn.query
+  const tag = (sql: string): string => {
+    const one = sql.replace(/\s+/g, ' ').trim()
+    if (/ORDER BY t\.attempt DESC LIMIT 1/.test(one)) return 'latestAttempt'
+    if (/^INSERT INTO tb_invoice_merchandise_transmission /.test(one)) return 'insertAttempt'
+    return `q:${one.slice(0, 48)}`
+  }
+  conn.query = async (sql: string, params: unknown[] = []) => { order.push(tag(sql)); return base0(sql, params) }
   const deps: NfeDeps = {
     pool: { query: conn.query, getConnection: async () => conn } as never,
     storage: storage as never, catalog: VOICE_READINGS as never, now: () => NOW,
-    openIssuer: async () => ({ issuer: { environment: 'H' }, cert: a1.cert, key: a1.key, info: { cnpj: '07742094000113' } }) as never,
-    readFacts: async () => composed, zoneOf: async () => 'America/Sao_Paulo', establishmentCnpj: async () => '07742094000113',
+    openIssuer: async () => { order.push('openIssuer'); return ({ issuer: { environment: 'H' }, cert: a1.cert, key: a1.key, info: { cnpj: '07742094000113' } }) as never },
+    readFacts: async () => { order.push('readFacts'); return composed }, zoneOf: async () => 'America/Sao_Paulo', establishmentCnpj: async () => '07742094000113',
     credentialsFor: async () => ({ codeId: '01', codeValue: SECRET_CSRT }), ca: () => undefined,
-    request: async c => { calls.push(c); return reply(c) },
+    request: async c => { calls.push(c); txAtCall.push(db.openTx); return reply(c) },
     ...over,
   }
-  return { db, storage, calls, deps, conn, say: (r: Reply) => { reply = r } }
+  return { db, storage, calls, txAtCall, order, deps, conn, say: (r: Reply) => { reply = r } }
 }
 const code = (e: unknown) => (e as { code?: string }).code
 const run = (t: ReturnType<typeof setup>) => transmitInvoice(t.deps, ACTOR, REF)
@@ -78,7 +89,7 @@ describe('T3 — sem a família no catálogo, nada é montado', () => {
 describe('autorizada (104 com protNFe 100)', () => {
   it('reserva a tentativa com o número gerado e a chave nossa, guarda o -nfe.xml ANTES do envio, grava A com protocolo e dhRecbto, e guarda o -procNFe.xml', async () => {
     const t = setup()
-    t.say(c => ok(ret(prot(keyOf(c), '100'))))
+    t.say(c => ok(ret(prot(c, '100'))))
     const r = await run(t)
     expect(r).toMatchObject({ invoiceId: 5001, attempt: 1, number: 15, serie: 1, nProt: '141260000000001', next: null })
     expect(r.outcome).toEqual({ kind: 'A', authorityCode: '100', message: 'Autorizado o uso da NF-e' })
@@ -93,7 +104,7 @@ describe('autorizada (104 com protNFe 100)', () => {
 
   it('o dhEmi do XML é a data do dt_emission com a hora do created_at na zona (D-NE284), e o XML guardado é o MESMO que foi ao fisco', async () => {
     const t = setup()
-    t.say(c => ok(ret(prot(keyOf(c), '100'))))
+    t.say(c => ok(ret(prot(c, '100'))))
     const r = await run(t)
     const sent = String(t.calls[0].body)
     expect(sent).toContain('<dhEmi>2026-11-24T10:15:30-03:00</dhEmi>')
@@ -105,7 +116,7 @@ describe('autorizada (104 com protNFe 100)', () => {
 
   it('vai ao autorizador certo (PR em H) uma vez, com o lote síncrono de 1 NF-e e o A1', async () => {
     const t = setup()
-    t.say(c => ok(ret(prot(keyOf(c), '100'))))
+    t.say(c => ok(ret(prot(c, '100'))))
     await run(t)
     expect(t.calls).toHaveLength(1)
     expect(t.calls[0].url).toMatch(/^https:\/\/homologacao\.nfe\.sefa\.pr\.gov\.br\//)
@@ -115,7 +126,7 @@ describe('autorizada (104 com protNFe 100)', () => {
 
   it('o valor do CSRT nunca está no XML, no resultado nem nas gravações; o hash dele é o da chave', async () => {
     const t = setup()
-    t.say(c => ok(ret(prot(keyOf(c), '100'))))
+    t.say(c => ok(ret(prot(c, '100'))))
     const r = await run(t)
     const everything = JSON.stringify([r, t.db.attempts, t.db.events, [...t.storage.files.values()], t.calls.map(c => c.body)])
     expect(everything).not.toContain(SECRET_CSRT)
@@ -126,7 +137,7 @@ describe('autorizada (104 com protNFe 100)', () => {
 describe('rejeitada, ambígua, denegada e as saídas que só consultam', () => {
   it('rejeição da nota (703) → R sem protocolo e sem procNFe; a nova tentativa REAPROVEITA o número com chave nova (D-NE282)', async () => {
     const t = setup()
-    t.say(c => ok(ret(prot(keyOf(c), '703', false))))
+    t.say(c => ok(ret(prot(c, '703', false))))
     const first = await run(t)
     expect(first.outcome).toEqual({ kind: 'R', authorityCode: '703', message: 'motivo do fisco' })
     expect(t.db.attempts[0].protocol).toBeNull()
@@ -154,7 +165,7 @@ describe('rejeitada, ambígua, denegada e as saídas que só consultam', () => {
 
   it('denegada (110) → D com protocolo, procNFe guardado; a nova tentativa é barrada (o número queimou)', async () => {
     const t = setup()
-    t.say(c => ok(ret(prot(keyOf(c), '110'))))
+    t.say(c => ok(ret(prot(c, '110'))))
     const r = await run(t)
     expect(r.outcome).toMatchObject({ kind: 'D', authorityCode: '110' })
     expect(t.db.attempts[0].protocol).toBe('141260000000001')
@@ -165,7 +176,7 @@ describe('rejeitada, ambígua, denegada e as saídas que só consultam', () => {
   it('204 e 539 → nenhuma voz, a saída é consultar a chave; a tentativa segue em voo', async () => {
     for (const cStat of ['204', '539']) {
       const t = setup()
-      t.say(c => ok(ret(prot(keyOf(c), cStat, false))))
+      t.say(c => ok(ret(prot(c, cStat, false))))
       const r = await run(t)
       expect([r.outcome, r.next]).toEqual([{ kind: 'none', reason: cStat }, 'consult-key'])
       expect(t.db.events).toEqual([])
@@ -234,7 +245,7 @@ describe('o que recusa ANTES de abrir tentativa e de enviar', () => {
 
   it('o arquivo fiscal com o mesmo nome já existe: não se sobrescreve (write-once) e a transação desfaz', async () => {
     const t = setup()
-    t.say(c => ok(ret(prot(keyOf(c), '100'))))
+    t.say(c => ok(ret(prot(c, '100'))))
     const original = t.storage.find
     t.storage.find = () => 'ja-existe'
     await expect(run(t)).rejects.toThrow(/já existe/)
@@ -248,6 +259,88 @@ describe('o que recusa ANTES de abrir tentativa e de enviar', () => {
     const b = setup({}, { createdAt: null })
     await expect(run(b)).rejects.toMatchObject({ statusCode: 422 })
     expect([a.db.inserted, b.db.inserted, a.calls.length, b.calls.length]).toEqual([0, 0, 0, 0])
+  })
+})
+
+describe('o contrato do núcleo e as saídas do gate (NFE.E6.P1, gate socrático M1, M2, M3)', () => {
+  it('o fisco NUNCA é chamado com transação aberta (a reserva já fechou e a voz ainda não abriu)', async () => {
+    const t = setup()
+    t.say(c => ok(ret(prot(c, '100'))))
+    await run(t)
+    expect(t.txAtCall).toEqual([0])
+  })
+
+  it('a ORDEM da reserva: a habilitação travada (openIssuer) antes de qualquer leitura da nota, dos fatos e do número; a leitura da tentativa só depois', async () => {
+    const t = setup()
+    t.say(c => ok(ret(prot(c, '100'))))
+    nextInvoiceNumber.mockImplementationOnce(async () => { t.order.push('nextInvoiceNumber'); return { number: 15, environment: 'H' } })
+    await run(t)
+    const at = (needle: string) => t.order.findIndex(x => x.includes(needle))
+    expect(at('openIssuer')).toBeGreaterThan(-1)
+    expect(at('openIssuer')).toBeLessThan(at('latestAttempt'))                                 // a leitura da última tentativa
+    expect(at('openIssuer')).toBeLessThan(at('readFacts'))
+    expect(at('readFacts')).toBeLessThan(at('nextInvoiceNumber'))
+    expect(at('nextInvoiceNumber')).toBeLessThan(at('insertAttempt'))
+  })
+
+  it('o 409 da produção fechada desfaz a transação INTEIRA (rollback, nenhum COMMIT da reserva) e nada fica gravado', async () => {
+    nextInvoiceNumber.mockRejectedValueOnce(Object.assign(new Error('não aberta'), { statusCode: 409, code: 'FISCAL_NUMBER_SEQUENCE_NOT_OPEN' }))
+    const t = setup()
+    await expect(run(t)).rejects.toMatchObject({ code: 'FISCAL_NUMBER_SEQUENCE_NOT_OPEN' })
+    expect(t.conn.rollback).toHaveBeenCalledTimes(1)
+    expect([t.db.inserted, t.db.events.length, t.db.openTx]).toEqual([0, 0, 0])
+  })
+
+  it('digVal DIVERGENTE no A síncrono: nada é gravado, o procNFe não se guarda, incidente devolvido e a saída é consultar', async () => {
+    const t = setup()
+    t.say(c => ok(ret(prot(c, '100', true, 'B'.repeat(27) + '='))))
+    const r = await run(t)
+    expect([r.outcome, r.incident, r.next]).toEqual([{ kind: 'none', reason: 'digest-divergente' }, 'digest-mismatch', 'consult-key'])
+    expect([t.db.events, t.db.attempts[0].protocol]).toEqual([[], null])
+    expect([...t.storage.files.keys()].some(k => k.endsWith('-procNFe.xml'))).toBe(false)
+  })
+
+  it('digVal AUSENTE: o A que o fisco afirma pela nossa chave é gravado, com a pendência crítica devolvida', async () => {
+    const t = setup()
+    t.say(c => ok(ret(prot(c, '100', true, null))))
+    const r = await run(t)
+    expect([r.outcome.kind, r.incident, r.authorityCode]).toEqual(['A', 'digest-absent', '100'])
+    expect(t.db.events).toHaveLength(1)
+  })
+
+  it('o 150 (autorizada fora de prazo) chega ao resultado: o aviso da D-NE279 sai pelo authorityCode', async () => {
+    const t = setup()
+    t.say(c => ok(ret(prot(c, '150'))))
+    expect((await run(t)).authorityCode).toBe('150')
+  })
+
+  it('o freio da D-NE254: 30 rejeições do MESMO cStat na vida da nota recusam a nova tentativa (429); 29 não', async () => {
+    const seed = (n: number, code = '703') => {
+      const t = setup()
+      t.db.attempts.push({ attempt: 1, lifeEvent: 1, environment: 'H', authorizer: 'PR', accessKey: '41261107742094000113550010000000151999999990', dhEmission: '2026-11-24 13:15:30', digestValue: 'A'.repeat(27) + '=',
+        receipt: null, protocol: null, dhRecbto: null, lastQueriedAt: null, nfeNotRegisteredAt: null })
+      for (let i = 0; i < n; i++) t.db.events.push({ attempt: 1, event: i + 1, kind: 'R', authority_code: code, message: 'm', dh: null, source: 'P', createdAt: '2026-11-24 12:00:00' })
+      return t
+    }
+    const brake = seed(30)
+    await expect(run(brake)).rejects.toMatchObject({ statusCode: 429, code: 'RESOURCE_BUSY' })
+    expect(brake.calls).toHaveLength(0)
+    const fine = seed(29)
+    fine.say(c => ok(ret(prot(c, '100'))))
+    expect((await run(fine)).outcome.kind).toBe('A')
+    const mixed = seed(15)
+    for (let i = 0; i < 15; i++) mixed.db.events.push({ attempt: 1, event: 16 + i, kind: 'R', authority_code: '215', message: 'm', dh: null, source: 'P', createdAt: '2026-11-24 12:00:00' })
+    mixed.say(c => ok(ret(prot(c, '100'))))
+    expect((await run(mixed)).outcome.kind).toBe('A')                                            // 15 + 15 de códigos diferentes não somam
+  })
+
+  it('serviço paralisado (108/109) no topo do envio não é rejeição: nada é gravado e a tentativa fica em voo', async () => {
+    for (const cStat of ['108', '109']) {
+      const t = setup()
+      t.say(() => ok(ret('', cStat)))
+      const r = await run(t)
+      expect([r.outcome.kind, t.db.events.length]).toEqual(['none', 0])
+    }
   })
 })
 

@@ -278,6 +278,49 @@ describe('reconfirm — o 217 prova "não registrada" só por esta rota (D-NE111
   })
 })
 
+describe('a consulta RECUSADA não fecha a tentativa (gate socrático H1)', () => {
+  it.each(['656', '108', '109', '999', '562', '232'])('cStat %s no topo da consulta pela chave: nenhuma voz e a tentativa segue em voo — o número NÃO é liberado', async cStat => {
+    const t = setup(); seed(t)
+    t.say(() => ok(sit(cStat)))
+    const r = await refreshInvoice(t.deps, ACTOR, REF)
+    expect(r.outcome).toEqual({ kind: 'none', reason: 'consulta-recusada' })
+    expect(t.db.events).toEqual([])
+  })
+
+  it('656 e 108 no topo da consulta do RECIBO: o mesmo — nada se grava', async () => {
+    for (const cStat of ['656', '108']) {
+      const t = setup(); seed(t, { receipt: '411000000000001' }, [{ kind: 'P', authority_code: '103', createdAt: '2026-11-24 12:00:00' }])
+      t.say(() => ok(rec(cStat)))
+      const r = await refreshInvoice(t.deps, ACTOR, REF)
+      expect([r.outcome, t.db.events.length]).toEqual([{ kind: 'none', reason: 'consulta-recusada' }, 1])
+    }
+  })
+
+  it('a rejeição da NOTA (cStat de rejeição no protNFe da nossa chave, no recibo) fecha com R — esta sim é da nota', async () => {
+    const t = setup(); seed(t, { receipt: '411000000000001' }, [{ kind: 'P', authority_code: '103', createdAt: '2026-11-24 12:00:00' }])
+    t.say(() => ok(rec('104', prot('703', { nProt: false }))))
+    const r = await refreshInvoice(t.deps, ACTOR, REF)
+    expect(r.outcome).toMatchObject({ kind: 'R', authorityCode: '703' })
+    expect(t.db.events[t.db.events.length - 1]).toMatchObject({ kind: 'R', source: 'Q' })
+  })
+
+  it('tentativa fechada por F não vira R pela consulta recusada', async () => {
+    const t = setup(); seed(t, {}, [{ kind: 'F', authority_code: null }])
+    t.say(() => ok(sit('656')))
+    await refreshInvoice(t.deps, ACTOR, REF)
+    expect(t.db.events.map(e => e.kind)).toEqual(['F'])
+  })
+
+  it('o procNFe só é montado sobre o -nfe.xml guardado que AINDA é o que assinamos (o DigestValue relido bate com o da tentativa)', async () => {
+    const t = setup(); seed(t, { digestValue: DIGEST })
+    t.storage.files.set([...t.storage.files.keys()][0], SIGNED.replace(DIGEST, 'C'.repeat(27) + '='))   // o arquivo foi adulterado depois
+    t.say(() => ok(sit('100', prot('100'))))
+    const r = await refreshInvoice(t.deps, ACTOR, REF)
+    expect(r.outcome.kind).toBe('A')                                                                  // o A é do fisco e é gravado
+    expect(hasProc(t)).toBe(false)                                                                    // mas nenhum procNFe sobre um XML que não é o nosso
+  })
+})
+
 describe('o fonte da reconciliação', () => {
   it('nunca nomeia a coluna do fato (só recordNfeNotRegistered), não toca rede nem relógio por conta própria', () => {
     const src = (require('fs').readFileSync(require('path').resolve(__dirname, '..', 'nfe', 'reconcile.ts'), 'utf8') as string).replace(/\/\*[\s\S]*?\*\/|(?<!:)\/\/[^\n]*/g, '')

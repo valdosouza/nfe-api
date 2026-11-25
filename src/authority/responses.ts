@@ -20,7 +20,8 @@ import { NFE_NS } from './soap'
 
 export type ReadResult<F> =
   | { readonly kind: 'fact'; readonly fact: F }
-  | { readonly kind: 'rejection'; readonly cStat: string; readonly xMotivo: string | null }
+  /** `note`: a rejeição é da NOTA (o cStat do `protNFe` da nossa chave); sem ele é a recusa da PERGUNTA (656, 108/109, 999…) — nunca fecha a tentativa (NFE.E6.P1, gate socrático H1). */
+  | { readonly kind: 'rejection'; readonly cStat: string; readonly xMotivo: string | null; readonly note?: true }
   | { readonly kind: 'no-voice'; readonly cStat: string }
   | { readonly kind: 'ambiguous'; readonly cause: AmbiguousCause }
 
@@ -132,7 +133,7 @@ function readProt(parent: XmlNode, chNFe: string, tpAmb: string): ReadResult<Pro
   if (cStat && protStatusOf(cStat) === 'authorized' && nProt) return { kind: 'fact', fact: { status: 'authorized', cStat, nProt, digVal, dhRecbto } }
   if (cStat && protStatusOf(cStat) === 'denied') return { kind: 'fact', fact: { status: 'denied', cStat, nProt, digVal, dhRecbto } }
   if (cStat && DUPLICATE.has(cStat)) return { kind: 'fact', fact: { status: 'duplicate', cStat: cStat as DuplicateCStat } }
-  if (cStat) return rejection(cStat, text(inf, 'xMotivo'))
+  if (cStat) return { kind: 'rejection', cStat, xMotivo: text(inf, 'xMotivo'), note: true }
   return ambiguous('envelope-ilegivel')
 }
 function protStatusOf(cStat: string): 'authorized' | 'denied' | null {
@@ -189,6 +190,7 @@ export function readSend(q: SendQuestion, xml: string): ReadResult<SendFact> {
     const cStat = text(ret, 'cStat')
     if (!cStat) return ambiguous('envelope-ilegivel')
     if (DUPLICATE.has(cStat)) return { kind: 'fact', fact: { status: 'duplicate', cStat: cStat as DuplicateCStat } }
+    if (cStat === '108' || cStat === '109') return ambiguous('nao-classificada')                   // serviço paralisado: o lote não foi processado e nada se conclui — a tentativa fica em voo
     if (cStat !== '103' && cStat !== '104' && cStat !== '105') return rejection(cStat, text(ret, 'xMotivo'))
     if (text(ret, 'tpAmb') !== q.tpAmb) return ambiguous('nao-classificada')
     if (cStat === '105') return { kind: 'fact', fact: { status: 'processing', cStat: '105' } }

@@ -122,12 +122,12 @@ describe('POST /refresh, POST /reconfirm e GET', () => {
 
 describe('o mapa resultado → resposta do contrato (código real)', () => {
   const real = jest.requireActual('../modules/invoices/invoices.service') as typeof import('../modules/invoices/invoices.service')
-  const base: Omit<TransmitResult, 'outcome' | 'nProt' | 'nRec' | 'next'> = { invoiceId: 5001, attempt: 2, accessKey: 'K', number: 15, serie: 1 }
-  const result = (outcome: TransmitResult['outcome'], extra: Partial<TransmitResult> = {}): TransmitResult => ({ ...base, outcome, nProt: null, nRec: null, next: null, ...extra })
+  const base: Omit<TransmitResult, 'outcome' | 'nProt' | 'nRec' | 'next' | 'authorityCode' | 'incident'> = { invoiceId: 5001, attempt: 2, accessKey: 'K', number: 15, serie: 1 }
+  const result = (outcome: TransmitResult['outcome'], extra: Partial<TransmitResult> = {}): TransmitResult => ({ ...base, outcome, nProt: null, nRec: null, next: null, incident: null, authorityCode: 'authorityCode' in outcome ? outcome.authorityCode : null, ...extra })
   const thrown = (fn: () => unknown): any => { try { fn() } catch (e) { return e } return null }
 
   it('A = 201 com o número e o protocolo; P = 202 com o recibo', () => {
-    expect(real.responseOfTransmit(result({ kind: 'A', authorityCode: '100', message: 'm' }, { nProt: '141260000000001' }))).toEqual({ status: 201, data: { invoiceId: 5001, attempt: 2, accessKey: 'K', number: 15, serie: 1, protocol: '141260000000001', receipt: null, kind: 'A' } })
+    expect(real.responseOfTransmit(result({ kind: 'A', authorityCode: '100', message: 'm' }, { nProt: '141260000000001' }))).toEqual({ status: 201, data: { invoiceId: 5001, attempt: 2, accessKey: 'K', number: 15, serie: 1, protocol: '141260000000001', receipt: null, kind: 'A', authorityCode: '100', incident: null } })
     expect(real.responseOfTransmit(result({ kind: 'P', authorityCode: '103', message: 'm' }, { nRec: '411000000000001' })).status).toBe(202)
   })
 

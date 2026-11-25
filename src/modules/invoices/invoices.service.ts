@@ -33,20 +33,20 @@ export function nfeDepsOf(ctx: AppContext, now: () => Date = () => new Date()): 
   }
 }
 
-export interface TransmitResponse { readonly status: 201 | 202; readonly data: { invoiceId: number; attempt: number; accessKey: string; number: number; serie: number; protocol: string | null; receipt: string | null; kind: 'A' | 'P' } }
+export interface TransmitResponse { readonly status: 201 | 202; readonly data: { invoiceId: number; attempt: number; accessKey: string; number: number; serie: number; protocol: string | null; receipt: string | null; kind: 'A' | 'P'; authorityCode: string | null; incident: TransmitResult['incident'] } }
 
 /** O que o fisco disse → a resposta do contrato: A = 201, P = 202; R, D, F e o que não fechou viram o erro tipado (o corpo tem o cStat e a saída seguinte). */
 export function responseOfTransmit(r: TransmitResult): TransmitResponse {
   const o = r.outcome
   if (o.kind === 'A' || o.kind === 'P') {
-    return { status: o.kind === 'A' ? 201 : 202, data: { invoiceId: r.invoiceId, attempt: r.attempt, accessKey: r.accessKey, number: r.number, serie: r.serie, protocol: r.nProt, receipt: r.nRec, kind: o.kind } }
+    return { status: o.kind === 'A' ? 201 : 202, data: { invoiceId: r.invoiceId, attempt: r.attempt, accessKey: r.accessKey, number: r.number, serie: r.serie, protocol: r.nProt, receipt: r.nRec, kind: o.kind, authorityCode: r.authorityCode, incident: r.incident } }
   }
   const at = [{ field: 'attempt', message: String(r.attempt) }]
   if (o.kind === 'R') throw new HttpError(422, `NF-e rejeitada pelo fisco: ${o.message}`, [{ field: 'authorityCode', message: String(o.authorityCode) }, ...at], 'FISCAL_DOCUMENT_REJECTED')
   if (o.kind === 'D') throw new HttpError(409, `NF-e denegada pelo fisco (${o.authorityCode}): a nota existe no fisco e não se retransmite`, [{ field: 'authorityCode', message: String(o.authorityCode) }, ...at], 'FISCAL_DENIED')
   if (o.kind === 'F') throw new HttpError(502, o.message, at, ErrorCodes.FISCAL_AUTHORITY_AUTH_FAILED)
   // nada concluiu (ambíguo, 204/539, 106…): a tentativa fica EM VOO e a saída é consultar (D-NE34/D-NE36)
-  throw new HttpError(502, 'O fisco não concluiu a autorização: a tentativa ficou em voo — consulte a situação pela nossa chave', [...at, { field: 'next', message: r.next ?? 'consult-key' }], ErrorCodes.FISCAL_AUTHORITY_UNKNOWN_RESPONSE)
+  throw new HttpError(502, 'O fisco não concluiu a autorização: a tentativa ficou em voo — consulte a situação pela nossa chave', [...at, { field: 'next', message: r.next ?? 'consult-key' }, ...(r.incident ? [{ field: 'incident', message: r.incident }] : [])], ErrorCodes.FISCAL_AUTHORITY_UNKNOWN_RESPONSE)
 }
 
 export async function transmit(ctx: AppContext, inst: InstitutionPayload, ref: InvoiceRef): Promise<TransmitResponse> {

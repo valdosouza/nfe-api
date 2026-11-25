@@ -1,13 +1,13 @@
 import { ErrorCodes, HttpError, recordVoiceOnce, toUtcDb, withInvoiceTx, type InvoiceRef, type InvoiceTx } from 'fiscal-api'
 import { endpointOf, soapBindingOf, type Environment } from '../authority/authorizers'
-import { voiceOfCStat, type VoiceDecision, type VoiceEvent } from '../authority/cstat-voice'
+import { checkDigest, voiceOfCStat, type VoiceDecision, type VoiceEvent } from '../authority/cstat-voice'
 import { consReciNFe, consSitNFe } from '../authority/messages'
 import { readProtocol, readReceipt, type ProtocolFact, type ReadResult } from '../authority/responses'
 import { callSoap, type SoapOutcome } from '../authority/soap'
 import { barrierOf, fillAuthorityData, fillReceipt, getAttempt, attemptsOfLife, latestAttempt, touchQueriedAt, type AttemptRow } from './attempt'
 import { merchandiseFileKey } from './fiscal-file'
 import { recordNfeNotRegistered } from './not-registered'
-import { procNfeXml } from './proc-nfe'
+import { digestValueOf, procNfeXml } from './proc-nfe'
 import { MERCHANDISE_VOICE_FAMILY } from './voice-family'
 import type { NfeActor, NfeDeps } from './transmission'
 
@@ -98,8 +98,7 @@ async function writeVoice(itx: InvoiceTx, attempt: number, userId: number | null
 
 function digestCheckOf(row: AttemptRow, decision: Extract<VoiceDecision, { action: 'voice' }>): RefreshResult['digestCheck'] {
   if (decision.event.kind !== 'A' && decision.event.kind !== 'D') return null
-  if (decision.digVal === null) return 'absent'
-  return decision.digVal === row.digestValue ? 'ok' : 'mismatch'             // Base64 exato: o hash distingue caixa
+  return checkDigest(row.digestValue, decision.digVal)                       // Base64 exato: o hash distingue caixa
 }
 
 /**
@@ -147,7 +146,9 @@ async function buildProc(deps: ReconcileDeps, actor: NfeActor, c: Consulted): Pr
   const name = `${c.row.accessKey}-nfe.xml`
   const found = deps.storage.find({ ...key }, name, [c.row.dhEmission])
   if (found === null) return null
-  return procNfeXml(deps.storage.read(found), c.outcome.xml, c.row.accessKey)
+  const stored = deps.storage.read(found)
+  if (digestValueOf(stored) !== c.row.digestValue) return null               // o XML guardado não é mais o que assinamos: nenhum procNFe sobre ele (D-NE41)
+  return procNfeXml(stored, c.outcome.xml, c.row.accessKey)
 }
 
 export interface RefreshOptions {

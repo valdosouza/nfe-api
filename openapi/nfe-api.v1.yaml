@@ -257,7 +257,9 @@ paths:
         RAMO + ramo contratado. Resposta conferida contra a pergunta (chNFe do retorno = a enviada — D-NE42). Desfecho ambíguo (timeout,
         Fault, HTTP 500, resposta ilegível — D-NE34) NÃO fecha: a tentativa fica em voo e o refresh reconcilia pela NOSSA chave.
         204 (duplicidade, mesma chave) → pousa A pela consulta; 539/204 de outra chave → D-NE36 (consultar as chaves de TODAS as
-        tentativas; nunca chave nova automática).
+        tentativas — `refresh?all=true`; nunca chave nova automática). 205/206/218/635 também só mandam consultar a chave (o número já é de uma nota). O `digVal` do
+        protNFe é conferido com o `DigestValue` da tentativa: divergente = nada se grava (`incident: digest-mismatch`); ausente = grava o A com `incident: digest-absent`. Falha
+        conclusiva do certificado ou da cadeia (voz F) = 502 FISCAL_AUTHORITY_AUTH_FAILED. 30 rejeições do mesmo cStat na vida da nota recusam a nova tentativa (429 — D-NE254).
       responses:
         '201':
           description: autorizada (voz A — 100/150) e o procNFe guardado
@@ -312,7 +314,7 @@ paths:
       tags: [nfe]
       summary: Consulta o fisco pela NOSSA chave (ou pelo recibo, se P) e grava a voz nova da tentativa vigente (idempotente)
       description: >-
-        Privilégio TRANSMITIR do ramo. A pergunta vai ao autorizador GRAVADO na tentativa (D-NE37). Rodízio respeita o consumo indevido
+        Privilégio CONSULTAR do ramo (D-PV40: consultar ≠ transmitir). A pergunta vai ao autorizador GRAVADO na tentativa (D-NE37). `?all=true` consulta as chaves de TODAS as tentativas da nota, da mais nova à mais antiga (a saída `next: consult-key` do 539 — D-NE36). A CONSULTA recusada (656, 108/109, 999…) recusa a pergunta, não a nota: nenhuma voz e a tentativa segue em voo. Rodízio respeita o consumo indevido
         (656: > 10 consultas da MESMA chave por hora bloqueiam o CNPJ — intervalo mínimo por chave; D-NE26) — consulta recusada pelo
         intervalo = 429 sem ir ao fisco. 217 ("NF-e não consta") NÃO fecha nada pela consulta: devolve `notRegistered: true` e só a rota `reconfirm` grava o fato (D-NE111/D-NE235). C
         descoberta aqui (cancelada em outro sistema com o mesmo A1) NÃO produz o C local — o setes-api a lê (D-F11). Reconciliação com
@@ -823,6 +825,8 @@ components:
         protocol: { type: string, nullable: true }
         receipt: { type: string, nullable: true }
         kind: { type: string, enum: [A, P] }
+        authorityCode: { type: string, nullable: true, description: 'cStat da voz gravada — 150 = autorizada fora de prazo (o aviso da D-NE279 sai por aqui)' }
+        incident: { type: string, nullable: true, enum: [digest-mismatch, digest-absent, null], description: 'pendência crítica do digVal (D-NE41)' }
     RefreshResult:
       type: object
       properties:

@@ -3,12 +3,12 @@ import {
   type InvoiceRef, type InvoiceTx, type openIssuer, type Queryable, type FiscalStorage, type HttpsCall, type HttpsResult,
 } from 'fiscal-api'
 import { endpointOf, resolveAuthorizer, soapBindingOf, type Environment, type Uf } from '../authority/authorizers'
-import { voiceOfCStat, type VoiceDecision, type VoiceEvent } from '../authority/cstat-voice'
+import { checkDigest, voiceOfCStat, type VoiceDecision, type VoiceEvent } from '../authority/cstat-voice'
 import { enviNFe } from '../authority/messages'
 import { readSend } from '../authority/responses'
 import { callSoap, type SoapOutcome } from '../authority/soap'
 import { validateMessage } from '../authority/xsd'
-import { barrierOf, drawCnf, fillAuthorityData, fillReceipt, generateNumber, insertAttempt, latestAttempt, numberPolicy } from './attempt'
+import { barrierOf, drawCnf, fillAuthorityData, fillReceipt, generateNumber, insertAttempt, latestAttempt, numberPolicy, voicesOfLife } from './attempt'
 import { dhEmiOf } from './dh-emi'
 import { documentInvalid, NfeErrors } from './errors'
 import { merchandiseFileKey } from './fiscal-file'
@@ -91,6 +91,10 @@ export interface TransmitResult {
   readonly nRec: string | null
   /** A saída que quem chama segue quando nada concluiu: consultar a chave (204/539/…) ou o recibo (103/105). */
   readonly next: 'consult-key' | 'consult-receipt' | null
+  /** O cStat da voz gravada (150 = autorizada fora de prazo: o aviso da D-NE279 sai por aqui). */
+  readonly authorityCode: string | null
+  /** Pendência crítica do `digVal` do `protNFe` (D-NE41): divergente NÃO grava; ausente grava o A que o fisco afirma. */
+  readonly incident: 'digest-mismatch' | 'digest-absent' | null
 }
 
 const fiscalEnvironment = (e: Environment): 'H' | 'P' => e
@@ -124,6 +128,7 @@ export async function transmitInvoice(deps: NfeDeps, actor: NfeActor, ref: Invoi
     const latest = await latestAttempt(conn, ref, life)
     const barrier = barrierOf(latest)
     if (barrier) throw barrier
+    assertRejectionBrake(await voicesOfLife(conn, ref, life))                    // D-NE254: 30 rejeições iguais da mesma nota
     const policy = numberPolicy(latest)
     const environment = opened.issuer.environment as Environment
     const facts = await readFactsGuarded(deps, conn, actor, ref, environment)
@@ -196,6 +201,9 @@ export async function transmitInvoice(deps: NfeDeps, actor: NfeActor, ref: Invoi
   const d = decision
   const voice = d.event
   if (voice.kind === 'D' && !d.nProt) return finish(ref, reserved, { kind: 'none', reason: 'denegada-sem-protocolo' }, null, null, 'consult-key')
+  // o `digVal` do protNFe contra o DigestValue do candidato que assinamos (D-NE41): divergente = pendência crítica, NADA se grava e o procNFe não se guarda
+  const digestCheck = voice.kind === 'A' || voice.kind === 'D' ? checkDigest(digestValueOf(reserved.signedXml) as string, d.digVal) : null
+  if (digestCheck === 'mismatch') return finish(ref, reserved, { kind: 'none', reason: 'digest-divergente' }, null, null, 'consult-key', 'digest-mismatch')
   await withInvoiceTx(deps.pool, actor, ref, { label: 'voz do fisco da NF-e' }, async itx => {
     if (d.nProt) await fillAuthorityData(itx, reserved.attempt, { protocol: d.nProt, dhRecbtoUtc: utc(d.dhRecbto) })
     if (d.nRec) await fillReceipt(itx, reserved.attempt, d.nRec)
@@ -206,7 +214,7 @@ export async function transmitInvoice(deps: NfeDeps, actor: NfeActor, ref: Invoi
     const xml = outcome.kind === 'answered' || outcome.kind === 'rejected' ? procNfeXml(reserved.signedXml, outcome.xml, reserved.accessKey) : null
     if (xml) { try { saveWriteOnce(deps, { cnpj: reserved.cnpj, serie: reserved.serie, environment: reserved.environment, zone: reserved.zone }, `${reserved.accessKey}-procNFe.xml`, xml, deps.now()) } catch { /* só avisa */ } }
   }
-  return finish(ref, reserved, { kind: voice.kind, authorityCode: voice.authorityCode, message: voice.message }, d.nProt, d.nRec, d.nRec || voice.kind === 'P' ? 'consult-receipt' : null)
+  return finish(ref, reserved, { kind: voice.kind, authorityCode: voice.authorityCode, message: voice.message }, d.nProt, d.nRec, d.nRec || voice.kind === 'P' ? 'consult-receipt' : null, digestCheck === 'absent' ? 'digest-absent' : null)
 }
 
 /**
@@ -222,6 +230,16 @@ async function writeVoice(itx: InvoiceTx, attempt: number, userId: number | null
     case 'R': await recordVoiceOnce({ insertTransmissionEvent, hasTransmissionEvent }, itx, attempt, userId, { kind: 'R', source: e.source, authorityCode: e.authorityCode, message: e.message, dh: e.dh }); return
     case 'P': await recordVoiceOnce({ insertTransmissionEvent, hasTransmissionEvent }, itx, attempt, userId, { kind: 'P', source: e.source, authorityCode: e.authorityCode, message: e.message, dh: e.dh }); return
     case 'F': await recordVoiceOnce({ insertTransmissionEvent, hasTransmissionEvent }, itx, attempt, userId, { kind: 'F', source: e.source, authorityCode: e.authorityCode, message: e.message, dh: e.dh }); return
+  }
+}
+
+/** O freio da D-NE254: 30 rejeições do MESMO cStat na vida da nota recusam a nova tentativa (429) — sem ele, um R de 656 reenviaria sem fim, reaproveitando o número. */
+export const MAX_SAME_REJECTIONS = 30
+export function assertRejectionBrake(voices: readonly { kind: string; authorityCode: string | null }[]): void {
+  const counts = new Map<string, number>()
+  for (const v of voices) if (v.kind === 'R' && v.authorityCode) counts.set(v.authorityCode, (counts.get(v.authorityCode) ?? 0) + 1)
+  for (const [code, n] of counts) {
+    if (n >= MAX_SAME_REJECTIONS) throw new HttpError(429, `A nota já foi rejeitada ${n} vezes com o mesmo motivo (${code}) — corrija antes de transmitir de novo (freio do consumo indevido, D-NE254)`, [{ field: 'authorityCode', message: code }], ErrorCodes.RESOURCE_BUSY)
   }
 }
 
@@ -256,7 +274,8 @@ function decide(outcome: SoapOutcome, r: Reserved): VoiceDecision {
 const noneOf = (d: VoiceDecision): { kind: 'none'; reason: string } =>
   d.action === 'ambiguous' ? { kind: 'none', reason: d.reason } : d.action === 'consult-key' ? { kind: 'none', reason: d.reason } : { kind: 'none', reason: d.action === 'none' ? d.reason : 'sem-voz' }
 
-function finish(ref: InvoiceRef, r: Reserved, outcome: TransmitResult['outcome'], nProt: string | null, nRec: string | null, next: TransmitResult['next']): TransmitResult {
-  return { invoiceId: ref.invoiceId, attempt: r.attempt, accessKey: r.accessKey, number: r.number, serie: r.serie, outcome, nProt, nRec, next }
+function finish(ref: InvoiceRef, r: Reserved, outcome: TransmitResult['outcome'], nProt: string | null, nRec: string | null, next: TransmitResult['next'], incident: TransmitResult['incident'] = null): TransmitResult {
+  const authorityCode = 'authorityCode' in outcome ? outcome.authorityCode : null
+  return { authorityCode, incident, invoiceId: ref.invoiceId, attempt: r.attempt, accessKey: r.accessKey, number: r.number, serie: r.serie, outcome, nProt, nRec, next }
 }
 

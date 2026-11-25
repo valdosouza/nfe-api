@@ -59,7 +59,7 @@ type Env = ReturnType<typeof setup>
 /** Uma tentativa em voo (sem voz), criada ANTES da cota. */
 function seed(t: Env, over: Record<string, unknown> = {}, events: Record<string, unknown>[] = []) {
   t.db.attempts.push({ attempt: 1, lifeEvent: 1, environment: 'H', authorizer: 'PR', accessKey: KEY, dhEmission: '2026-11-24 13:15:30', digestValue: DIGEST,
-    receipt: null, protocol: null, dhRecbto: null, lastQueriedAt: null, nfeNotRegisteredAt: null, ...over })
+    receipt: null, protocol: null, dhRecbto: null, lastQueriedAt: null, nfeNotRegisteredAt: null, createdAt: '2026-11-24 12:00:00', ...over })
   events.forEach((e, i) => t.db.events.push({ attempt: 1, event: i + 1, authority_code: null, message: null, dh: null, source: 'P', createdAt: '2026-11-24 12:00:00', ...e }))
 }
 const advance = (t: Env, deltaMs: number) => { t.db.clock = new Date(t.db.clock.getTime() + deltaMs) }
@@ -379,7 +379,14 @@ describe('o 217 não vale para a tentativa recém-criada e a denegada sem protoc
     expect((await reconfirmNotRegistered(t.deps, ACTOR, REF)).reason).toBe('registrada-agora')
   })
 
-  it('o mínimo provisório é de 10 minutos (a proposta; o valor é do Valdo)', () => {
+  it('idade ilegível da tentativa sem voz: recusa (falha fechado) — sem perguntar ao fisco e sem gravar o fato', async () => {
+    const t = setup(); seed(t, { createdAt: 'ontem' })
+    t.say(() => ok(sit('217')))
+    await expect(reconfirmNotRegistered(t.deps, ACTOR, REF)).rejects.toMatchObject({ statusCode: 429 })
+    expect([t.calls.length, t.db.attempts[0].nfeNotRegisteredAt]).toEqual([0, null])
+  })
+
+  it('o mínimo é de 10 minutos (D-NE291)', () => {
     expect(MIN_ATTEMPT_AGE_BEFORE_217_MS).toBe(600_000)
   })
 

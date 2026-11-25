@@ -348,10 +348,11 @@ paths:
       tags: [nfe]
       summary: Reconfirma o 217 — grava o FATO "o fisco não registrou" na tentativa em voo (D-NE111, D-NE235)
       description: >-
-        Privilégio TRANSMITIR do ramo. Pergunta ao fisco pela NOSSA chave, no autorizador gravado na tentativa. Só com 217 e `chNFe` igual, sem recibo 103/105 em aberto
-        e se a última voz ainda é a que a pergunta viu, grava `nfe_not_registered_at` na tentativa (fato, NUNCA voz). A tentativa continua em voo e a nova tentativa segue
-        barrada (409) até o `notRegisteredProven` do núcleo existir (PM-8). Qualquer outra resposta do fisco é tratada como o `refresh` trata (pousa A, D…), sem gravar o
-        fato. Respeita a cota da chave (429).
+        Privilégio TRANSMITIR do ramo. Pergunta ao fisco pela NOSSA chave, no autorizador gravado na tentativa. SÓ a tentativa SEM voz criada há 10 minutos ou mais
+        (D-NE291; antes disso 429 sem ir ao fisco; idade ilegível = recusa) e só quem a peça `notRegisteredProven` do núcleo prova (RF-NFE-72: 217, `chNFe` igual, no autorizador
+        gravado, sem recibo 103/105 em aberto e a última voz ainda é a que a pergunta viu) grava `nfe_not_registered_at` (fato, NUNCA voz). A peça recusando devolve o motivo
+        (`reason`; `peca-recusou` leva a razão dela em `detail`) e NADA se grava. Gravado o fato, a nota pode ser transmitida de novo por ato do usuário, com o MESMO número e
+        `cNF` novo (D-NE292). Qualquer outra resposta do fisco é tratada como o `refresh` trata (pousa A, D…), sem gravar o fato. Respeita a cota da chave (429).
       responses:
         '200':
           description: ok
@@ -852,7 +853,8 @@ components:
         attempt: { type: integer }
         accessKey: { type: string }
         recorded: { type: boolean, description: 'o fato foi gravado agora' }
-        reason: { type: string, enum: [registrada-agora, ja-registrada, nao-e-217, recibo-em-aberto, voz-mudou-depois-da-pergunta, tentativa-fechada] }
+        reason: { type: string, enum: [registrada-agora, ja-registrada, nao-e-217, recibo-em-aberto, voz-mudou-depois-da-pergunta, tentativa-fechada, peca-recusou] }
+        detail: { type: string, description: 'com `peca-recusou`: a razão que a peça notRegisteredProven do núcleo devolveu (nada foi gravado)' }
         refresh: { allOf: [ { $ref: '#/components/schemas/RefreshResult' } ], nullable: true, description: 'a resposta do fisco quando NÃO foi o 217' }
     CancelResult:
       type: object

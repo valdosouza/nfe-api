@@ -170,7 +170,7 @@ describe('(e) fase 2 — --vai: serviços pela CONSTANTE', () => {
       ['NfeConsultaCadastro', 'answered', '111'],
     ])
     expect(r.services![0].read).toEqual({ kind: 'fact', fact: { state: 'operating', cStat: '107' } })
-    expect(r.services![1].read).toEqual({ kind: 'fact', fact: { status: 'not-found', cStat: '217' } })
+    expect(r.services![1].read).toEqual({ kind: 'fact', fact: { status: 'not-found', cStat: '217', chNFe: expect.any(String) } })
     expect(files['servicos/NfeStatusServico-enviado.xml']).toContain('<consStatServ')
     expect(JSON.parse(files['servicos/resumo.json']).resultados).toHaveLength(3)
     expect(r.ieMatches).toBe(true)                    // a IE do cadastro falso é a do --ie (§16.2-6: só confere)

@@ -117,7 +117,7 @@ export type ProtocolFact =
   | { readonly status: 'authorized'; readonly cStat: string; readonly nProt: string; readonly digVal: string | null; readonly dhRecbto: string | null }
   | { readonly status: 'denied'; readonly cStat: string; readonly nProt: string | null; readonly digVal: string | null; readonly dhRecbto: string | null }
   | { readonly status: 'cancelled'; readonly cStat: string }
-  | { readonly status: 'not-found'; readonly cStat: '217' }
+  | { readonly status: 'not-found'; readonly cStat: '217'; /** o `chNFe` DO RETORNO (já igual à pergunta): a peça `notRegisteredProven` do núcleo o compara com a chave da tentativa */ readonly chNFe: string }
   | { readonly status: 'processing'; readonly cStat: '105' }
   /**
    * 204 (duplicidade, mesma chave) e 539 (chave diferente — D-NE36), mais 205 (denegada na base), 218 (cancelada), 206 (inutilizada) e 635 (mesmo número e série
@@ -156,7 +156,7 @@ export function readProtocol(q: ProtocolQuestion, xml: string): ReadResult<Proto
     const ret = retOf(xml, 'retConsSitNFe')
     const cStat = text(ret, 'cStat')
     if (!cStat) return ambiguous('situacao-ilegivel')
-    if (cStat === '217') return text(ret, 'chNFe') === q.chNFe ? { kind: 'fact', fact: { status: 'not-found', cStat: '217' } } : ambiguous('nao-classificada')
+    if (cStat === '217') return text(ret, 'chNFe') === q.chNFe ? { kind: 'fact', fact: { status: 'not-found', cStat: '217', chNFe: q.chNFe } } : ambiguous('nao-classificada')
     const located = AUTHORIZED.has(cStat) || DENIED.has(cStat) || cStat === '101' || cStat === '151'
     if (!located) return cStat === '155' ? ambiguous('situacao-ilegivel') : rejection(cStat, text(ret, 'xMotivo'))
     if (text(ret, 'chNFe') !== q.chNFe || text(ret, 'tpAmb') !== q.tpAmb) return ambiguous('nao-classificada')   // D-NE42, D-NE210

@@ -63,7 +63,7 @@ describe('consulta de protocolo (RF-NFE-21; D-NE42, D-NE209, D-NE210)', () => {
     expect(readProtocol(q, ret('155'))).toEqual({ kind: 'ambiguous', cause: 'situacao-ilegivel' })
   })
   it('217 → não consta; 613 → rejeição', () => {
-    expect(readProtocol(q, ret('217'))).toEqual({ kind: 'fact', fact: { status: 'not-found', cStat: '217' } })
+    expect(readProtocol(q, ret('217'))).toEqual({ kind: 'fact', fact: { status: 'not-found', cStat: '217', chNFe: q.chNFe } })
     expect(readProtocol(q, ret('613'))).toEqual({ kind: 'rejection', cStat: '613', xMotivo: 'm' })
   })
 })

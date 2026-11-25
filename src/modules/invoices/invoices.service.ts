@@ -71,9 +71,9 @@ export async function refresh(ctx: AppContext, inst: InstitutionPayload, ref: In
   return responseOfRefresh(await refreshInvoice(nfeDepsOf(ctx), actorOf(inst), ref, { all }))
 }
 
-export async function reconfirm(ctx: AppContext, inst: InstitutionPayload, ref: InvoiceRef): Promise<{ invoiceId: number; attempt: number; accessKey: string; recorded: boolean; reason: ReconfirmResult['reason']; refresh: RefreshResponse | null }> {
+export async function reconfirm(ctx: AppContext, inst: InstitutionPayload, ref: InvoiceRef): Promise<{ invoiceId: number; attempt: number; accessKey: string; recorded: boolean; reason: ReconfirmResult['reason']; detail?: string; refresh: RefreshResponse | null }> {
   const r = await reconfirmNotRegistered(nfeDepsOf(ctx), actorOf(inst), ref)
-  return { invoiceId: r.invoiceId, attempt: r.attempt, accessKey: r.accessKey, recorded: r.recorded, reason: r.reason, refresh: r.refresh ? responseOfRefresh(r.refresh) : null }
+  return { invoiceId: r.invoiceId, attempt: r.attempt, accessKey: r.accessKey, recorded: r.recorded, reason: r.reason, ...(r.detail ? { detail: r.detail } : {}), refresh: r.refresh ? responseOfRefresh(r.refresh) : null }
 }
 
 const STATE_OF_NONE = 'none' as const

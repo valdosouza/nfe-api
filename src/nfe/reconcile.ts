@@ -1,4 +1,4 @@
-import { ErrorCodes, HttpError, recordVoiceOnce, toUtcDb, withInvoiceTx, type InvoiceRef, type InvoiceTx } from 'fiscal-api'
+import { ErrorCodes, HttpError, notRegisteredProven, recordVoiceOnce, toUtcDb, withInvoiceTx, type InvoiceRef, type InvoiceTx } from 'fiscal-api'
 import { endpointOf, soapBindingOf, type Environment } from '../authority/authorizers'
 import { checkDigest, voiceOfCStat, type VoiceDecision, type VoiceEvent } from '../authority/cstat-voice'
 import { consReciNFe, consSitNFe } from '../authority/messages'
@@ -30,7 +30,7 @@ export const MIN_RECEIPT_INTERVAL_MS = 90_000          // D-NE254: 40 consultas/
 export const MIN_RECEIPT_WAIT_MS = 15_000              // RF-NFE-17: ≥ 15 s antes de consultar o recibo
 /**
  * Idade mínima de uma tentativa SEM voz antes de o `reconfirm` aceitar o 217 (gate adversarial M2: com o envio ainda no ar, o 217 é verdadeiro e a resposta do envio pode ser A).
- * PROVISÓRIO: o valor é do Valdo (pergunta aberta da FAMILIA.E5.P6); 10 minutos é a proposta — folga sobre o timeout do envio (60 s) e sobre a janela de gravação.
+ * D-NE291 (Valdo, 2026-11-25): 10 minutos — folga sobre o timeout do envio (60 s) e sobre a janela de gravação.
  */
 export const MIN_ATTEMPT_AGE_BEFORE_217_MS = 10 * 60_000
 
@@ -54,7 +54,10 @@ export interface RefreshResult {
   readonly next: 'consult-key' | 'consult-receipt' | null
 }
 
-const ms = (dbUtc: string | null): number | null => (dbUtc ? Date.parse(`${dbUtc.replace(' ', 'T')}Z`) : null)
+const ms = (dbUtc: string | null): number | null => {
+  const t = dbUtc ? Date.parse(`${dbUtc.replace(' ', 'T')}Z`) : NaN
+  return Number.isNaN(t) ? null : t                                                            // ilegível = null (a idade ilegível é recusa, nunca passa)
+}
 const tpAmbOf = (e: Environment): '1' | '2' => (e === 'H' ? '2' : '1')
 const tooSoon = (what: string, waitMs: number): HttpError =>
   new HttpError(429, `${what} — aguarde ${Math.ceil(waitMs / 1000)} s antes de consultar de novo o fisco`, undefined, ErrorCodes.RESOURCE_BUSY)
@@ -222,7 +225,9 @@ export interface ReconfirmResult {
   readonly accessKey: string
   /** `true` se o fato `nfe_not_registered_at` foi gravado agora. */
   readonly recorded: boolean
-  readonly reason: 'registrada-agora' | 'ja-registrada' | 'nao-e-217' | 'recibo-em-aberto' | 'voz-mudou-depois-da-pergunta' | 'tentativa-fechada'
+  readonly reason: 'registrada-agora' | 'ja-registrada' | 'nao-e-217' | 'recibo-em-aberto' | 'voz-mudou-depois-da-pergunta' | 'tentativa-fechada' | 'peca-recusou'
+  /** Com `peca-recusou`: a razão que a peça `notRegisteredProven` do núcleo devolveu (falha fechado: nada se grava). */
+  readonly detail?: string
   /** O que a consulta disse quando NÃO foi o 217 (a mesma resposta do refresh). */
   readonly refresh: RefreshResult | null
 }
@@ -232,6 +237,12 @@ export interface ReconfirmResult {
  * última voz ainda é a que a pergunta viu, grava o FATO `nfe_not_registered_at` (nunca voz). A tentativa continua em voo e a nova tentativa segue barrada até o
  * `notRegisteredProven` do núcleo (PM-8). Qualquer outra resposta do fisco é tratada como o `refresh` trata (pousa A, D…), sem gravar o fato.
  */
+/** A razão da peça → o motivo que a rota devolve; o que não está aqui (falha fechado) vira `peca-recusou` com a razão em `detail`. */
+const REFUSAL: Partial<Record<string, ReconfirmResult['reason']>> = {
+  'voz-mudou': 'voz-mudou-depois-da-pergunta', 'recibo-em-aberto': 'recibo-em-aberto', 'voz-de-registro': 'tentativa-fechada',
+  'rota-nao-reconfirm': 'nao-e-217', 'cstat-nao-217': 'nao-e-217', 'chave-diferente': 'nao-e-217', 'autorizador-diferente': 'nao-e-217', 'entrada-invalida': 'nao-e-217',
+}
+
 export async function reconfirmNotRegistered(deps: ReconcileDeps, actor: NfeActor, ref: InvoiceRef): Promise<ReconfirmResult> {
   const now = deps.now().getTime()
   const picked = await withInvoiceTx(deps.pool, actor, ref, { label: 'reconfirmação do 217' }, async itx => {
@@ -242,6 +253,7 @@ export async function reconfirmNotRegistered(deps: ReconcileDeps, actor: NfeActo
     if (row.nfeNotRegisteredAt !== null) return { row, early: 'ja-registrada' as const, opened: null as Opened | null }
     if (row.receipt !== null || row.lastKind === 'P') return { row, early: 'recibo-em-aberto' as const, opened: null as Opened | null }
     const born = ms(row.createdAt)
+    if (row.lastKind === null && born === null) throw tooSoon('A idade da tentativa não pôde ser lida — sem ela o 217 não é aceito (falha fechado)', MIN_ATTEMPT_AGE_BEFORE_217_MS)
     if (row.lastKind === null && born !== null && now - born < MIN_ATTEMPT_AGE_BEFORE_217_MS) throw tooSoon('Tentativa criada há pouco (o envio pode estar no ar)', MIN_ATTEMPT_AGE_BEFORE_217_MS - (now - born))
     const last = ms(row.lastQueriedAt)
     if (last !== null && now - last < MIN_KEY_INTERVAL_MS) throw tooSoon('Chave consultada há pouco', MIN_KEY_INTERVAL_MS - (now - last))
@@ -257,10 +269,18 @@ export async function reconfirmNotRegistered(deps: ReconcileDeps, actor: NfeActo
     const { proc: _proc, ...refresh } = applied
     return { ...base, recorded: false, reason: 'nao-e-217', refresh }
   }
-  const recorded = await withInvoiceTx(deps.pool, actor, ref, { label: 'fato "o fisco não registrou"' }, async itx => {
+  const fact = consulted.result.fact
+  const decided = await withInvoiceTx(deps.pool, actor, ref, { label: 'fato "o fisco não registrou"' }, async itx => {
     const current = await getAttempt(itx.conn, ref, row.attempt)
-    if (!current || current.lastEvent !== row.lastEvent) return false
-    return recordNfeNotRegistered(itx.conn, ref, row.attempt, row.lastEvent ?? 0)
+    if (!current) return { recorded: false, reason: 'voz-mudou-depois-da-pergunta' as const }
+    // a peça do núcleo decide (RF-NFE-72): o 0 do `COALESCE(MAX(event), 0)` vira `null` SÓ para ela; quem grava segue com `?? 0`
+    const verdict = notRegisteredProven({
+      route: 'reconfirm', cStat: Number(fact.cStat), queriedAccessKey: fact.chNFe, attemptAccessKey: row.accessKey, answeredBy: row.authorizer, attemptAuthorizer: row.authorizer,
+      receipt: row.receipt, lastKind: row.lastKind, seenLastEvent: row.lastEvent || null, currentLastEvent: current.lastEvent || null,
+    })
+    if (!verdict.proven) return { recorded: false, reason: REFUSAL[verdict.reason] ?? 'peca-recusou' as const, detail: verdict.reason }
+    const recorded = await recordNfeNotRegistered(itx.conn, ref, row.attempt, row.lastEvent ?? 0)
+    return { recorded, reason: recorded ? 'registrada-agora' as const : 'voz-mudou-depois-da-pergunta' as const }
   })
-  return { ...base, recorded, reason: recorded ? 'registrada-agora' : 'voz-mudou-depois-da-pergunta', refresh: null }
+  return { ...base, recorded: decided.recorded, reason: decided.reason, refresh: null, ...('detail' in decided ? { detail: decided.detail } : {}) }
 }

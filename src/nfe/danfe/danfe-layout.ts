@@ -1,0 +1,155 @@
+/**
+ * LEIAUTE DO DANFE A4 RETRATO (NFE.E6.P3 — NT 2026.010 sobre o Anexo II do MOC 7.00; D-NE100; ficha `ficha-nfe-e6-p3-danfe.md` §4). SÓ DADO:
+ * medidas em cm, papéis de fonte, os TRECHOS DE TEXTO (corpo + opções de cada um — D-NE157) e as colunas dos itens. O desenho está em `danfe.ts`.
+ *
+ * D-NE157 (regra da família): cada trecho com texto diz o seu corpo e as suas opções de leiaute, nunca os herda de outro trecho que pode vir
+ * vazio. Por isso TODO texto do DANFE passa por UMA função (`emit`, em `danfe.ts`) que recebe o trecho (`DanfeTextPart`) da tabela abaixo e
+ * escreve em linha única, com `sizePt`, `align`, `width` e `lineBreak` sempre explícitos; texto vazio não chama o desenho. O `emit` RECUSA corpo
+ * fora de `[minSizePt, sizePt]` do trecho: a tabela manda no que vai para o PDF.
+ *
+ * Corpos (AII 3.7: Times New Roman ou Courier New; descritivo de bloco 5 pt em negrito e caixa alta; descritivo de coluna de itens 5 pt;
+ * demais descritivos 6 pt; "DANFE" 12 pt em negrito; série, número, folha e tpNF 10 pt em negrito; "DOCUMENTO AUXILIAR…" e ENTRADA/SAÍDA 8 pt;
+ * razão social do emitente 12 pt em negrito; demais dados do emitente 8 pt em negrito; conteúdo dos itens e informações complementares 6 pt;
+ * demais campos 10 pt). Leitura L da ficha (S-5): descritivo = 6 pt e conteúdo = 10 pt nos "demais campos". O VALOR de campo nunca encolhe e nunca
+ * é abreviado: o que não cabe numa linha QUEBRA em mais linhas e a caixa cresce (o XML manda; o DANFE reproduz). Só descritivos fixos e a chave
+ * (comprimento fixo de 44) podem encolher, até o `minSizePt` do trecho. A chave de acesso sai em 9 pt negrito para caber nos 8,0 cm do quadro (a
+ * tabela de dimensões do AII 3.8; o AII não fixa o corpo da chave — suposição S-7 da ficha).
+ */
+
+export const CM = Object.freeze({
+  /** A4 retrato; margens de 0,25 cm (AII: de 0,2 a 0,8 cm em cada lado). */
+  page: Object.freeze({ width: 21, height: 29.7 }),
+  margin: 0.25,
+  /** Largura útil: 21 − 2 × 0,25. */
+  width: 20.5,
+  /**
+   * Cabeçalho repetido em TODA folha (AII L645-668): emitente + identificação + chave, natureza + protocolo, IE + IE ST + CNPJ. Medidas da tabela
+   * de dimensões do AII 3.8 para impressora de NÃO impacto (emitente ~10,00; "DANFE" ~2,54; chave 8,00 — a tabela é sugestão, os mínimos são do
+   * código de barras: 6 cm de largura total, barra de 0,8 cm de altura e 0,02 cm de módulo — AII 2). O quadro de identificação leva 3,0 cm para
+   * o subtítulo caber nos 8 pt do AII 3.7.4. As linhas de campos (natureza, IE…) crescem se o valor quebrar.
+   */
+  header: Object.freeze({ top: 3.9, emitW: 9.5, identW: 3.0, keyW: 8, rowB: 0.85, natW: 12.5, protW: 8, rowC: 0.85, barsHeight: 1.0 }),
+  /** Folga entre o cabeçalho e o conteúdo, e entre quadros. */
+  gap: 0.15,
+  /** Altura MÍNIMA de uma linha de campos (rótulo + valor); cresce com o valor quebrado. */
+  cell: 0.85,
+  /** Folga do texto dentro de uma caixa, em pontos. */
+  padPt: 2,
+})
+
+/** Papéis de fonte registrados na 1ª folha (fontes-padrão, sem embutir — D-NE120). */
+export const DANFE_FONT_ROLES = Object.freeze({
+  label: 'Times-Roman', labelBold: 'Times-Bold', value: 'Times-Roman', valueBold: 'Times-Bold',
+} as const)
+export type DanfeRole = keyof typeof DANFE_FONT_ROLES
+
+export interface DanfeTextPart {
+  readonly fontRole: DanfeRole
+  /** O corpo do trecho (e o máximo quando o trecho pode encolher). */
+  readonly sizePt: number
+  /** O menor corpo que o trecho aceita (igual a `sizePt` quando não encolhe). */
+  readonly minSizePt: number
+  readonly align: 'left' | 'center' | 'right'
+}
+
+/**
+ * TODOS os trechos com texto do DANFE: o papel, o corpo, o piso e o alinhamento de cada um. Nenhum trecho herda opção de outro (D-NE157): o
+ * teste `danfe-text-parts.test.ts` confere a tabela, que o desenho só escreve por ela e que cada corpo no PDF cai na faixa de um trecho.
+ */
+export const DANFE_TEXT_PARTS = Object.freeze({
+  /** Descritivo (rótulo) de campo, 6 pt caixa alta (AII 3.7.3: nunca abaixo de 6 pt). */
+  fieldLabel: { fontRole: 'label', sizePt: 6, minSizePt: 6, align: 'left' },
+  /** Título de bloco (DESTINATÁRIO/REMETENTE…), 5 pt negrito caixa alta. */
+  blockTitle: { fontRole: 'labelBold', sizePt: 5, minSizePt: 5, align: 'left' },
+  /** Cabeçalho de coluna dos itens, 5 pt caixa alta. */
+  columnTitle: { fontRole: 'label', sizePt: 5, minSizePt: 5, align: 'center' },
+  /** Valor de campo de texto (10 pt; quebra em mais linhas, nunca encolhe). */
+  fieldValue: { fontRole: 'value', sizePt: 10, minSizePt: 10, align: 'left' },
+  /** Valor de campo numérico/monetário (à direita). */
+  fieldNumber: { fontRole: 'value', sizePt: 10, minSizePt: 10, align: 'right' },
+  /** Valor de campo centrado (UF, código, protocolo). */
+  fieldCentered: { fontRole: 'value', sizePt: 10, minSizePt: 10, align: 'center' },
+  /** Conteúdo de uma linha de item e de informações complementares, 6 pt. */
+  itemText: { fontRole: 'value', sizePt: 6, minSizePt: 6, align: 'left' },
+  itemNumber: { fontRole: 'value', sizePt: 6, minSizePt: 6, align: 'right' },
+  itemCentered: { fontRole: 'value', sizePt: 6, minSizePt: 6, align: 'center' },
+  /** "DANFE", 12 pt negrito. */
+  documentName: { fontRole: 'valueBold', sizePt: 12, minSizePt: 12, align: 'center' },
+  /** "DOCUMENTO AUXILIAR DA NOTA FISCAL ELETRÔNICA" e ENTRADA/SAÍDA, 8 pt. */
+  documentSubtitle: { fontRole: 'value', sizePt: 8, minSizePt: 8, align: 'center' },
+  /** Série, número, folha e tpNF, 10 pt negrito. */
+  identification: { fontRole: 'valueBold', sizePt: 10, minSizePt: 10, align: 'center' },
+  /** Razão social do emitente, 12 pt negrito (quebra em mais linhas, nunca encolhe). */
+  issuerName: { fontRole: 'valueBold', sizePt: 12, minSizePt: 12, align: 'center' },
+  /** Demais dados do emitente, 8 pt negrito. */
+  issuerData: { fontRole: 'valueBold', sizePt: 8, minSizePt: 8, align: 'center' },
+  /** A chave de acesso em blocos (negrito, comprimento fixo) e a mensagem de consulta. */
+  accessKey: { fontRole: 'valueBold', sizePt: 9, minSizePt: 8, align: 'center' },
+  consultMessage: { fontRole: 'value', sizePt: 6, minSizePt: 6, align: 'center' },
+} as const satisfies Readonly<Record<string, DanfeTextPart>>)
+export type DanfePartName = keyof typeof DANFE_TEXT_PARTS
+
+/** Corpos das marcas d'água (fora da tabela de trechos: são desenho da base, não `writeText`). Times-Bold: AII 3.6 pede Times ou Courier em todos os caracteres. */
+export const WATERMARKS = Object.freeze({
+  homologation: Object.freeze({ font: 'Times-Bold', sizePt: 46, angleDeg: -45, color: [0, 0, 0, 35] as const, opacity: 0.35 }),
+  cancelled: Object.freeze({ font: 'Times-Bold', sizePt: 90, angleDeg: 45, color: [0, 100, 100, 0] as const, opacity: 0.35 }),
+} as const)
+
+/** Textos fixos do leiaute (Anexo II). */
+export const DANFE_TEXTS = Object.freeze({
+  title: 'DANFE',
+  subtitle: 'DOCUMENTO AUXILIAR DA NOTA FISCAL ELETRÔNICA',
+  entry: '0 - ENTRADA',
+  exit: '1 - SAÍDA',
+  accessKey: 'CHAVE DE ACESSO',
+  consult: 'Consulta de autenticidade no portal nacional da NF-e www.nfe.fazenda.gov.br/portal ou no site da Sefaz Autorizadora',
+  protocol: 'PROTOCOLO DE AUTORIZAÇÃO DE USO',
+  natOp: 'NATUREZA DA OPERAÇÃO',
+  ie: 'INSCRIÇÃO ESTADUAL',
+  iest: 'INSCRIÇÃO ESTADUAL DO SUBST. TRIBUT.',
+  cnpj: 'CNPJ / CPF',
+  crt: 'CÓDIGO DO REGIME TRIBUTÁRIO',
+  duplicate: 'FATURA / DUPLICATA  VENCIMENTO  VALOR',
+  totals: 'TOTAL DOS PRODUTOS E TOTAL DA NOTA',
+  icmsIpi: 'TOTAL DO ICMS / IPI',
+  recipient: 'DESTINATÁRIO / REMETENTE',
+  invoice: 'FATURA / DUPLICATAS',
+  tax: 'CÁLCULO DO IMPOSTO',
+  carrier: 'TRANSPORTADOR / VOLUMES TRANSPORTADOS',
+  items: 'DADOS DOS PRODUTOS / SERVIÇOS',
+  issqn: 'CÁLCULO DO ISSQN',
+  additional: 'DADOS ADICIONAIS',
+  complementary: 'INFORMAÇÕES COMPLEMENTARES',
+  reserved: 'RESERVADO AO FISCO',
+  watermarkHomologation: 'SEM VALOR FISCAL',
+  stampCancelled: 'CANCELADA',
+} as const)
+
+/** Código do CRT impresso no quadro do emitente (NT 2026.010 L131): só os que o acervo mostra; outro código sai como o próprio número (nada inventado). */
+export const CRT_LABELS: Readonly<Record<string, string>> = Object.freeze({ '1': '1 - SIMPLES NACIONAL', '3': '3 - REGIME NORMAL' })
+
+/** `modFrete` (Anexo II 3.1.10 / X02). */
+export const MOD_FRETE_LABELS: Readonly<Record<string, string>> = Object.freeze({
+  '0': '0 - Contratação do Frete por conta do Remetente (CIF)',
+  '1': '1 - Contratação do Frete por conta do Destinatário (FOB)',
+  '2': '2 - Contratação do Frete por conta de Terceiros',
+  '3': '3 - Transporte Próprio por conta do Remetente',
+  '4': '4 - Transporte Próprio por conta do Destinatário',
+  '9': '9 - Sem Ocorrência de Transporte',
+})
+
+/** Colunas dos itens (cm; normalizadas para a largura útil). A coluna do imposto diz CSOSN para o Simples (grupo ICMSSN*) e CST para os demais. */
+export const ITEM_COLUMNS = Object.freeze([
+  { key: 'code', title: 'CÓDIGO', widthCm: 2.0, part: 'itemText' },
+  { key: 'description', title: 'DESCRIÇÃO DO PRODUTO / SERVIÇO', widthCm: 5.9, part: 'itemText' },
+  { key: 'ncm', title: 'NCM/SH', widthCm: 1.4, part: 'itemCentered' },
+  { key: 'tax', title: 'CST', widthCm: 1.0, part: 'itemCentered' },
+  { key: 'cfop', title: 'CFOP', widthCm: 1.0, part: 'itemCentered' },
+  { key: 'unit', title: 'UN', widthCm: 0.8, part: 'itemCentered' },
+  { key: 'qty', title: 'QUANT.', widthCm: 1.5, part: 'itemNumber' },
+  { key: 'unitValue', title: 'VALOR UNIT.', widthCm: 1.7, part: 'itemNumber' },
+  { key: 'total', title: 'VALOR TOTAL', widthCm: 1.8, part: 'itemNumber' },
+  { key: 'bc', title: 'BC ICMS', widthCm: 1.3, part: 'itemNumber' },
+  { key: 'icms', title: 'VALOR ICMS', widthCm: 1.2, part: 'itemNumber' },
+  { key: 'rate', title: 'ALÍQ.', widthCm: 0.9, part: 'itemNumber' },
+] as const satisfies readonly { key: string; title: string; widthCm: number; part: DanfePartName }[])

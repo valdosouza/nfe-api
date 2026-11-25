@@ -8,7 +8,7 @@ import { barrierOf, provenNotRegistered, fillAuthorityData, fillReceipt, getAtte
 import { isFileConflict, merchandiseFileKey } from './fiscal-file'
 import { recordNfeNotRegistered } from './not-registered'
 import { digestValueOf, procNfeXml } from './proc-nfe'
-import { cancelEventDhOf, eventFileName, eventProcFileName, procEventoXml } from './proc-evento'
+import { cancelEventIdentityOf, eventFileName, eventProcFileName, procEventoXml } from './proc-evento'
 import { MERCHANDISE_VOICE_FAMILY } from './voice-family'
 import type { NfeActor, NfeDeps } from './transmission'
 
@@ -177,7 +177,7 @@ async function applyCancelRequest(deps: ReconcileDeps, actor: NfeActor, ref: Inv
       return 'written' as const
     })
     if (wrote === 'changed') return done({ kind: 'none', reason: 'voz-mudou-depois-da-pergunta' })
-    // a PROVA do cancelamento: o procEventoNFe = o NOSSO evento que o fisco REGISTROU (casado pelo dhEvento — D-NE295) + o retEvento da consulta; sem o evento na consulta, ou sem igual
+    // a PROVA do cancelamento: o procEventoNFe = o NOSSO evento que o fisco REGISTROU (casado pelo documento assinado: dhEvento e SignatureValue — D-NE295) + o retEvento da consulta; sem o evento na consulta, ou sem igual
     // entre os guardados, é pendência crítica `cancel-proof-missing` (nunca prova montada com outro evento); conflito = `file-conflict`
     const incident = fact.event && c.outcome && (c.outcome.kind === 'answered' || c.outcome.kind === 'rejected') ? await saveCancelProof(deps, actor, c.row, c.outcome.xml) : 'cancel-proof-missing' as const
     return done({ kind: 'cancelled', authorityCode: '110111' }, { incident })
@@ -204,13 +204,14 @@ async function saveCancelProof(deps: ReconcileDeps, actor: NfeActor, row: Attemp
     const key = merchandiseFileKey({ cnpj: row.accessKey.slice(6, 20), model: '55', serie: row.serie, environment: row.environment, zone })
     const hints = [row.dhEmission, row.dhRecbto, row.lastEventAt, deps.now()]
     // o evento que o FISCO registrou é o do `procEventoNFe` da consulta: casa pelo `dhEvento` com um dos NOSSOS guardados (gate socrático da 2ª rodada — depois de um 573, o pedido mais recente NÃO é o registrado)
-    const registered = cancelEventDhOf(responseXml, row.accessKey)
+    const registered = cancelEventIdentityOf(responseXml, row.accessKey)
     if (registered !== null) {
       for (let retry = 0; retry <= MAX_CANCEL_RETRIES; retry++) {
         const found = deps.storage.find({ ...key }, eventFileName(row.accessKey, '110111', 1, retry), hints)
         if (found === null) continue
         const stored = deps.storage.read(found)
-        if (cancelEventDhOf(stored, row.accessKey) !== registered) continue
+        const mine = cancelEventIdentityOf(stored, row.accessKey)
+        if (!mine || mine.dhEvento !== registered.dhEvento || mine.signatureValue !== registered.signatureValue) continue   // o MESMO documento assinado (gate adversarial R3-1)
         const proc = procEventoXml(stored, responseXml, row.accessKey)
         if (proc === null) break
         deps.storage.save(key, eventProcFileName(row.accessKey, '110111', 1, retry), proc, deps.now())
@@ -223,7 +224,7 @@ async function saveCancelProof(deps: ReconcileDeps, actor: NfeActor, row: Attemp
   } catch (e) {
     if (isFileConflict(e)) return 'file-conflict'
     logger.warn('Arquivo fiscal: o procEventoNFe do cancelamento não foi gravado', { accessKey: row.accessKey, error: e instanceof Error ? e.name : 'erro' })
-    return null
+    return 'cancel-proof-missing'                                                            // a prova não ficou guardada: pendência crítica, nunca silêncio
   }
 }
 

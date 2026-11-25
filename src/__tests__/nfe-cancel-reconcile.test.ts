@@ -33,6 +33,8 @@ const procEvento = (cStat = '135', dhEvento = '2026-11-25T09:00:00-03:00') =>
   `<procEventoNFe versao="1.00"><evento versao="1.00"><infEvento Id="ID110111${KEY}01"><chNFe>${KEY}</chNFe><dhEvento>${dhEvento}</dhEvento><tpEvento>110111</tpEvento></infEvento></evento><retEvento versao="1.00"><infEvento><tpAmb>2</tpAmb><verAplic>PR</verAplic><cOrgao>41</cOrgao>`
   + `<cStat>${cStat}</cStat><xMotivo>Evento registrado e vinculado a NF-e</xMotivo><chNFe>${KEY}</chNFe><tpEvento>110111</tpEvento><xEvento>Cancelamento registrado</xEvento><nSeqEvento>1</nSeqEvento>`
   + `<dhRegEvento>${DH}</dhRegEvento><nProt>141260000000077</nProt></infEvento></retEvento></procEventoNFe>`
+/** O procEventoNFe da consulta com o NOSSO evento assinado dentro (o que o fisco registrou) e o retEvento 135. */
+const withEvent = (signedEvento: string) => `<procEventoNFe versao="1.00">${signedEvento.replace(/^<\?xml[^?]*\?>/, '')}` + procEvento().slice(procEvento().indexOf('<retEvento'))
 const sit = (cStat: string, inner = '') =>
   soapEnvelope(`<retConsSitNFe xmlns="${NS}" versao="4.00"><tpAmb>2</tpAmb><verAplic>PR</verAplic><cStat>${cStat}</cStat><xMotivo>m</xMotivo><cUF>41</cUF><dhRecbto>${DH}</dhRecbto><chNFe>${KEY}</chNFe>${inner}</retConsSitNFe>`)
 const authorizedProt = `<protNFe versao="4.00"><infProt><tpAmb>2</tpAmb><verAplic>PR</verAplic><chNFe>${KEY}</chNFe><dhRecbto>${DH}</dhRecbto><nProt>141260000000001</nProt><digVal>${'A'.repeat(27)}=</digVal><cStat>100</cStat><xMotivo>Autorizado o uso da NF-e</xMotivo></infProt></protNFe>`
@@ -93,7 +95,7 @@ describe('o K (cancelamento em voo) reconciliado pela consulta da chave (S5)', (
     t.storage.files.set(`${dir}/${eventFileName(KEY)}`, ev('2026-11-25T08:00:00-03:00'))
     const latest = ev('2026-11-25T09:00:00-03:00')
     t.storage.files.set(`${dir}/${eventFileName(KEY, '110111', 1, 1)}`, latest)
-    t.say(() => ok(sit('101', procEvento())))
+    t.say(() => ok(sit('101', withEvent(latest))))
     const r = await refresh(t)
     expect([r.outcome.kind, r.incident]).toEqual(['cancelled', null])
     const proc = t.storage.files.get(`${dir}/${eventProcFileName(KEY, '110111', 1, 1)}`) as string
@@ -109,7 +111,7 @@ describe('o K (cancelamento em voo) reconciliado pela consulta da chave (S5)', (
     const r0 = ev('2026-11-25T08:00:00-03:00')
     t.storage.files.set(`${dir}/${eventFileName(KEY)}`, r0)
     t.storage.files.set(`${dir}/${eventFileName(KEY, '110111', 1, 1)}`, ev('2026-11-25T09:00:00-03:00'))
-    t.say(() => ok(sit('101', procEvento('135', '2026-11-25T08:00:00-03:00'))))
+    t.say(() => ok(sit('101', withEvent(r0))))
     const r = await refresh(t)
     expect([r.outcome.kind, r.incident]).toEqual(['cancelled', null])
     expect(t.storage.files.get(`${dir}/${eventProcFileName(KEY)}`)).toContain(r0.replace(/^<\?xml[^?]*\?>/, ''))
@@ -120,6 +122,22 @@ describe('o K (cancelamento em voo) reconciliado pela consulta da chave (S5)', (
     const f = await refresh(foreign)
     expect([f.outcome.kind, f.incident]).toEqual(['cancelled', 'cancel-proof-missing'])
     expect([...foreign.storage.files.keys()].some(k => k.endsWith('-proc.xml'))).toBe(false)
+  })
+
+  it('gate adversarial da 3ª rodada (R3-1): dois eventos NOSSOS no MESMO segundo (outro motivo): a prova casa o documento ASSINADO que o fisco registrou, nunca só o dhEvento', async () => {
+    const t = setup([{ kind: 'A' }, { kind: 'K' }, { kind: 'N' }, { kind: 'K' }])
+    const ev = (xJust: string) => signEventoNFe(eventoNFe110111({ tpAmb: '2', uf: 'PR', cnpj: KEY.slice(6, 20), chNFe: KEY, dhEvento: '2026-11-25T08:00:00-03:00', nProt: '141260000000001', xJust }), testA1().cert, testA1().key)
+    const dir = `${KEY.slice(6, 20)}/H/${Number(KEY.slice(22, 25))}`
+    const r0 = ev('Motivo errado do primeiro pedido'), r1 = ev('Motivo certo do segundo pedido')
+    t.storage.files.set(`${dir}/${eventFileName(KEY)}`, r0)
+    t.storage.files.set(`${dir}/${eventFileName(KEY, '110111', 1, 1)}`, r1)
+    const registered = r1.replace(/^<\?xml[^?]*\?>/, '')
+    const proc = `<procEventoNFe versao="1.00">${registered}` + procEvento().slice(procEvento().indexOf('<retEvento'))
+    t.say(() => ok(sit('101', proc)))
+    const r = await refresh(t)
+    expect([r.outcome.kind, r.incident]).toEqual(['cancelled', null])
+    expect(t.storage.files.has(`${dir}/${eventProcFileName(KEY)}`)).toBe(false)
+    expect(t.storage.files.get(`${dir}/${eventProcFileName(KEY, '110111', 1, 1)}`)).toContain('Motivo certo do segundo pedido')
   })
 
   it('cancelada SEM o retEvento: C com dh nulo e o texto da consulta; 151 também; um C só (a 2ª consulta não duplica)', async () => {
@@ -297,6 +315,8 @@ describe('o rodízio (refreshAll — S3, teto de idade, disjuntor)', () => {
     const { HttpError } = jest.requireActual('fiscal-api')
     const rep = await refreshAll(t.deps, ACTOR, {}, async () => { throw new HttpError(409, 'A nota não tem tentativa de transmissão', undefined, 'FISCAL_NOT_TRANSMITTED') })
     expect([rep.scanned, rep.consulted, rep.skipped, rep.circuitOpen]).toEqual([1, 0, 1, false])
+    expect(rep.incidents).toEqual([{ invoiceId: 5001, incident: 'open-attempt-outside-current-life' }])
+    expect(t.db.attempts[0].lastQueriedAt).not.toBeNull()                                                // carimbada: sai do topo da fila (R3-2)
     await expect(refreshAll(t.deps, ACTOR, {}, async () => { throw new Error('defeito') })).rejects.toThrow('defeito')   // o que não é 409/429 sobe
   })
 

@@ -29,14 +29,32 @@ export const eventProcFileName = (chNFe: string, tpEvento = '110111', nSeq = 1, 
 
 /** O `dhEvento` do `infEvento` 110111 da chave, lido pelo leitor estrito no documento [xml] (o nosso evento guardado, ou o `procEventoNFe` dentro da consulta); `null` se não houver exatamente um. */
 export function cancelEventDhOf(xml: string, chNFe: string): string | null {
+  const id = cancelEventIdentityOf(xml, chNFe)
+  return id ? id.dhEvento : null
+}
+
+const DSIG_NS = 'http://www.w3.org/2000/09/xmldsig#'
+
+/**
+ * A IDENTIDADE do evento 110111 da chave no documento [xml] (o nosso evento guardado, ou o `procEventoNFe` dentro da consulta): o `dhEvento` e o `SignatureValue` da assinatura do `evento` — dois
+ * pedidos no mesmo segundo com outro motivo ou outro certificado têm assinaturas diferentes (gate adversarial da 3ª rodada, R3-1). `null` se não houver exatamente um, ou sem assinatura legível.
+ */
+export function cancelEventIdentityOf(xml: string, chNFe: string): { readonly dhEvento: string; readonly signatureValue: string } | null {
   let doc: XmlNode
   try { doc = parseXml(xml) } catch { return null }
-  const found = elementsOf(doc, false).filter(e => e.nodeType === ELEMENT && e.namespaceURI === NS && local(e) === 'evento')
-    .map(ev => child(ev, 'infEvento'))
-    .filter(inf => textOf(child(inf, 'chNFe')) === chNFe && textOf(child(inf, 'tpEvento')) === '110111')
-    .map(inf => textOf(child(inf, 'dhEvento')))
-    .filter((dh): dh is string => !!dh)
-  return new Set(found).size === 1 ? found[0] : null
+  const found: { dhEvento: string; signatureValue: string }[] = []
+  for (const ev of elementsOf(doc, false).filter(e => e.nodeType === ELEMENT && e.namespaceURI === NS && local(e) === 'evento')) {
+    const inf = child(ev, 'infEvento')
+    if (textOf(child(inf, 'chNFe')) !== chNFe || textOf(child(inf, 'tpEvento')) !== '110111') continue
+    const dhEvento = textOf(child(inf, 'dhEvento'))
+    let sig: XmlNode | null = null
+    for (let i = 0; i < ev.childNodes.length; i++) { const c = ev.childNodes[i]; if (c.nodeType === ELEMENT && c.namespaceURI === DSIG_NS && local(c) === 'Signature') sig = c }
+    let value: string | null = null
+    if (sig) for (let i = 0; i < sig.childNodes.length; i++) { const c = sig.childNodes[i]; if (c.nodeType === ELEMENT && c.namespaceURI === DSIG_NS && local(c) === 'SignatureValue') value = textOf(c) }
+    if (!dhEvento || !value) return null
+    found.push({ dhEvento, signatureValue: value.replace(/\s+/g, '') })
+  }
+  return found.length === 1 ? found[0] : null
 }
 
 /** O nome do arquivo da inutilização (D-NE50): `<Id43>-inut.xml`. */

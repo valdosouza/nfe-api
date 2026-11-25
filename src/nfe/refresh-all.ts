@@ -2,6 +2,7 @@ import { ErrorCodes, HttpError, type InvoiceRef, invoiceRef } from 'fiscal-api'
 import type { Environment, Uf } from '../authority/authorizers'
 import { CANCEL_DEADLINES, NATIONAL_CANCEL_DEADLINE, cancelDeadlineHours } from '../authority/cancel-deadlines'
 import { ufOfCode } from '../authority/messages'
+import { touchQueriedAt } from './attempt'
 import { refreshInvoice, type ReconcileDeps, type RefreshResult } from './reconcile'
 import { assertFamilyOf, type NfeActor, type NfeDeps } from './transmission'
 import { MERCHANDISE_TRANSMISSION_TABLE, MERCHANDISE_VOICE_FAMILY } from './voice-family'
@@ -44,7 +45,7 @@ export interface RefreshRunReport {
 
 export type RefreshAllDeps = ReconcileDeps & Pick<NfeDeps, 'breaker' | 'catalog'>
 
-interface Candidate { readonly ref: InvoiceRef; readonly accessKey: string; readonly environment: Environment; readonly lastKind: string | null; readonly since: string | null }
+interface Candidate { readonly ref: InvoiceRef; readonly attempt: number; readonly accessKey: string; readonly environment: Environment; readonly lastKind: string | null; readonly since: string | null }
 
 /** As tentativas abertas do estabelecimento (sem voz, P ou K na ÚLTIMA voz), as menos consultadas primeiro; uma por nota. */
 /**
@@ -69,7 +70,7 @@ async function openAttempts(q: { query(sql: string, params?: unknown[]): Promise
     const k = `${r.invoiceId}/${r.terminal}`
     if (seen.has(k)) continue
     seen.add(k)
-    out.push({ ref: invoiceRef(institutionId, Number(r.invoiceId), Number(r.terminal)), accessKey: String(r.accessKey), environment: r.environment === 'P' ? 'P' : 'H', lastKind: r.lastKind == null ? null : String(r.lastKind), since: r.since == null ? null : String(r.since) })
+    out.push({ ref: invoiceRef(institutionId, Number(r.invoiceId), Number(r.terminal)), attempt: Number(r.attempt), accessKey: String(r.accessKey), environment: r.environment === 'P' ? 'P' : 'H', lastKind: r.lastKind == null ? null : String(r.lastKind), since: r.since == null ? null : String(r.since) })
   }
   return out
 }
@@ -112,7 +113,13 @@ export async function refreshAll(deps: RefreshAllDeps, actor: NfeActor, opts: { 
       if (r.outcome.kind === 'none' && r.outcome.reason === 'consulta-recusada') { deps.breaker?.recordRefused(scope, '656'); circuitOpen = true; break }
     } catch (e) {
       if (e instanceof HttpError && e.statusCode === 429) { throttled++; continue }                   // a cota por chave/recibo: a próxima volta a pega
-      if (e instanceof HttpError && e.statusCode === 409) { skipped++; continue }                     // a nota mudou de vida ou não tem tentativa na vida atual: não aborta a passada
+      if (e instanceof HttpError && (e.statusCode === 409 || e.statusCode === 404)) {
+        // a nota mudou de vida, foi apagada ou não tem tentativa na vida atual: carimba a tentativa (sai do topo da fila — gate adversarial R3-2) e devolve como incidente, sem abortar
+        skipped++
+        await touchQueriedAt(deps.pool as never, c.ref, c.attempt)
+        incidents.push({ invoiceId: c.ref.invoiceId, incident: 'open-attempt-outside-current-life' })
+        continue
+      }
       throw e
     }
   }

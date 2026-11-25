@@ -1,5 +1,5 @@
 import {
-  ErrorCodes, HttpError, recordVoiceOnce, signXml, toUtcDb, MERCHANDISE_VOICE_READING, VOICE_READINGS, withInvoiceTx,
+  ErrorCodes, HttpError, logger, recordVoiceOnce, signXml, toUtcDb, MERCHANDISE_VOICE_READING, VOICE_READINGS, withInvoiceTx,
   type InvoiceRef, type InvoiceTx, type openIssuer, type Queryable, type FiscalStorage, type HttpsCall, type HttpsResult,
 } from 'fiscal-api'
 import { endpointOf, resolveAuthorizer, soapBindingOf, type Environment, type Uf } from '../authority/authorizers'
@@ -8,7 +8,7 @@ import { enviNFe } from '../authority/messages'
 import { readSend } from '../authority/responses'
 import { callSoap, type SoapOutcome } from '../authority/soap'
 import { validateMessage } from '../authority/xsd'
-import { barrierOf, drawCnf, fillAuthorityData, fillReceipt, generateNumber, getAttempt, insertAttempt, latestAttempt, numberPolicy, voicesOfLife } from './attempt'
+import { barrierOf, provenNotRegistered, drawCnf, fillAuthorityData, fillReceipt, generateNumber, getAttempt, insertAttempt, latestAttempt, numberPolicy, voicesOfLife } from './attempt'
 import { dhEmiOf } from './dh-emi'
 import { documentInvalid, NfeErrors } from './errors'
 import { isFileConflict, merchandiseFileKey } from './fiscal-file'
@@ -96,7 +96,7 @@ export interface TransmitResult {
   /** O cStat da voz gravada (150 = autorizada fora de prazo: o aviso da D-NE279 sai por aqui). */
   readonly authorityCode: string | null
   /** Pendência crítica do `digVal` do `protNFe` (D-NE41): divergente NÃO grava; ausente grava o A que o fisco afirma. */
-  readonly incident: 'digest-mismatch' | 'digest-absent' | 'file-conflict' | null
+  readonly incident: 'digest-mismatch' | 'digest-absent' | 'file-conflict' | 'authorized-in-closed-attempt' | null
 }
 
 const fiscalEnvironment = (e: Environment): 'H' | 'P' => e
@@ -213,19 +213,22 @@ export async function transmitInvoice(deps: NfeDeps, actor: NfeActor, ref: Invoi
   const wrote = await withInvoiceTx(deps.pool, actor, ref, { label: 'voz do fisco da NF-e' }, async itx => {
     // a tentativa nasceu SEM voz: se alguma voz entrou durante o envio (o `refresh` pousou A pela chave), a que a pergunta viu não é mais a última e NADA se grava (gate adversarial HIGH-2)
     const current = await getAttempt(itx.conn, ref, reserved.attempt)
-    if (!current || current.lastEvent !== null) return false
+    if (!current || current.lastEvent !== null) return 'changed' as const
+    // a tentativa com o 217 PROVADO (o fato) está fechada: o A/D que o envio devolve tarde é incidente — nada se grava (D-NE292), como no refresh
+    if ((voice.kind === 'A' || voice.kind === 'D') && provenNotRegistered(current)) return 'closed' as const
     if (d.nProt) await fillAuthorityData(itx, reserved.attempt, { protocol: d.nProt, dhRecbtoUtc: utc(d.dhRecbto) })
     if (d.nRec) await fillReceipt(itx, reserved.attempt, d.nRec)
     await writeVoice(itx, reserved.attempt, actor.userId, voice)
-    return true
+    return 'written' as const
   })
-  if (!wrote) return finish(ref, reserved, { kind: 'none', reason: 'voz-mudou-depois-da-pergunta' }, null, null, null)
-  // o `-procNFe.xml` da autorizada e da denegada (D-NE35): conflito de gravação única = pendência crítica (nunca silêncio); outra falha do `save` só avisa (a consulta da chave o refaz)
+  if (wrote === 'closed') return finish(ref, reserved, { kind: 'none', reason: 'autorizada-em-tentativa-fechada' }, null, null, 'consult-key', 'authorized-in-closed-attempt')
+  if (wrote === 'changed') return finish(ref, reserved, { kind: 'none', reason: 'voz-mudou-depois-da-pergunta' }, null, null, null)
+  // o `-procNFe.xml` da autorizada e da denegada (D-NE35): conflito de gravação única = pendência crítica (nunca silêncio); outra falha do `save` (disco cheio, link físico) só avisa, com log SEM conteúdo — o `-procNFe.xml` perdido NÃO é refeito por rota nenhuma (limite aceito; a reconstrução é da NFE.E6.P4)
   let conflict = false
   if (voice.kind === 'A' || voice.kind === 'D') {
     const xml = outcome.kind === 'answered' || outcome.kind === 'rejected' ? procNfeXml(reserved.signedXml, outcome.xml, reserved.accessKey) : null
     if (xml) {
-      try { saveWriteOnce(deps, { cnpj: reserved.cnpj, serie: reserved.serie, environment: reserved.environment, zone: reserved.zone }, `${reserved.accessKey}-procNFe.xml`, xml, deps.now()) } catch (e) { conflict = isFileConflict(e) }
+      try { saveWriteOnce(deps, { cnpj: reserved.cnpj, serie: reserved.serie, environment: reserved.environment, zone: reserved.zone }, `${reserved.accessKey}-procNFe.xml`, xml, deps.now()) } catch (e) { conflict = isFileConflict(e); if (!conflict) logger.warn('Arquivo fiscal: o -procNFe.xml não foi gravado', { accessKey: reserved.accessKey, error: e instanceof Error ? e.name : 'erro' }) }
     }
   }
   return finish(ref, reserved, { kind: voice.kind, authorityCode: voice.authorityCode, message: voice.message }, d.nProt, d.nRec, d.nRec || voice.kind === 'P' ? 'consult-receipt' : null, conflict ? 'file-conflict' : digestCheck === 'absent' ? 'digest-absent' : null)

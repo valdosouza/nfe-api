@@ -1,4 +1,4 @@
-import { ErrorCodes, HttpError, notRegisteredProven, recordVoiceOnce, toUtcDb, withInvoiceTx, type InvoiceRef, type InvoiceTx } from 'fiscal-api'
+import { ErrorCodes, HttpError, logger, notRegisteredProven, recordVoiceOnce, toUtcDb, withInvoiceTx, type InvoiceRef, type InvoiceTx } from 'fiscal-api'
 import { endpointOf, soapBindingOf, type Environment } from '../authority/authorizers'
 import { checkDigest, voiceOfCStat, type VoiceDecision, type VoiceEvent } from '../authority/cstat-voice'
 import { consReciNFe, consSitNFe } from '../authority/messages'
@@ -213,7 +213,7 @@ export async function refreshInvoice(deps: ReconcileDeps, actor: NfeActor, ref: 
         const zone = await deps.zoneOf(deps.pool as never, actor)
         const key = merchandiseFileKey({ cnpj: p.row.accessKey.slice(6, 20), model: '55', serie: p.row.serie, environment: p.row.environment, zone })
         deps.storage.save(key, `${p.row.accessKey}-procNFe.xml`, proc, deps.now())         // gravação única do núcleo 5.2.0: bytes iguais = ok, outros = conflito
-      } catch (e) { fileConflict = isFileConflict(e) }                                     // conflito = incidente; outra falha só avisa
+      } catch (e) { fileConflict = isFileConflict(e); if (!fileConflict) logger.warn('Arquivo fiscal: o -procNFe.xml não foi gravado', { accessKey: p.row.accessKey, error: e instanceof Error ? e.name : 'erro' }) }   // conflito = incidente; outra falha só avisa, sem conteúdo
     }
     last = fileConflict ? { ...result, incident: 'file-conflict' } : result
     if (result.outcome.kind === 'A' || result.outcome.kind === 'D' || (last as RefreshResult).incident !== null) break

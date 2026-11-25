@@ -165,6 +165,14 @@ describe('rejeitada, ambígua, denegada e as saídas que só consultam', () => {
     expect(t.db.events.filter(e => e.attempt === 1)).toEqual([])
   })
 
+  it('o A que a resposta do próprio envio traz DEPOIS de o reconfirm gravar o fato é incidente: nada se grava na tentativa (D-NE292)', async () => {
+    const t = setup()
+    t.say(c => { t.db.attempts[0].nfeNotRegisteredAt = '2026-11-24 13:40:00'; return ok(ret(prot(c, '100'))) })
+    const r = await run(t)
+    expect([r.outcome.kind, r.incident, t.db.events, t.db.attempts[0].protocol]).toEqual(['none', 'authorized-in-closed-attempt', [], null])
+    expect([...t.storage.files.keys()].some(k => k.endsWith('-procNFe.xml'))).toBe(false)
+  })
+
   it('com o fato gravado, a tentativa anterior de OUTRO ambiente não libera o número (o ambiente da habilitação mudou)', async () => {
     const t = setup()
     t.say(() => { throw Object.assign(new Error('timeout'), { code: 'ETIMEDOUT' }) })

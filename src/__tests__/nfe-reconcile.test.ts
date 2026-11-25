@@ -6,6 +6,7 @@
  */
 import type { HttpsCall, InvoiceRef } from 'fiscal-api'
 import { invoiceRef } from 'fiscal-api'
+import * as core from 'fiscal-api'
 import { MIN_ATTEMPT_AGE_BEFORE_217_MS, MIN_KEY_INTERVAL_MS, MIN_RECEIPT_INTERVAL_MS, MIN_RECEIPT_WAIT_MS, reconfirmNotRegistered, refreshInvoice, type ReconcileDeps } from '../nfe/reconcile'
 import type { NfeActor } from '../nfe/transmission'
 import { buildNfeXml } from '../nfe/nfe-builder'
@@ -17,6 +18,8 @@ import { MemDb, fmt, memStorage, ok, soapEnvelope, type Reply } from './nfe-memd
 import { testA1 } from './test-a1'
 
 jest.setTimeout(120_000)
+// a peça do núcleo segue REAL (o `jest.fn` a embrulha); um teste manda ela recusar uma vez para provar que é ela quem decide
+jest.mock('fiscal-api', () => { const actual = jest.requireActual('fiscal-api'); return { ...actual, notRegisteredProven: jest.fn(actual.notRegisteredProven) } })
 
 const ACTOR: NfeActor = { institutionId: 98, schemaName: 'setes_x', userId: 7 }
 const REF: InvoiceRef = invoiceRef(98, 5001, 0)
@@ -181,6 +184,22 @@ describe('o A tardio na tentativa com o 217 provado (D-NE292)', () => {
     const r = await refreshInvoice(t.deps, ACTOR, REF)
     expect(r.incident).toBe('authorized-in-closed-attempt')
     expect([t.db.events, t.db.attempts[0].protocol, hasProc(t)]).toEqual([[], null, false])
+  })
+})
+
+describe('a peça notRegisteredProven é quem decide o fato (RF-NFE-72)', () => {
+  it('só a peça recusa (voz-de-registro): nada é gravado, a razão volta em `reason` e `detail`; sem a chamada à peça este teste falharia', async () => {
+    const spy = core.notRegisteredProven as unknown as jest.Mock
+    const t = setup(); seed(t)
+    t.say(() => ok(sit('217')))
+    spy.mockReturnValueOnce({ proven: false, reason: 'voz-de-registro' })
+    const r = await reconfirmNotRegistered(t.deps, ACTOR, REF)
+    expect([r.recorded, r.reason, r.detail, t.db.attempts[0].nfeNotRegisteredAt]).toEqual([false, 'tentativa-fechada', 'voz-de-registro', null])
+    expect(spy).toHaveBeenLastCalledWith(expect.objectContaining({ route: 'reconfirm', cStat: 217, queriedAccessKey: KEY, attemptAccessKey: KEY, answeredBy: 'PR', attemptAuthorizer: 'PR', receipt: null, lastKind: null, seenLastEvent: null, currentLastEvent: null }))
+    spy.mockReturnValueOnce({ proven: false, reason: 'entrada-invalida' })
+    advance(t, MIN_KEY_INTERVAL_MS + 1000)
+    const u = await reconfirmNotRegistered(t.deps, ACTOR, REF)
+    expect([u.recorded, u.reason, u.detail, t.db.attempts[0].nfeNotRegisteredAt]).toEqual([false, 'nao-e-217', 'entrada-invalida', null])
   })
 })
 

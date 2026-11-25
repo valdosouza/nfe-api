@@ -830,7 +830,7 @@ components:
         receipt: { type: string, nullable: true }
         kind: { type: string, enum: [A, P] }
         authorityCode: { type: string, nullable: true, description: 'cStat da voz gravada — 150 = autorizada fora de prazo (o aviso da D-NE279 sai por aqui)' }
-        incident: { type: string, nullable: true, enum: [digest-mismatch, digest-absent, file-conflict, null], description: 'pendência crítica: digVal (D-NE41) ou o `-procNFe.xml` que já existe com outros bytes (file-conflict vence digest-absent)' }
+        incident: { type: string, nullable: true, enum: [digest-mismatch, digest-absent, file-conflict, authorized-in-closed-attempt, null], description: 'pendência crítica: digVal (D-NE41) ou o `-procNFe.xml` que já existe com outros bytes (file-conflict vence digest-absent)' }
     RefreshResult:
       type: object
       properties:

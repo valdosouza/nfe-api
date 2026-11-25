@@ -43,7 +43,7 @@ export function responseOfTransmit(r: TransmitResult): TransmitResponse {
   }
   const at = [{ field: 'attempt', message: String(r.attempt) }]
   if (o.kind === 'R') throw new HttpError(422, `NF-e rejeitada pelo fisco: ${o.message}`, [{ field: 'authorityCode', message: String(o.authorityCode) }, ...at], 'FISCAL_DOCUMENT_REJECTED')
-  if (o.kind === 'D') throw new HttpError(409, `NF-e denegada pelo fisco (${o.authorityCode}): a nota existe no fisco e não se retransmite`, [{ field: 'authorityCode', message: String(o.authorityCode) }, ...at], 'FISCAL_DENIED')
+  if (o.kind === 'D') throw new HttpError(409, `NF-e denegada pelo fisco (${o.authorityCode}): a nota existe no fisco e não se retransmite`, [{ field: 'authorityCode', message: String(o.authorityCode) }, ...at, ...(r.incident ? [{ field: 'incident', message: r.incident }] : [])], 'FISCAL_DENIED')
   if (o.kind === 'F') throw new HttpError(502, o.message, at, ErrorCodes.FISCAL_AUTHORITY_AUTH_FAILED)
   // nada concluiu (ambíguo, 204/539, 106…): a tentativa fica EM VOO e a saída é consultar (D-NE34/D-NE36)
   throw new HttpError(502, 'O fisco não concluiu a autorização: a tentativa ficou em voo — consulte a situação pela nossa chave', [...at, { field: 'next', message: r.next ?? 'consult-key' }, ...(r.incident ? [{ field: 'incident', message: r.incident }] : [])], ErrorCodes.FISCAL_AUTHORITY_UNKNOWN_RESPONSE)

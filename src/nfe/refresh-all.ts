@@ -17,6 +17,8 @@ import { MERCHANDISE_TRANSMISSION_TABLE, MERCHANDISE_VOICE_FAMILY } from './voic
 
 /** A margem somada ao prazo de cancelamento da UF para o teto de idade do rodízio (horas). */
 export const ROUNDROBIN_AGE_MARGIN_HOURS = 24
+/** O teto das tentativas SEM voz ou em P (o envio que pode ter sido autorizado): 7 dias — passou disso é pendência crítica de gente, não de rodízio (a consulta por nota e a `reconfirm` seguem valendo). */
+export const ROUNDROBIN_INFLIGHT_MAX_HOURS = 168
 /** Quantas tentativas uma passada olha, no máximo. */
 export const ROUNDROBIN_DEFAULT_LIMIT = 50
 
@@ -79,7 +81,8 @@ export async function refreshAll(deps: RefreshAllDeps, actor: NfeActor, opts: { 
   let consulted = 0, throttled = 0, tooOld = 0, changed = 0, circuitOpen = false
   for (const c of candidates) {
     const uf = ufOfCode(c.accessKey.slice(0, 2)) as Uf | null
-    const cap = (uf === null ? 24 : cancelDeadlineHours(uf, deps.now())) + ROUNDROBIN_AGE_MARGIN_HOURS
+    // K (cancelamento em voo): o prazo de cancelamento da UF + a margem; sem voz ou P (o envio que pode ter sido autorizado): 7 dias
+    const cap = c.lastKind === 'K' ? (uf === null ? 24 : cancelDeadlineHours(uf, deps.now())) + ROUNDROBIN_AGE_MARGIN_HOURS : ROUNDROBIN_INFLIGHT_MAX_HOURS
     const since = utcMs(c.since)
     if (since !== null && (now - since) / 3_600_000 > cap) { tooOld++; continue }
     const scope = { cnpj: c.accessKey.slice(6, 20), environment: c.environment, service: 'consulta' } as const

@@ -41,8 +41,9 @@ export class Breaker {
     }
   }
 
-  /** O fisco RECUSOU a pergunta (656, 108/109, 999): abre o serviço por 1 hora. */
-  recordRefused(scope: BreakerScope, _cStat: string): void {
+  /** O fisco RECUSOU a pergunta: o 656 (consumo indevido) abre o serviço por 1 hora; 108/109/999 (serviço fora, erro interno) só abrem a CONSULTA (o rodízio para de perguntar) — nunca o evento nem a inutilização. */
+  recordRefused(scope: BreakerScope, cStat: string): void {
+    if (cStat !== '656' && scope.service !== 'consulta') return
     this.openUntil.set(keyOf(scope), this.now().getTime() + BREAKER_BLOCK_MS)
   }
 

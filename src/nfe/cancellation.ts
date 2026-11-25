@@ -1,4 +1,4 @@
-import { ErrorCodes, HttpError, nowIsoIn, recordKindOnce, releaseCancelRequest, reserveCancelRequest, withInvoiceTx, type InvoiceRef } from 'fiscal-api'
+import { ErrorCodes, HttpError, logger, nowIsoIn, recordKindOnce, releaseCancelRequest, reserveCancelRequest, withInvoiceTx, type InvoiceRef } from 'fiscal-api'
 import { endpointOf, soapBindingOf, type Environment, type Uf } from '../authority/authorizers'
 import { CANCEL_HARD_LIMIT_HOURS, cancelDeadlineHours } from '../authority/cancel-deadlines'
 import { voiceOfCancel } from '../authority/cstat-voice'
@@ -6,7 +6,7 @@ import { envEvento110111, eventoNFe110111, SAFE_JUSTIFICATION, signEventoNFe, uf
 import { readCancelEvent } from '../authority/responses'
 import { callSoap, type SoapOutcome } from '../authority/soap'
 import { validateMessage } from '../authority/xsd'
-import { getAttempt, latestAttempt, type AttemptRow } from './attempt'
+import { getAttempt, latestAttempt, voicesOfLife, type AttemptRow } from './attempt'
 import { documentInvalid, NfeErrors } from './errors'
 import { isFileConflict, merchandiseFileKey } from './fiscal-file'
 import { eventFileName, eventProcFileName, procEventoXml } from './proc-evento'
@@ -89,7 +89,7 @@ export async function cancelInvoice(deps: NfeDeps, actor: NfeActor, ref: Invoice
     const authorizedAt = utcMs(latest.dhRecbto)
     const now = deps.now()
     if (authorizedAt === null) {
-      throw new HttpError(409, 'A hora da autorização não está gravada — consulte o fisco antes de cancelar (a trava de prazo não pode ser medida)', undefined, ErrorCodes.FISCAL_TRANSMISSION_IN_PROGRESS)
+      throw new HttpError(409, 'A hora da autorização (dh_recbto) não está gravada nesta tentativa — a trava de prazo não pode ser medida e nenhuma rota a preenche; peça o ajuste ao suporte (nada foi enviado)', [{ field: 'dhRecbto', message: 'ausente' }], ErrorCodes.FISCAL_TRANSMISSION_IN_PROGRESS)
     }
     const elapsedHours = (now.getTime() - authorizedAt) / HOUR
     if (elapsedHours > CANCEL_HARD_LIMIT_HOURS) {
@@ -112,26 +112,24 @@ export async function cancelInvoice(deps: NfeDeps, actor: NfeActor, ref: Invoice
     const zone = await deps.zoneOf(itx.conn, actor)
     const cnpj = latest.accessKey.slice(6, 20)
     const key = merchandiseFileKey({ cnpj, model: '55', serie: latest.serie, environment, zone })
-    const name = eventFileName(latest.accessKey)
-    // o evento: o GUARDADO (2º pedido depois de N — mesmos bytes), ou o novo, assinado, validado no XSD e gravado ANTES do envio
-    const hints = days(Math.min(authorizedAt, utcMs(latest.dhEmission) ?? authorizedAt), now.getTime())
-    const stored = deps.storage.find({ ...key }, name, hints)
-    let signedEvento: string
-    if (stored !== null) {
+    // cada pedido depois de um N gera um evento NOVO sob `-r<n>` (n = os N da tentativa): a gravação única não conflita e a rejeição causada pelo próprio evento não prende a nota
+    const retry = (await voicesOfLife(itx.conn, ref, itx.locked.lifeEvent as number)).filter(v => v.attempt === latest.attempt && v.kind === 'N').length
+    const name = eventFileName(latest.accessKey, '110111', 1, retry)
+    const built = eventoNFe110111({ tpAmb: tpAmbOf(environment), uf, cnpj, chNFe: latest.accessKey, dhEvento: nowIsoIn(zone, now).slice(0, 25), nProt: latest.protocol as string, xJust: reason })
+    let signedEvento = signEventoNFe(built, opened.cert, opened.key)
+    const xsd = await validateMessage('envEvento110111', envEvento110111(signedEvento, 1))
+    if (!xsd.ok) throw documentInvalid('O evento de cancelamento assinado não passou no XSD', [{ field: 'evento', message: 'Estrutura inválida segundo o leiaute (XSD) depois de assinar' }])
+    try { deps.storage.save(key, name, signedEvento, now) } catch (e) {
+      if (!isFileConflict(e)) throw e
+      // o nome já tem um evento: sobra de uma reserva desfeita (a transação voltou antes do envio — o evento NUNCA foi ao fisco): reaproveita o guardado, byte a byte
+      const hints = days(Math.min(authorizedAt, utcMs(latest.dhEmission) ?? authorizedAt), now.getTime())
+      const stored = deps.storage.find({ ...key }, name, hints)
+      if (stored === null) throw new HttpError(409, 'O arquivo do evento de cancelamento já existe com outro conteúdo — nada foi enviado ao fisco (D-NE41)', [{ field: 'file', message: name }], ErrorCodes.FISCAL_FILE_CONFLICT)
       signedEvento = deps.storage.read(stored)
-    } else {
-      const built = eventoNFe110111({ tpAmb: tpAmbOf(environment), uf, cnpj, chNFe: latest.accessKey, dhEvento: nowIsoIn(zone, now).slice(0, 25), nProt: latest.protocol as string, xJust: reason })
-      signedEvento = signEventoNFe(built, opened.cert, opened.key)
-      const xsd = await validateMessage('envEvento110111', envEvento110111(signedEvento, 1))
-      if (!xsd.ok) throw documentInvalid('O evento de cancelamento assinado não passou no XSD', [{ field: 'evento', message: 'Estrutura inválida segundo o leiaute (XSD) depois de assinar' }])
-      try { deps.storage.save(key, name, signedEvento, now) } catch (e) {
-        if (isFileConflict(e)) throw new HttpError(409, 'O arquivo do evento de cancelamento já existe com outro conteúdo — nada foi enviado ao fisco (D-NE41)', [{ field: 'file', message: name }], ErrorCodes.FISCAL_FILE_CONFLICT)
-        throw e
-      }
     }
     // a RESERVA (K, fato NOSSO — dh NULL): peça do núcleo sobre o escritor da família
     await reserveCancelRequest(insertTransmissionEvent, itx, latest.attempt, actor.userId)
-    return { prepared: { attempt: latest, signedEvento, environment, url: endpoint.url, action: binding.action, namespace: binding.namespace, cnpj, zone, opened } }
+    return { prepared: { attempt: latest, retry, signedEvento, environment, url: endpoint.url, action: binding.action, namespace: binding.namespace, cnpj, zone, opened } }
   })
 
   if ('already' in decision) {
@@ -155,7 +153,7 @@ export async function cancelInvoice(deps: NfeDeps, actor: NfeActor, ref: Invoice
       body: envEvento110111(p.signedEvento, 1), message: 'envEvento110111', cert: p.opened.cert, key: p.opened.key, ca: deps.ca(),
     }, deps.request)
   } catch (e) {
-    await release('Pedido de cancelamento não enviado: falha local antes de falar com o fisco')
+    // não se sabe se o pedido chegou ao fisco (o erro pode vir DEPOIS da resposta): o K FICA e a consulta reconcilia (C, ou N depois da carência) — gate adversarial L8
     throw e
   }
   const base = { invoiceId: ref.invoiceId, attempt, warnings, incident: null as 'file-conflict' | null }
@@ -191,13 +189,20 @@ export async function cancelInvoice(deps: NfeDeps, actor: NfeActor, ref: Invoice
   const proc = procEventoXml(p.signedEvento, outcome.xml, p.attempt.accessKey)
   if (proc !== null) {
     const key = merchandiseFileKey({ cnpj: p.cnpj, model: '55', serie: p.attempt.serie, environment: p.environment, zone: p.zone })
-    try { deps.storage.save(key, eventProcFileName(p.attempt.accessKey), proc, deps.now()) } catch (e) { if (isFileConflict(e)) incident = 'file-conflict' }
+    try { deps.storage.save(key, eventProcFileName(p.attempt.accessKey, '110111', 1, p.retry), proc, deps.now()) } catch (e) {
+      if (isFileConflict(e)) incident = 'file-conflict'
+      else logger.warn('Arquivo fiscal: o procEventoNFe do cancelamento não foi gravado', { accessKey: p.attempt.accessKey, error: e instanceof Error ? e.name : 'erro' })
+    }
+  } else {
+    logger.warn('Arquivo fiscal: o procEventoNFe do cancelamento não foi montado (retorno sem o retEvento legível)', { accessKey: p.attempt.accessKey })
   }
   return { ...base, atAuthority: true, state: 'cancelled', eventSequence: recorded, protocol: decided.nProt, nextStep: 'apply-local-cancel', incident, refusedCStat: null }
 }
 
 interface Prepared {
   readonly attempt: AttemptRow
+  /** Quantos N a tentativa já teve: o sufixo `-r<n>` dos arquivos do evento. */
+  readonly retry: number
   readonly signedEvento: string
   readonly environment: Environment
   readonly url: string

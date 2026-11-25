@@ -13,8 +13,10 @@ import { NS } from './xsd-fixtures'
 import { fmt, memStorage, ok, soapEnvelope, type Reply } from './nfe-memdb'
 import { testA1 } from './test-a1'
 
-jest.mock('fiscal-api', () => ({ ...jest.requireActual('fiscal-api'), lockNumberSequence: jest.fn() }))
-const { lockNumberSequence } = require('fiscal-api') as { lockNumberSequence: jest.Mock }
+jest.mock('fiscal-api', () => { const actual = jest.requireActual('fiscal-api'); return { ...actual, lockNumberSequence: jest.fn(), erp: { ...actual.erp, invoiceLives: jest.fn() } } })
+const { lockNumberSequence, erp } = require('fiscal-api') as { lockNumberSequence: jest.Mock; erp: { invoiceLives: jest.Mock } }
+/** A vida de cada nota do banco em memória: por padrão toda nota está VIVA na vida 1; o teste muda por `lives`. */
+let lives: Record<number, { invoiceDeleted: boolean; lifeEvent: number | null }> = {}
 
 jest.setTimeout(120_000)
 
@@ -29,7 +31,7 @@ interface Row { institution: number; id: number; void_id: string; environment: s
 /** A tabela das faixas e das tentativas em memória: só o SQL que `void-range.ts` fala. */
 class VoidDb {
   rows: Row[] = []
-  attempts: { accessKey: string; environment: string }[] = []
+  attempts: { accessKey: string; environment: string; invoiceId?: number; terminal?: number; lifeEvent?: number; protocol?: string | null }[] = []
   statements: string[] = []
   openTx = 0
   clock = NOW
@@ -51,9 +53,9 @@ class VoidDb {
     }
     if (/FROM tb_invoice_merchandise_transmission WHERE tb_institution_id/.test(s)) {
       const [, env, serie, from, to] = params
-      const hit = this.attempts.map(a => ({ number: Number(a.accessKey.slice(25, 34)), serie: Number(a.accessKey.slice(22, 25)), env: a.environment }))
-        .filter(a => a.env === env && a.serie === serie && a.number >= from && a.number <= to).sort((a, b) => a.number - b.number)[0]
-      return [hit ? [{ number: hit.number }] : [], []]
+      const hit = this.attempts.map(a => ({ number: Number(a.accessKey.slice(25, 34)), serie: Number(a.accessKey.slice(22, 25)), env: a.environment, invoiceId: a.invoiceId ?? 7001, terminal: a.terminal ?? 0, lifeEvent: a.lifeEvent ?? 1, protocol: a.protocol ?? null }))
+        .filter(a => a.env === env && a.serie === serie && a.number >= from && a.number <= to).sort((a, b) => a.number - b.number)
+      return [hit, []]
     }
     if (/COALESCE\(MAX\(id\), 0\) \+ 1/.test(s)) return [[{ next: Math.max(0, ...this.rows.map(r => r.id)) + 1 }], []]
     if (/^INSERT INTO tb_invoice_number_void/.test(s)) {
@@ -88,6 +90,9 @@ function setup(over: { emitter?: Partial<EmitterIdentity>; last?: number | null 
   let reply: Reply = () => { throw new Error('nenhuma resposta combinada') }
   const a1 = testA1()
   const conn = db.connection()
+  lives = {}
+  erp.invoiceLives.mockReset()
+  erp.invoiceLives.mockImplementation(async (_q: unknown, _schema: string, _scope: unknown, ids: number[]) => new Map(ids.map(id => [id, Object.assign({ invoiceId: id, invoiceDeleted: false, lifeEvent: 1 as number | null, lastEvent: null, lastKind: null }, lives[id])])))
   lockNumberSequence.mockReset()
   lockNumberSequence.mockResolvedValue({ environment: 'H', lastNumber: over.last === undefined ? 50 : over.last })
   const deps = {
@@ -217,16 +222,41 @@ describe('a recusa local, sem ir ao fisco e sem linha (D-NE263 e o resto)', () =
     expect((await run(edge)).state).toBe('homologated')                                           // o último gerado EXATO cabe
   })
 
-  it('número de que alguma tentativa é dona (autorizada, rejeitada que reaproveita, em voo): 409 FISCAL_VOID_RANGE_IN_USE; a série e o ambiente separam', async () => {
-    const key = (n: number, serie = 1) => `412611${CNPJ}55${String(serie).padStart(3, '0')}${String(n).padStart(9, '0')}148213057${0}`
-    const t = setup()
-    t.db.attempts.push({ accessKey: key(11), environment: 'H' })
-    await expect(run(t)).rejects.toMatchObject({ statusCode: 409, code: 'FISCAL_VOID_RANGE_IN_USE' })
-    none(t)
+  const key = (n: number, serie = 1) => `412611${CNPJ}55${String(serie).padStart(3, '0')}${String(n).padStart(9, '0')}148213057${0}`
+
+  it('número de que alguma tentativa é dona — registrada no fisco, ou viva na vida atual de nota viva (R/F/217 reaproveitam o número): 409 FISCAL_VOID_RANGE_IN_USE; a série e o ambiente separam', async () => {
+    for (const attempt of [{ protocol: '141260000000001' }, { protocol: null }]) {
+      const t = setup()
+      t.db.attempts.push({ accessKey: key(11), environment: 'H', ...attempt })
+      await expect(run(t)).rejects.toMatchObject({ statusCode: 409, code: 'FISCAL_VOID_RANGE_IN_USE' })
+      none(t)
+    }
     const other = setup()
     other.db.attempts.push({ accessKey: key(11, 2), environment: 'H' }, { accessKey: key(11), environment: 'P' }, { accessKey: key(13), environment: 'H' })
     other.say(() => ok(retInut('102')))
     expect((await run(other)).state).toBe('homologated')
+  })
+
+  it('o BURACO: o número da tentativa SEM protocolo de nota APAGADA ou de vida encerrada está livre e se inutiliza; o da registrada no fisco nunca', async () => {
+    for (const life of [{ invoiceDeleted: true, lifeEvent: 1 }, { invoiceDeleted: false, lifeEvent: 2 }, { invoiceDeleted: false, lifeEvent: null }]) {
+      const t = setup()
+      t.db.attempts.push({ accessKey: key(11), environment: 'H', invoiceId: 7001, lifeEvent: 1, protocol: null })
+      lives[7001] = life
+      t.say(() => ok(retInut('102')))
+      expect((await run(t)).state).toBe('homologated')
+    }
+    const registered = setup()
+    registered.db.attempts.push({ accessKey: key(11), environment: 'H', invoiceId: 7001, lifeEvent: 1, protocol: '141260000000001' })
+    lives[7001] = { invoiceDeleted: true, lifeEvent: 1 }
+    await expect(run(registered)).rejects.toMatchObject({ code: 'FISCAL_VOID_RANGE_IN_USE' })
+  })
+
+  it('só olha as notas ANTES do 1º número registrado (uma faixa com registrada e várias abertas pergunta a vida só das que importam)', async () => {
+    const t = setup()
+    t.db.attempts.push({ accessKey: key(10), environment: 'H', invoiceId: 7001, protocol: null }, { accessKey: key(11), environment: 'H', invoiceId: 7002, protocol: '141260000000001' }, { accessKey: key(12), environment: 'H', invoiceId: 7003, protocol: null })
+    await expect(run(t)).rejects.toMatchObject({ code: 'FISCAL_VOID_RANGE_IN_USE', fields: [{ field: 'from', message: '10' }] })
+    expect(erp.invoiceLives).toHaveBeenCalledTimes(1)
+    expect(erp.invoiceLives.mock.calls[0][3]).toEqual([7001])
   })
 
   it('xJust, série, faixa de mais de 10.000 e de/para fora de ordem: 422 com a lista', async () => {

@@ -7,6 +7,7 @@ import type { HttpsCall, InvoiceRef } from 'fiscal-api'
 import { invoiceRef, VOICE_READINGS } from 'fiscal-api'
 import { cancelInvoice } from '../nfe/cancellation'
 import { eventFileName, eventProcFileName } from '../nfe/proc-evento'
+import { eventoNFe110111, signEventoNFe } from '../authority/messages'
 import { merchandiseFileKey } from '../nfe/fiscal-file'
 import type { NfeActor, NfeDeps } from '../nfe/transmission'
 import { validateMessage } from '../authority/xsd'
@@ -69,7 +70,7 @@ describe('cancelar a NF-e autorizada (135/155)', () => {
     expect(r).toMatchObject({ invoiceId: 5001, attempt: 1, atAuthority: true, state: 'cancelled', protocol: '141260000000077', nextStep: 'apply-local-cancel', incident: null, refusedCStat: null, warnings: [] })
     expect(kinds(t)).toEqual(['A', 'K', 'C'])
     const c = t.db.events[2]
-    expect([c.authority_code, c.message, c.dh, c.source]).toEqual(['110111', 'Cancelada no fisco: Evento registrado e vinculado a NF-e', '2026-11-25 13:00:00', 'P'])
+    expect([c.authority_code, c.message, c.dh, c.source]).toEqual(['110111', 'Cancelada no fisco: Evento registrado e vinculado a NF-e — protocolo 141260000000077', '2026-11-25 13:00:00', 'P'])
     expect(t.db.events[1].dh).toBeNull()                                                              // K é fato NOSSO
     expect(t.txAtCall).toEqual([0])
     expect(t.calls).toHaveLength(1)
@@ -159,19 +160,33 @@ describe('o motivo (xJust, 15 a 255)', () => {
 })
 
 describe('o que NÃO cancela: rejeição libera (N), ambíguo mantém K', () => {
-  it('501 (fora do prazo) libera a reserva com N e vira 409 FISCAL_CANCEL_REFUSED; o 2º pedido REAPROVEITA o evento guardado (mesmos bytes) e cancela', async () => {
+  it('501 (fora do prazo) libera a reserva com N e vira 409 FISCAL_CANCEL_REFUSED; o 2º pedido gera um evento NOVO (outro dhEvento, outro arquivo -r1) e cancela', async () => {
     const t = setup()
     t.say(() => ok(retEvento('501')))
     await expect(run(t)).rejects.toMatchObject({ statusCode: 409, code: 'FISCAL_CANCEL_REFUSED' })
     expect(kinds(t)).toEqual(['A', 'K', 'N'])
     const first = stored(t, eventFileName(KEY)) as string
-    t.db.clock = new Date(NOW.getTime() + 60_000)                                                       // outro instante: um evento NOVO teria outro dhEvento e conflitaria
+    t.db.clock = new Date(NOW.getTime() + 60_000)                                                       // outro instante: o evento novo leva outro dhEvento
     t.say(() => ok(retEvento('135')))
-    const r = await run(t)
+    const r = await run(t, 'Motivo novo do cancelamento em homologacao')
     expect(r.state).toBe('cancelled')
     expect(kinds(t)).toEqual(['A', 'K', 'N', 'K', 'C'])
-    expect(stored(t, eventFileName(KEY))).toBe(first)
-    expect(t.calls[1].body).toContain(first.replace(/^<\?xml[^?]*\?>/, ''))
+    const second = stored(t, eventFileName(KEY, '110111', 1, 1)) as string
+    expect(second).not.toBe(first)                                                                      // evento NOVO: a rejeição causada por ele mesmo não prende a nota
+    expect(second).toContain('Motivo novo do cancelamento em homologacao')                              // o motivo de agora vale (não o antigo)
+    expect(stored(t, eventFileName(KEY))).toBe(first)                                                   // o primeiro segue guardado, intacto
+    expect(t.calls[1].body).toContain(second.replace(/^<\?xml[^?]*\?>/, ''))
+    expect(await validateMessage('procEventoNFe', stored(t, eventProcFileName(KEY, '110111', 1, 1)) as string)).toEqual({ ok: true })
+  })
+
+  it('sobra de uma reserva desfeita (o evento guardado do nome existe e NUNCA foi ao fisco): o pedido o reaproveita byte a byte', async () => {
+    const t = setup()
+    const planted = signEventoNFe(eventoNFe110111({ tpAmb: '2', uf: 'PR', cnpj: KEY.slice(6, 20), chNFe: KEY, dhEvento: '2026-11-25T09:00:00-03:00', nProt: '141260000000001', xJust: REASON }), testA1().cert, testA1().key)
+    t.storage.files.set(`${KEY.slice(6, 20)}/H/${Number(KEY.slice(22, 25))}/${eventFileName(KEY)}`, planted)
+    t.say(() => ok(retEvento('135')))
+    expect((await run(t)).state).toBe('cancelled')
+    expect(stored(t, eventFileName(KEY))).toBe(planted)
+    expect(t.calls[0].body).toContain(planted.replace(/^<\?xml[^?]*\?>/, ''))
   })
 
   it.each([['136'], ['573'], ['580']])('%s é ambíguo: o K FICA e a saída é consultar a chave (D-NE208)', async cStat => {

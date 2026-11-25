@@ -104,7 +104,7 @@ export function voiceOfCancel(result: ReadResult<CancelFact>): CancelDecision {
     const f = result.fact
     const dh = toUtcDb(f.dhRegEvento)
     if (dh === null) return { action: 'keep', reason: 'dhRegEvento-ilegivel', breaker: null }
-    return { action: 'cancelled', authorityCode: '110111', cStat: f.cStat, message: clip(`Cancelada no fisco: ${f.xMotivo ?? ''}`, 'Cancelada no fisco'), dh, nProt: f.nProt }
+    return { action: 'cancelled', authorityCode: '110111', cStat: f.cStat, message: clip(`Cancelada no fisco: ${f.xMotivo ?? ''} — protocolo ${f.nProt}`, 'Cancelada no fisco'), dh, nProt: f.nProt }
   }
   if (result.kind === 'rejection') {
     if (result.refused) return { action: 'keep', reason: 'servico-recusou', breaker: result.cStat }

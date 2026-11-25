@@ -18,10 +18,15 @@ const child = (el: XmlNode | null, name: string): XmlNode | null => {
 const textOf = (el: XmlNode | null): string | null => (el && el.childNodes.length === 1 && el.childNodes[0].nodeType === 3 ? (el.childNodes[0].nodeValue ?? '') : null)
 const bare = (xml: string): string => String(xml).replace(/^\s*<\?xml[^?]*\?>\s*/, '').trim()
 
-/** O nome do arquivo do evento ENVIADO, assinado e guardado ANTES do envio (D-NE50): `<chave>-evt<tpEvento>-<nSeq>.xml` — o par do `-nfe.xml`. */
-export const eventFileName = (chNFe: string, tpEvento = '110111', nSeq = 1): string => `${chNFe}-evt${tpEvento}-${nSeq}.xml`
+/**
+ * O nome do arquivo do evento ENVIADO, assinado e guardado ANTES do envio (D-NE50): `<chave>-evt<tpEvento>-<nSeq>.xml` — o par do `-nfe.xml`. Cada novo pedido DEPOIS de um N (a reserva liberada)
+ * gera um evento NOVO (outro `dhEvento`, o certificado e o motivo de agora) e o guarda sob `-r<n>` (n = quantos N a tentativa já teve): a gravação única nunca conflita e um evento rejeitado
+ * por causa dele mesmo (certificado vencido, 577/579) não prende a nota.
+ */
+export const eventFileName = (chNFe: string, tpEvento = '110111', nSeq = 1, retry = 0): string => `${chNFe}-evt${tpEvento}-${nSeq}${retry > 0 ? `-r${retry}` : ''}.xml`
 /** O nome do `procEventoNFe` (o evento + o `retEvento` com o protocolo do evento): o par do `-procNFe.xml`. */
-export const eventProcFileName = (chNFe: string, tpEvento = '110111', nSeq = 1): string => `${chNFe}-evt${tpEvento}-${nSeq}-proc.xml`
+export const eventProcFileName = (chNFe: string, tpEvento = '110111', nSeq = 1, retry = 0): string => `${chNFe}-evt${tpEvento}-${nSeq}${retry > 0 ? `-r${retry}` : ''}-proc.xml`
+
 /** O nome do arquivo da inutilização (D-NE50): `<Id43>-inut.xml`. */
 export const voidFileName = (voidId: string): string => `${voidId}-inut.xml`
 

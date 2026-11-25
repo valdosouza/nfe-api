@@ -25,7 +25,7 @@ describe('tb_invoice_number_void é append-only (D-NE171 + Q2/D-NE293)', () => {
   const all = files(SRC).map(f => ({ rel: path.relative(SRC, f), text: flat(code(f)) }))
 
   it('só o void-range.ts escreve na tabela (INSERT e o UPDATE do write-once); as sondas do boot ficam de fora', () => {
-    const writers = all.filter(f => f.rel !== PROBES && /\b(INSERT\s+INTO|UPDATE|DELETE\s+FROM|REPLACE\s+INTO)\s+(`?tb_invoice_number_void`?|\$\{NUMBER_VOID_TABLE\})/i.test(f.text)).map(f => f.rel)
+    const writers = all.filter(f => f.rel !== PROBES && /\b(INSERT\s+INTO|UPDATE|DELETE\s+FROM|REPLACE\s+INTO|JOIN)\s+([`\w]+\.)?(`?tb_invoice_number_void`?|\$\{NUMBER_VOID_TABLE\})/i.test(f.text)).map(f => f.rel)
     expect(writers).toEqual([WRITER])
   })
 
@@ -36,6 +36,7 @@ describe('tb_invoice_number_void é append-only (D-NE171 + Q2/D-NE293)', () => {
     expect(updates).toHaveLength(1)
     expect(updates[0]).toMatch(/SET authority_code = \?, message = \?, protocol = \?, dh_recbto = \?, updated_at = NOW\(\) WHERE tb_institution_id = \? AND id = \? AND authority_code IS NULL$/)
     expect(t).not.toMatch(/\bDELETE\b/i)
+    expect(t).not.toMatch(/ON\s+DUPLICATE\s+KEY/i)                                              // o INSERT nunca vira UPDATE disfarçado
     expect(t).not.toMatch(/UPDATE\s+\$\{NUMBER_VOID_TABLE\}/i)                                  // o UPDATE tem o nome LITERAL: a cerca precisa vê-lo
   })
 

@@ -82,9 +82,14 @@ describe('as cercas do 217 (RF-NFE-72)', () => {
     const t = code(path.join(SRC, 'nfe', 'transmission.ts'))
     const r = code(path.join(SRC, 'nfe', 'reconcile.ts'))
     expect(t).not.toMatch(/storage\.find\(/)
-    expect(r.match(/storage\.find\(/g)?.length).toBe(1)                                      // só `buildProc` LÊ o `-nfe.xml` guardado para montar o procNFe
+    expect(r.match(/storage\.find\(/g)?.length).toBe(2)                                      // só LEEM: `buildProc` (o `-nfe.xml`, para o procNFe) e `saveCancelProof` (o evento guardado, para o procEventoNFe — NFE.E6.P2)
     expect(`${t}\n${r}`).not.toMatch(/\bwriteFile(Sync)?\b/)
     // NFE.E6.P2: os módulos novos que gravam arquivo fiscal também só gravam pelo `save` do núcleo (gravação única) — nunca `writeFile`
+    // a T3 (rodízio) e a inutilização NÃO leem arquivo fiscal: nenhum `storage.find(` neles (o cancelamento lê UM, o da sobra de reserva desfeita, só depois do conflito do `save`)
+    for (const f of ['void-range.ts', 'refresh-all.ts', 'breaker.ts']) {
+      const file = path.join(SRC, 'nfe', f)
+      expect([f, /storage\.(find|read)\(/.test(code(file))]).toEqual([f, false])
+    }
     for (const f of ['cancellation.ts', 'void-range.ts', 'refresh-all.ts', 'proc-evento.ts']) {
       const file = path.join(SRC, 'nfe', f)
       if (fs.existsSync(file)) expect([f, /\bwriteFile(Sync)?\b/.test(code(file))]).toEqual([f, false])

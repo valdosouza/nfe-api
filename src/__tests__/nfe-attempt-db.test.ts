@@ -108,10 +108,10 @@ d('a tentativa da NF-e no banco descartável', () => {
     const reason = 'Inutilizacao de numeracao de teste em homologacao'
     const id = (from: number, to: number) => voidId({ serie: 1, from, to })
     // o dono do número: a tentativa da nota 7001 é a de número 15 (série 1, H) — por ambiente e série separa
-    expect(await findNumberOwner(pool, INST, 'H', 1, 15, 15)).toBe(15)
-    expect(await findNumberOwner(pool, INST, 'H', 1, 16, 20)).toBeNull()
-    expect(await findNumberOwner(pool, INST, 'P', 1, 15, 15)).toBeNull()
-    expect(await findNumberOwner(pool, INST, 'H', 2, 15, 15)).toBeNull()
+    expect(await findNumberOwner(pool, 'setes_x', INST, 'H', 1, 15, 15)).toBe(15)
+    expect(await findNumberOwner(pool, 'setes_x', INST, 'H', 1, 16, 20)).toBeNull()
+    expect(await findNumberOwner(pool, 'setes_x', INST, 'P', 1, 15, 15)).toBeNull()
+    expect(await findNumberOwner(pool, 'setes_x', INST, 'H', 2, 15, 15)).toBeNull()
     // a reserva nasce PENDENTE (authority_code nulo = retirada) e cobre, em parte ou por inteiro, o que o pedido tocar
     const first = await reserveRange(pool, INST, 7, { voidId: id(30, 32), environment: 'H', authorizer: 'PR', reason })
     expect(first).toBe(1)

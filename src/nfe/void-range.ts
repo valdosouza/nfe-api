@@ -1,4 +1,4 @@
-import { ErrorCodes, HttpError, lockNumberSequence, nowIsoIn, withTransaction, type Queryable } from 'fiscal-api'
+import { ErrorCodes, HttpError, erp, lockNumberSequence, logger, nowIsoIn, withTransaction, type Queryable } from 'fiscal-api'
 import { endpointOf, soapBindingOf, ufRoute, voidEndpoint, type Environment, type Uf } from '../authority/authorizers'
 import { voiceOfVoid } from '../authority/cstat-voice'
 import { CUF, inutNFe, SAFE_JUSTIFICATION, signInutNFe } from '../authority/messages'
@@ -152,7 +152,7 @@ export async function voidRange(deps: VoidDeps, actor: NfeActor, req: VoidReques
     }
 
     // número de que alguma tentativa ainda é dona: viva, autorizada, denegada, rejeitada (R/F reaproveitam — D-NE282) ou com o 217 provado
-    const owner = await findNumberOwner(conn, actor.institutionId, environment, req.serie, req.from, req.to)
+    const owner = await findNumberOwner(conn, actor.schemaName, actor.institutionId, environment, req.serie, req.from, req.to)
     if (owner !== null) {
       throw new HttpError(409, `O número ${owner} ainda é de uma nota (transmissão viva, autorizada, denegada ou rejeitada que reaproveita o número) — a faixa não pode ser inutilizada`, [{ field: 'from', message: String(owner) }], NfeErrors.VOID_RANGE_IN_USE)
     }
@@ -212,7 +212,12 @@ export async function voidRange(deps: VoidDeps, actor: NfeActor, req: VoidReques
   const proc = procInutXml(signed, outcome.xml, { cUF: CUF[r.uf], ano: r.yy, cnpj: r.cnpj, serie: req.serie, from: req.from, to: req.to })
   if (proc !== null) {
     const key = merchandiseFileKey({ cnpj: r.cnpj, model: '55', serie: req.serie, environment: r.environment, zone: r.zone })
-    try { deps.storage.save(key, voidFileName(r.row.voidId), proc, deps.now()) } catch (e) { if (isFileConflict(e)) incident = 'file-conflict' }
+    try { deps.storage.save(key, voidFileName(r.row.voidId), proc, deps.now()) } catch (e) {
+      if (isFileConflict(e)) incident = 'file-conflict'
+      else logger.warn('Arquivo fiscal: o ProcInutNFe não foi gravado', { voidId: r.row.voidId, error: e instanceof Error ? e.name : 'erro' })
+    }
+  } else {
+    logger.warn('Arquivo fiscal: o ProcInutNFe não foi montado (retorno sem o retInutNFe legível)', { voidId: r.row.voidId })
   }
   return resultOf({ ...r.row, authorityCode: answer.code, message: answer.message, protocol: answer.protocol }, req, r.environment, null, incident)
 }
@@ -224,13 +229,30 @@ export async function findCoveringRange(conn: Queryable, institutionId: number, 
   return Array.isArray(rows) && rows[0] ? mapRow(rows[0]) : null
 }
 
-/** O 1º número da faixa de que ALGUMA tentativa (de qualquer nota da série e do ambiente) ainda é dona; `null` se nenhum. */
-export async function findNumberOwner(conn: Queryable, institutionId: number, environment: Environment, serie: number, from: number, to: number): Promise<number | null> {
+/**
+ * O 1º número da faixa de que ALGUMA tentativa ainda é dona; `null` se nenhum. Dona = (a) a tentativa REGISTRADA no fisco (protocolo: autorizada, denegada, cancelada — o número foi usado), sempre; ou
+ * (b) a tentativa sem protocolo (em voo, rejeitada ou com falha — que reaproveitam o número, D-NE282 —, ou com o 217 provado) da VIDA ATUAL de uma nota viva. A tentativa sem protocolo de nota APAGADA
+ * ou de vida encerrada deixou o número livre: é o buraco que a inutilização existe para fechar.
+ */
+export async function findNumberOwner(conn: Queryable, schemaName: string, institutionId: number, environment: Environment, serie: number, from: number, to: number): Promise<number | null> {
   const [rows] = await conn.query(
-    `SELECT CAST(SUBSTRING(access_key, 26, 9) AS UNSIGNED) AS number FROM ${MERCHANDISE_TRANSMISSION_TABLE} WHERE tb_institution_id = ? AND environment = ? AND CAST(SUBSTRING(access_key, 23, 3) AS UNSIGNED) = ? `
-    + `AND CAST(SUBSTRING(access_key, 26, 9) AS UNSIGNED) BETWEEN ? AND ? AND deleted = 'N' ORDER BY number LIMIT 1`,
+    `SELECT CAST(SUBSTRING(access_key, 26, 9) AS UNSIGNED) AS number, tb_invoice_id AS invoiceId, terminal, life_event AS lifeEvent, protocol FROM ${MERCHANDISE_TRANSMISSION_TABLE} WHERE tb_institution_id = ? AND environment = ? `
+    + `AND CAST(SUBSTRING(access_key, 23, 3) AS UNSIGNED) = ? AND CAST(SUBSTRING(access_key, 26, 9) AS UNSIGNED) BETWEEN ? AND ? AND deleted = 'N' ORDER BY number`,
     [institutionId, environment, serie, from, to])
-  return Array.isArray(rows) && rows[0] ? Number((rows[0] as { number: unknown }).number) : null
+  const list = (Array.isArray(rows) ? rows : []) as { number: unknown; invoiceId: unknown; terminal: unknown; lifeEvent: unknown; protocol: unknown }[]
+  const registered = list.find(r => r.protocol != null)
+  let first = registered ? Number(registered.number) : null
+  const open = list.filter(r => r.protocol == null && (first === null || Number(r.number) < first))        // só interessa o que vem ANTES do 1º registrado
+  const terminals = [...new Set(open.map(r => Number(r.terminal)))]
+  for (const terminal of terminals) {
+    const mine = open.filter(r => Number(r.terminal) === terminal)
+    const lives = await erp.invoiceLives(conn, schemaName, { institutionId, terminal }, [...new Set(mine.map(r => Number(r.invoiceId)))])
+    for (const r of mine) {
+      const life = lives.get(Number(r.invoiceId))
+      if (life && !life.invoiceDeleted && life.lifeEvent !== null && life.lifeEvent === Number(r.lifeEvent) && (first === null || Number(r.number) < first)) first = Number(r.number)
+    }
+  }
+  return first
 }
 
 /** A RESERVA: a linha PENDENTE (`authority_code` nulo) com o `id` MAX+1 do estabelecimento (sob a trava da habilitação). O 1062 da UNIQUE sobe cru para quem chama traduzir (D-NE169). */

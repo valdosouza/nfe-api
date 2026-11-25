@@ -9,6 +9,9 @@ import { Breaker, BREAKER_BLOCK_MS, BREAKER_WINDOW_MS } from '../nfe/breaker'
 import { MIN_CANCEL_REQUEST_AGE_BEFORE_RELEASE_MS, MIN_KEY_INTERVAL_MS, refreshInvoice, type ReconcileDeps } from '../nfe/reconcile'
 import { ROUNDROBIN_AGE_MARGIN_HOURS, refreshAll } from '../nfe/refresh-all'
 import { cancelInvoice } from '../nfe/cancellation'
+import { eventFileName, eventProcFileName } from '../nfe/proc-evento'
+import { eventoNFe110111, signEventoNFe } from '../authority/messages'
+import { validateMessage } from '../authority/xsd'
 import type { NfeActor, NfeDeps } from '../nfe/transmission'
 import { NS } from './xsd-fixtures'
 import { saleKey } from './nfe-fixtures'
@@ -80,7 +83,23 @@ describe('o K (cancelamento em voo) reconciliado pela consulta da chave (S5)', (
     expect(r.outcome).toEqual({ kind: 'cancelled', authorityCode: '110111' })
     expect(kinds(t)).toEqual(['A', 'K', 'C'])
     const c = t.db.events[2]
-    expect([c.authority_code, c.dh, c.source, c.message]).toEqual(['110111', '2026-11-25 13:00:00', 'Q', 'Cancelada no fisco: Evento registrado e vinculado a NF-e'])
+    expect([c.authority_code, c.dh, c.source, c.message]).toEqual(['110111', '2026-11-25 13:00:00', 'Q', 'Cancelada no fisco: Evento registrado e vinculado a NF-e — protocolo 141260000000077'])
+  })
+
+  it('gate adversarial H1: a C pela consulta guarda a PROVA — o procEventoNFe montado com o NOSSO evento guardado (o mais recente, -r<n>) e o retEvento da consulta', async () => {
+    const t = setup([{ kind: 'A' }, { kind: 'K' }, { kind: 'N' }, { kind: 'K' }])
+    const ev = (dh: string) => signEventoNFe(eventoNFe110111({ tpAmb: '2', uf: 'PR', cnpj: KEY.slice(6, 20), chNFe: KEY, dhEvento: dh, nProt: '141260000000001', xJust: 'Cancelamento de teste em homologacao' }), testA1().cert, testA1().key)
+    const dir = `${KEY.slice(6, 20)}/H/${Number(KEY.slice(22, 25))}`
+    t.storage.files.set(`${dir}/${eventFileName(KEY)}`, ev('2026-11-25T08:00:00-03:00'))
+    const latest = ev('2026-11-25T09:00:00-03:00')
+    t.storage.files.set(`${dir}/${eventFileName(KEY, '110111', 1, 1)}`, latest)
+    t.say(() => ok(sit('101', procEvento())))
+    const r = await refresh(t)
+    expect([r.outcome.kind, r.incident]).toEqual(['cancelled', null])
+    const proc = t.storage.files.get(`${dir}/${eventProcFileName(KEY, '110111', 1, 1)}`) as string
+    expect(proc).toContain(latest.replace(/^<\?xml[^?]*\?>/, ''))
+    expect(await validateMessage('procEventoNFe', proc)).toEqual({ ok: true })
+    expect(t.db.events[4].message).toMatch(/protocolo 141260000000077$/)                                  // o nProt do evento também no rastro
   })
 
   it('cancelada SEM o retEvento: C com dh nulo e o texto da consulta; 151 também; um C só (a 2ª consulta não duplica)', async () => {
@@ -158,6 +177,17 @@ describe('o disjuntor contra o 656 (D-NE254, RF-NFE-84)', () => {
     expect(() => b.check(scope)).not.toThrow()
   })
 
+  it('108, 109 e 999 abrem só a CONSULTA (o rodízio para de perguntar), nunca o evento nem a inutilização; o 656 abre qualquer um', () => {
+    const { b } = make()
+    for (const c of ['108', '109', '999']) { b.recordRefused(scope, c); b.recordRefused({ ...scope, service: 'inutilizacao' }, c) }
+    expect(b.isOpen(scope)).toBe(false)
+    expect(b.isOpen({ ...scope, service: 'inutilizacao' })).toBe(false)
+    b.recordRefused({ ...scope, service: 'consulta' }, '108')
+    expect(b.isOpen({ ...scope, service: 'consulta' })).toBe(true)
+    b.recordRefused({ ...scope, service: 'inutilizacao' }, '656')
+    expect(b.isOpen({ ...scope, service: 'inutilizacao' })).toBe(true)
+  })
+
   it('o 656 devolvido abre o serviço por 1 hora e só ele; depois da hora fecha', () => {
     const { clock, b } = make()
     b.recordRefused(scope, '656')
@@ -200,6 +230,18 @@ describe('o rodízio (refreshAll — S3, teto de idade, disjuntor)', () => {
     const rep = await refreshAll(t.deps, ACTOR)
     expect(rep).toMatchObject({ scanned: 1, consulted: 1, throttled: 0, tooOld: 0, circuitOpen: false, changed: 1, incidents: [] })
     expect(kinds(t)).toEqual(['A', 'K', 'C'])
+  })
+
+  it('sem voz ou em P (o envio que pode ter sido autorizado) o teto é de 7 dias, não o do cancelamento: 6 dias é consultada, 8 dias não', async () => {
+    const inside = setup([]); inside.db.attempts[0].protocol = null
+    inside.db.attempts[0].createdAt = ago(6 * 24 * H)
+    inside.say(() => ok(sit('217')))
+    expect((await refreshAll(inside.deps, ACTOR)).consulted).toBe(1)
+    const outside = setup([]); outside.db.attempts[0].protocol = null
+    outside.db.attempts[0].createdAt = ago(8 * 24 * H)
+    outside.say(() => ok(sit('217')))
+    const rep = await refreshAll(outside.deps, ACTOR)
+    expect([rep.consulted, rep.tooOld, outside.calls.length]).toEqual([0, 1, 0])
   })
 
   it('o teto de idade: aberta há mais que o prazo da UF (PR 168 h) + a margem não é consultada pelo rodízio', async () => {

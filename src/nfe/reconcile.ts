@@ -8,6 +8,7 @@ import { barrierOf, provenNotRegistered, fillAuthorityData, fillReceipt, getAtte
 import { isFileConflict, merchandiseFileKey } from './fiscal-file'
 import { recordNfeNotRegistered } from './not-registered'
 import { digestValueOf, procNfeXml } from './proc-nfe'
+import { eventFileName, eventProcFileName, procEventoXml } from './proc-evento'
 import { MERCHANDISE_VOICE_FAMILY } from './voice-family'
 import type { NfeActor, NfeDeps } from './transmission'
 
@@ -164,7 +165,7 @@ async function applyCancelRequest(deps: ReconcileDeps, actor: NfeActor, ref: Inv
   const fact = c.result.kind === 'fact' ? c.result.fact : null
   if (fact && fact.status === 'cancelled') {
     const dh = fact.event ? toUtcDb(fact.event.dhRegEvento) : null
-    const message = (fact.event ? `Cancelada no fisco: ${fact.event.xMotivo ?? ''}` : 'Cancelada no fisco (confirmada pela consulta)').slice(0, 255)
+    const message = (fact.event ? `Cancelada no fisco: ${fact.event.xMotivo ?? ''} — protocolo ${fact.event.nProt}` : 'Cancelada no fisco (confirmada pela consulta)').slice(0, 255)
     const wrote = await withInvoiceTx(deps.pool, actor, ref, { label: 'voz C pela consulta da NF-e' }, async itx => {
       const current = await getAttempt(itx.conn, ref, c.row.attempt)
       if (!current || current.lastEvent !== c.row.lastEvent) return 'changed' as const        // outra rota gravou depois da pergunta
@@ -174,7 +175,9 @@ async function applyCancelRequest(deps: ReconcileDeps, actor: NfeActor, ref: Inv
       return 'written' as const
     })
     if (wrote === 'changed') return done({ kind: 'none', reason: 'voz-mudou-depois-da-pergunta' })
-    return done({ kind: 'cancelled', authorityCode: '110111' })
+    // a PROVA do cancelamento (gate adversarial H1): o procEventoNFe = o NOSSO evento guardado (o último pedido: `-r<n>`) + o retEvento da consulta; conflito = pendência crítica, falta = log
+    const incident = fact.event && c.outcome && (c.outcome.kind === 'answered' || c.outcome.kind === 'rejected') ? await saveCancelProof(deps, actor, c.row, c.outcome.xml) : null
+    return done({ kind: 'cancelled', authorityCode: '110111' }, { incident })
   }
   if (c.row.lastKind === 'K' && fact && (fact.status === 'authorized' || fact.status === 'denied')) {
     const since = ms(c.row.lastEventAt)
@@ -189,6 +192,29 @@ async function applyCancelRequest(deps: ReconcileDeps, actor: NfeActor, ref: Inv
   const asked = voiceOfCStat(c.result, 'Q')
   if (asked.action === 'none' && asked.reason === 'consulta-recusada') return done({ kind: 'none', reason: 'consulta-recusada' })   // o serviço recusou a PERGUNTA (656…): o rodízio abre o disjuntor
   return done({ kind: 'none', reason: c.row.lastKind === 'K' ? 'cancelamento-em-voo' : 'nota-autorizada' })
+}
+
+/** Guarda o `procEventoNFe` do cancelamento confirmado pela CONSULTA, a partir do evento NOSSO mais recente guardado; devolve `file-conflict` no conflito da gravação única, senão `null` (falta = log, sem conteúdo). */
+async function saveCancelProof(deps: ReconcileDeps, actor: NfeActor, row: AttemptRow, responseXml: string): Promise<'file-conflict' | null> {
+  try {
+    const zone = await deps.zoneOf(deps.pool as never, actor)
+    const key = merchandiseFileKey({ cnpj: row.accessKey.slice(6, 20), model: '55', serie: row.serie, environment: row.environment, zone })
+    const hints = [row.dhEmission, row.dhRecbto, row.lastEventAt, deps.now()]
+    for (let retry = 20; retry >= 0; retry--) {
+      const found = deps.storage.find({ ...key }, eventFileName(row.accessKey, '110111', 1, retry), hints)
+      if (found === null) continue
+      const proc = procEventoXml(deps.storage.read(found), responseXml, row.accessKey)
+      if (proc === null) break
+      deps.storage.save(key, eventProcFileName(row.accessKey, '110111', 1, retry), proc, deps.now())
+      return null
+    }
+    logger.warn('Arquivo fiscal: o procEventoNFe do cancelamento confirmado pela consulta não foi montado (evento guardado ausente ou retorno sem o retEvento)', { accessKey: row.accessKey })
+    return null
+  } catch (e) {
+    if (isFileConflict(e)) return 'file-conflict'
+    logger.warn('Arquivo fiscal: o procEventoNFe do cancelamento não foi gravado', { accessKey: row.accessKey, error: e instanceof Error ? e.name : 'erro' })
+    return null
+  }
 }
 
 /** O `-procNFe.xml` a partir do `-nfe.xml` guardado e do `protNFe` da resposta (D-NE35); `null` se algo faltar — falhar ao gravar só avisa. */

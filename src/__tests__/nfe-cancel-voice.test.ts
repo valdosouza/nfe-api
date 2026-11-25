@@ -13,7 +13,7 @@ describe('voiceOfCancel — C só com 135/155; N na rejeição do evento; o rest
   it('135 e 155 → voz C com o tpEvento em authority_code, o dhRegEvento em UTC e o xMotivo no texto da NFS-e', () => {
     for (const c of ['135', '155'] as const) {
       expect(voiceOfCancel(cancelled(c))).toEqual({
-        action: 'cancelled', authorityCode: '110111', cStat: c, message: 'Cancelada no fisco: Evento registrado e vinculado a NF-e', dh: '2026-11-25 13:00:00', nProt: '141260000000077',
+        action: 'cancelled', authorityCode: '110111', cStat: c, message: 'Cancelada no fisco: Evento registrado e vinculado a NF-e — protocolo 141260000000077', dh: '2026-11-25 13:00:00', nProt: '141260000000077',
       })
     }
   })

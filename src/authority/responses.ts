@@ -81,6 +81,11 @@ function guarded<F>(fn: () => ReadResult<F>): ReadResult<F> {
 
 export type DuplicateCStat = '204' | '539' | '205' | '206' | '218' | '635'
 const DUPLICATE: ReadonlySet<string> = new Set<DuplicateCStat>(['204', '539', '205', '206', '218', '635'])
+/** Rejeição da NOTA de fato: cStat de 3 ou 4 dígitos na faixa 2xx a 9xx. Todo 1xx fora das classes conhecidas (100 sem protocolo, 101 no envio, 108/109, 104 em lugar errado…) NÃO é rejeição: é ambíguo e nada fecha (gate adversarial HIGH-1). */
+const NOTE_REJECTION = /^[2-9][0-9]{2,3}$/
+const NPROT_FORM = /^([0-9]{15}|[0-9]{17})$/
+const DIGVAL_FORM = /^[A-Za-z0-9+/]{27}=$/
+const DH_FORM = /^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}([-+][0-9]{2}:[0-9]{2}|Z)$/
 const DENIED = new Set(['110', '301', '302', '303'])
 const AUTHORIZED = new Set(['100', '150'])
 
@@ -130,11 +135,13 @@ function readProt(parent: XmlNode, chNFe: string, tpAmb: string): ReadResult<Pro
   const nProt = text(inf, 'nProt')
   const digVal = text(inf, 'digVal')
   const dhRecbto = text(inf, 'dhRecbto')
+  // a FORMA dos campos que vão ao banco é conferida AQUI: fora da forma é ambíguo (nProt, digVal e dhRecbto malformados quebrariam a transação da voz e deixariam a tentativa sem saída — gate adversarial M4)
+  if ((nProt !== null && !NPROT_FORM.test(nProt)) || (digVal !== null && !DIGVAL_FORM.test(digVal)) || (dhRecbto !== null && (!DH_FORM.test(dhRecbto) || Number.isNaN(Date.parse(dhRecbto))))) return ambiguous('nao-classificada')
   if (cStat && protStatusOf(cStat) === 'authorized' && nProt) return { kind: 'fact', fact: { status: 'authorized', cStat, nProt, digVal, dhRecbto } }
   if (cStat && protStatusOf(cStat) === 'denied') return { kind: 'fact', fact: { status: 'denied', cStat, nProt, digVal, dhRecbto } }
   if (cStat && DUPLICATE.has(cStat)) return { kind: 'fact', fact: { status: 'duplicate', cStat: cStat as DuplicateCStat } }
-  if (cStat) return { kind: 'rejection', cStat, xMotivo: text(inf, 'xMotivo'), note: true }
-  return ambiguous('envelope-ilegivel')
+  if (cStat && NOTE_REJECTION.test(cStat)) return { kind: 'rejection', cStat, xMotivo: text(inf, 'xMotivo'), note: true }
+  return ambiguous(cStat ? 'nao-classificada' : 'envelope-ilegivel')
 }
 function protStatusOf(cStat: string): 'authorized' | 'denied' | null {
   return AUTHORIZED.has(cStat) ? 'authorized' : DENIED.has(cStat) ? 'denied' : null
@@ -151,7 +158,8 @@ export function readProtocol(q: ProtocolQuestion, xml: string): ReadResult<Proto
     if (!located) return cStat === '155' ? ambiguous('situacao-ilegivel') : rejection(cStat, text(ret, 'xMotivo'))
     if (text(ret, 'chNFe') !== q.chNFe || text(ret, 'tpAmb') !== q.tpAmb) return ambiguous('nao-classificada')   // D-NE42, D-NE210
     if (cStat === '101' || cStat === '151') return { kind: 'fact', fact: { status: 'cancelled', cStat } }
-    return readProt(ret, q.chNFe, q.tpAmb)
+    const prot = readProt(ret, q.chNFe, q.tpAmb)
+    return prot.kind === 'rejection' ? ambiguous('nao-classificada') : prot       // nota LOCALIZADA no topo e rejeitada no protNFe é inconsistente: a consulta pela chave nunca fecha por rejeição
   })
 }
 
@@ -191,7 +199,7 @@ export function readSend(q: SendQuestion, xml: string): ReadResult<SendFact> {
     if (!cStat) return ambiguous('envelope-ilegivel')
     if (DUPLICATE.has(cStat)) return { kind: 'fact', fact: { status: 'duplicate', cStat: cStat as DuplicateCStat } }
     if (cStat === '108' || cStat === '109') return ambiguous('nao-classificada')                   // serviço paralisado: o lote não foi processado e nada se conclui — a tentativa fica em voo
-    if (cStat !== '103' && cStat !== '104' && cStat !== '105') return rejection(cStat, text(ret, 'xMotivo'))
+    if (cStat !== '103' && cStat !== '104' && cStat !== '105') return NOTE_REJECTION.test(cStat) ? rejection(cStat, text(ret, 'xMotivo')) : ambiguous('nao-classificada')
     if (text(ret, 'tpAmb') !== q.tpAmb) return ambiguous('nao-classificada')
     if (cStat === '105') return { kind: 'fact', fact: { status: 'processing', cStat: '105' } }
     if (cStat === '103') {

@@ -321,6 +321,43 @@ describe('a consulta RECUSADA não fecha a tentativa (gate socrático H1)', () =
   })
 })
 
+describe('as cotas pinadas e as saídas que o gate adversarial mostrou sem prova (M6, LOW-7)', () => {
+  it('as três cotas são as da D-NE254 e do MOC: 6 minutos por chave, 90 segundos por recibo, 15 segundos de espera', () => {
+    expect([MIN_KEY_INTERVAL_MS, MIN_RECEIPT_INTERVAL_MS, MIN_RECEIPT_WAIT_MS]).toEqual([360_000, 90_000, 15_000])
+  })
+
+  it('o refresh com o transporte caindo (timeout): nada se grava, a tentativa segue em voo e a resposta diz o motivo', async () => {
+    const t = setup(); seed(t)
+    t.say(() => { throw Object.assign(new Error('timeout'), { code: 'ETIMEDOUT' }) })
+    const r = await refreshInvoice(t.deps, ACTOR, REF)
+    expect([r.outcome.kind, t.db.events]).toEqual(['none', []])
+  })
+
+  it('refresh com all: para na 1ª tentativa que o fisco registrou (a mais nova autorizada não consulta as outras)', async () => {
+    const t = setup(); seed(t)
+    const key2 = saleKey({ cnf: '70531942' })
+    t.db.attempts.push({ attempt: 2, lifeEvent: 1, environment: 'H', authorizer: 'PR', accessKey: key2, dhEmission: '2026-11-24 13:16:30', digestValue: DIGEST, receipt: null, protocol: null, dhRecbto: null, lastQueriedAt: null, nfeNotRegisteredAt: null })
+    t.say(c => (String(c.body).includes(key2) ? ok(soapEnvelope(`<retConsSitNFe xmlns="${NS}" versao="4.00"><tpAmb>2</tpAmb><verAplic>PR</verAplic><cStat>100</cStat><xMotivo>m</xMotivo><cUF>41</cUF><dhRecbto>${DH}</dhRecbto><chNFe>${key2}</chNFe>${prot('100').replace(KEY, key2)}</retConsSitNFe>`)) : ok(sit('217'))))
+    const r = await refreshInvoice(t.deps, ACTOR, REF, { all: true })
+    expect([r.attempt, r.outcome.kind, t.calls.length]).toEqual([2, 'A', 1])
+  })
+
+  it('reconfirm com a última voz P (sem recibo gravado) ou F: recusa sem perguntar', async () => {
+    const a = setup(); seed(a, {}, [{ kind: 'P', authority_code: '105' }])
+    expect((await reconfirmNotRegistered(a.deps, ACTOR, REF)).reason).toBe('recibo-em-aberto')
+    const b = setup(); seed(b, {}, [{ kind: 'F', authority_code: null }])
+    expect((await reconfirmNotRegistered(b.deps, ACTOR, REF)).reason).toBe('tentativa-fechada')
+    expect([a.calls.length, b.calls.length]).toEqual([0, 0])
+  })
+
+  it('o 217 do reconfirm com a voz D sem protocolo e a voz que entrou depois da pergunta: nenhum fato', async () => {
+    const t = setup(); seed(t, {}, [])
+    t.say(() => { t.db.events.push({ attempt: 1, event: 1, kind: 'D', authority_code: '110', message: 'x', dh: null, source: 'P', createdAt: '2026-11-24 13:29:00' }); return ok(sit('217')) })
+    const r = await reconfirmNotRegistered(t.deps, ACTOR, REF)
+    expect([r.recorded, t.db.attempts[0].nfeNotRegisteredAt]).toEqual([false, null])
+  })
+})
+
 describe('o fonte da reconciliação', () => {
   it('nunca nomeia a coluna do fato (só recordNfeNotRegistered), não toca rede nem relógio por conta própria', () => {
     const src = (require('fs').readFileSync(require('path').resolve(__dirname, '..', 'nfe', 'reconcile.ts'), 'utf8') as string).replace(/\/\*[\s\S]*?\*\/|(?<!:)\/\/[^\n]*/g, '')

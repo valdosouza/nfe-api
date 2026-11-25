@@ -8,7 +8,7 @@ import { enviNFe } from '../authority/messages'
 import { readSend } from '../authority/responses'
 import { callSoap, type SoapOutcome } from '../authority/soap'
 import { validateMessage } from '../authority/xsd'
-import { barrierOf, drawCnf, fillAuthorityData, fillReceipt, generateNumber, insertAttempt, latestAttempt, numberPolicy, voicesOfLife } from './attempt'
+import { barrierOf, drawCnf, fillAuthorityData, fillReceipt, generateNumber, getAttempt, insertAttempt, latestAttempt, numberPolicy, voicesOfLife } from './attempt'
 import { dhEmiOf } from './dh-emi'
 import { documentInvalid, NfeErrors } from './errors'
 import { merchandiseFileKey } from './fiscal-file'
@@ -204,11 +204,16 @@ export async function transmitInvoice(deps: NfeDeps, actor: NfeActor, ref: Invoi
   // o `digVal` do protNFe contra o DigestValue do candidato que assinamos (D-NE41): divergente = pendência crítica, NADA se grava e o procNFe não se guarda
   const digestCheck = voice.kind === 'A' || voice.kind === 'D' ? checkDigest(digestValueOf(reserved.signedXml) as string, d.digVal) : null
   if (digestCheck === 'mismatch') return finish(ref, reserved, { kind: 'none', reason: 'digest-divergente' }, null, null, 'consult-key', 'digest-mismatch')
-  await withInvoiceTx(deps.pool, actor, ref, { label: 'voz do fisco da NF-e' }, async itx => {
+  const wrote = await withInvoiceTx(deps.pool, actor, ref, { label: 'voz do fisco da NF-e' }, async itx => {
+    // a tentativa nasceu SEM voz: se alguma voz entrou durante o envio (o `refresh` pousou A pela chave), a que a pergunta viu não é mais a última e NADA se grava (gate adversarial HIGH-2)
+    const current = await getAttempt(itx.conn, ref, reserved.attempt)
+    if (!current || current.lastEvent !== null) return false
     if (d.nProt) await fillAuthorityData(itx, reserved.attempt, { protocol: d.nProt, dhRecbtoUtc: utc(d.dhRecbto) })
     if (d.nRec) await fillReceipt(itx, reserved.attempt, d.nRec)
     await writeVoice(itx, reserved.attempt, actor.userId, voice)
+    return true
   })
+  if (!wrote) return finish(ref, reserved, { kind: 'none', reason: 'voz-mudou-depois-da-pergunta' }, null, null, null)
   // o `-procNFe.xml` da autorizada e da denegada (D-NE35); falhar ao gravar só avisa (a reconciliação o refaz pela consulta)
   if (voice.kind === 'A' || voice.kind === 'D') {
     const xml = outcome.kind === 'answered' || outcome.kind === 'rejected' ? procNfeXml(reserved.signedXml, outcome.xml, reserved.accessKey) : null

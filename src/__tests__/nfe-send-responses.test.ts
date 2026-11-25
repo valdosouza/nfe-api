@@ -122,6 +122,46 @@ describe('ambíguo: nada se grava (D-NE34)', () => {
   })
 })
 
+describe('só a rejeição de FATO vira R, e a forma dos campos é conferida (gate adversarial HIGH-1 e M4)', () => {
+  const sitOf = (cStat: string, inner = '') => env(`<retConsSitNFe xmlns="${NS}" versao="4.00"><tpAmb>2</tpAmb><verAplic>PR</verAplic><cStat>${cStat}</cStat><xMotivo>m</xMotivo><cUF>41</cUF><dhRecbto>${DH}</dhRecbto><chNFe>${CHAVE}</chNFe>${inner}</retConsSitNFe>`)
+  const recOf = (cStat: string, inner = '') => env(`<retConsReciNFe xmlns="${NS}" versao="4.00"><tpAmb>2</tpAmb><verAplic>PR</verAplic><nRec>411000000000001</nRec><cStat>${cStat}</cStat><xMotivo>m</xMotivo><cUF>41</cUF><dhRecbto>${DH}</dhRecbto>${inner}</retConsReciNFe>`)
+  const protWith = (over: { cStat?: string; nProt?: string | null; digVal?: string | null; dh?: string }) =>
+    `<protNFe versao="4.00"><infProt><tpAmb>2</tpAmb><verAplic>PR</verAplic><chNFe>${CHAVE}</chNFe><dhRecbto>${over.dh ?? DH}</dhRecbto>${over.nProt === null ? '' : `<nProt>${over.nProt ?? '141260000000001'}</nProt>`}`
+    + `${over.digVal === null ? '' : `<digVal>${over.digVal ?? DIGVAL}</digVal>`}<cStat>${over.cStat ?? '100'}</cStat><xMotivo>m</xMotivo></infProt></protNFe>`
+  const action = (d: ReturnType<typeof voiceOfCStat>) => d.action
+
+  it('100 sem protocolo e cStat 1xx fora das classes conhecidas no protNFe: ambíguo, nunca R', () => {
+    for (const cStat of ['100', '101', '108', '109', '104', '999', '1', '12345']) {
+      const withProt = cStat === '100' ? protWith({ cStat, nProt: null }) : protWith({ cStat })
+      expect([cStat, action(voiceOfCStat(readSend(Q, retEnvi('104', withProt)), 'P'))]).toEqual([cStat, cStat === '999' ? 'voice' : 'ambiguous'])
+    }
+  })
+
+  it('cStat de topo do envio que não é rejeição (100, 101, 1xx) é ambíguo; 2xx a 9xx é rejeição do lote', () => {
+    for (const cStat of ['100', '101', '150', '110']) expect([cStat, action(voiceOfCStat(readSend(Q, retEnvi(cStat)), 'P'))]).toEqual([cStat, 'ambiguous'])
+    expect(action(voiceOfCStat(readSend(Q, retEnvi('764')), 'P'))).toBe('voice')
+  })
+
+  it('108/109, 104, 656 e 999 no topo da CONSULTA (pela chave e pelo recibo): nunca voz — a consulta recusada recusa a pergunta', () => {
+    for (const cStat of ['108', '109', '104', '656', '999']) {
+      const byKey = action(voiceOfCStat(readProtocol(Q, sitOf(cStat)), 'Q'))
+      const byReceipt = action(voiceOfCStat(readReceipt({ nRec: '411000000000001', ...Q }, recOf(cStat)), 'Q'))
+      expect([cStat, byKey === 'voice', byReceipt === 'voice']).toEqual([cStat, false, false])
+    }
+  })
+
+  it('a nota LOCALIZADA no topo da consulta pela chave com rejeição ou cancelamento no protNFe é inconsistente: ambíguo', () => {
+    for (const cStat of ['703', '101']) expect([cStat, action(voiceOfCStat(readProtocol(Q, sitOf('100', protWith({ cStat }))), 'Q'))]).toEqual([cStat, 'ambiguous'])
+  })
+
+  it('nProt, digVal e dhRecbto fora da forma: ambíguo (nunca quebram a transação da voz)', () => {
+    for (const bad of [{ nProt: 'abc' }, { nProt: '1234567890123456' }, { digVal: 'curto' }, { digVal: 'A'.repeat(28) }, { dh: 'ontem' }, { dh: '2026-13-45T99:99:99-03:00' }, { dh: '2026-11-24T10:20:00' }]) {
+      expect([JSON.stringify(bad), action(voiceOfCStat(readSend(Q, retEnvi('104', protWith(bad))), 'P'))]).toEqual([JSON.stringify(bad), 'ambiguous'])
+    }
+    expect(action(voiceOfCStat(readSend(Q, retEnvi('104', protWith({ nProt: '14126000000000123' }))), 'P'))).toBe('voice')        // 17 dígitos vale
+  })
+})
+
 describe('a peça é pura e escreve o kind como constante', () => {
   it('o fonte não toca relógio, banco, rede nem segredo, e não usa cast nem spread no kind (voice-kind-fence)', () => {
     const src = fs.readFileSync(path.resolve(__dirname, '..', 'authority', 'cstat-voice.ts'), 'utf8').replace(/\/\*[\s\S]*?\*\/|(?<!:)\/\/[^\n]*/g, '')

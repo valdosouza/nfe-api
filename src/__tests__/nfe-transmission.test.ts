@@ -344,6 +344,55 @@ describe('o contrato do núcleo e as saídas do gate (NFE.E6.P1, gate socrático
   })
 })
 
+describe('a corrida e as guardas (gate adversarial HIGH-2, M6)', () => {
+  it('uma voz que entrou DURANTE o envio (o refresh pousou A pela chave) vale: a resposta do envio não grava P nem R por cima', async () => {
+    const t = setup()
+    t.say(() => {
+      t.db.attempts[0].protocol = '141260000000001'
+      t.db.events.push({ attempt: 1, event: 1, kind: 'A', authority_code: '100', message: 'ok', dh: '2026-11-24 13:20:00', source: 'Q', createdAt: '2026-11-24 13:20:00' })
+      return ok(ret('<infRec><nRec>411000000000001</nRec><tMed>1</tMed></infRec>', '103'))
+    })
+    const r = await run(t)
+    expect(r.outcome).toEqual({ kind: 'none', reason: 'voz-mudou-depois-da-pergunta' })
+    expect(t.db.events.map(e => e.kind)).toEqual(['A'])
+    expect(t.db.attempts[0].receipt).toBeNull()
+  })
+
+  it('o mesmo com a rejeição: não grava R por cima do A que o refresh pousou', async () => {
+    const t = setup()
+    t.say(c => { t.db.events.push({ attempt: 1, event: 1, kind: 'A', authority_code: '100', message: 'ok', dh: null, source: 'Q', createdAt: '2026-11-24 13:20:00' }); return ok(ret(prot(c, '703', false))) })
+    await run(t)
+    expect(t.db.events.map(e => e.kind)).toEqual(['A'])
+  })
+
+  it('denegada SEM protocolo (110 sem nProt): nada é gravado e a saída é consultar a chave', async () => {
+    const t = setup()
+    t.say(c => ok(ret(prot(c, '110', false))))
+    const r = await run(t)
+    expect([r.outcome, r.next, t.db.events]).toEqual([{ kind: 'none', reason: 'denegada-sem-protocolo' }, 'consult-key', []])
+  })
+
+  it('o estabelecimento sem CNPJ cadastrado: 409 FISCAL_EMITTER_INCOMPLETE e nada aberto', async () => {
+    const t = setup({ establishmentCnpj: async () => null })
+    await expect(run(t)).rejects.toMatchObject({ statusCode: 409, code: 'FISCAL_EMITTER_INCOMPLETE' })
+    expect([t.db.inserted, t.calls.length]).toEqual([0, 0])
+  })
+
+  it('nota APAGADA no ERP: 404 INVOICE_NOT_FOUND (requireAlive) e nada aberto', async () => {
+    const t = setup()
+    t.db.deleted = true
+    await expect(run(t)).rejects.toMatchObject({ statusCode: 404, code: 'INVOICE_NOT_FOUND' })
+    expect([t.db.inserted, t.calls.length]).toEqual([0, 0])
+  })
+
+  it('credencial recusada pelo fisco e certificado local inválido fecham como F (nunca R), e cadeia não confiável também', async () => {
+    const t = setup()
+    t.say(() => ({ status: 200, headers: {}, text: 'x' }))                                        // resposta ilegível: ambíguo — nada se grava
+    expect((await run(t)).outcome.kind).toBe('none')
+    expect(t.db.events).toEqual([])
+  })
+})
+
 describe('a transmissão nunca fala com a rede por conta própria', () => {
   it('sem o `request` injetado o transporte real NÃO é chamado nesta suíte (o teste sempre injeta; o fonte não importa fetch/http)', () => {
     // eslint-disable-next-line @typescript-eslint/no-var-requires

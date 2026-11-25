@@ -11,6 +11,8 @@ export class MemDb {
   attempts: any[] = []
   events: any[] = []
   inserted = 0
+  /** A nota está apagada no ERP (a trava devolve `deleted = 'S'`). */
+  deleted = false
   /** Transações abertas agora (o fisco NUNCA é chamado com uma aberta). */
   openTx = 0
   clock = new Date('2026-11-24T13:20:00Z')
@@ -19,7 +21,7 @@ export class MemDb {
     await new Promise(r => setImmediate(r))
     const s = sql.replace(/\s+/g, ' ').trim()
     const now = fmt(this.clock)
-    if (/FROM `setes_x`\.tb_invoice WHERE/.test(s)) return [[{ deleted: 'N' }], []]
+    if (/FROM `setes_x`\.tb_invoice WHERE/.test(s)) return [[{ deleted: this.deleted ? 'S' : 'N' }], []]
     if (/FROM `setes_x`\.vw_invoice_life/.test(s)) return [[{ lifeEvent: 1, lastEvent: 1, lastKind: 'E' }], []]
     if (/^SELECT COALESCE\(MAX\(attempt\)/.test(s)) return [[{ next: this.attempts.length + 1 }], []]
     if (/^SELECT COALESCE\(MAX\(event\)/.test(s)) return [[{ next: this.events.filter(e => e.attempt === params[3]).length + 1 }], []]

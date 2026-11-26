@@ -117,6 +117,26 @@ fisco no `httpsRequest` comum (D-NE164 — ENTREGUE no núcleo 4.0.0, DEPLOY.E1.
 **Anterior**: NE-0 FECHADA 2026-10-15 (acervo oficial em `Infra-IA/nfe-api/integracoes/nfe-sefaz/`, 65 conferências, OpenAPI design-first);
 NE-1a (núcleo genérico por família) e NE-1b (`fiscal-api/pdf`) publicadas; Rodadas 1–15 decididas (D-NE1…D-NE168).
 
+## NFE.E6.P4 (2026-11-26) — as rotas `/v1/nfe`, o e-mail e a operação (ficha `projetos/nfe-api/SUBJECT/NFE_SEFAZ/ficha-nfe-e6-p4-rotas-email-operacao.md`)
+
+**Rotas**: o contrato inteiro está servido (a cerca rota × contrato confere 23 rotas, nenhuma marcada). `src/modules/nfe-deps.ts` monta as dependências da NF-e (`nfeDepsOf`, `voidDepsOf`) com o `Breaker`
+UNICO do processo (`AppContext.breaker`); `invoices` (situação com `localCancelPending`/`cancelDeadline`/`danfeAvailable`, `transmit`, `refresh`, `reconfirm`, `cancel`, `xml`, `danfe`, `email`, `pending`) e
+`operations` (`POST /v1/nfe/refresh` com o aluguel por estabelecimento do núcleo, `numbering`, `voids`). Leitores novos: `src/nfe/{pending,numbering}.ts`, `listVoids` em `void-range.ts`, `src/facts/nfe-lists.ts`
+(sem view como lado de junção). `xml`/`danfe` leem o arquivo guardado (`invoice-files.ts`, nunca refeito — 409 `FISCAL_FILE_MISSING`); leitura exige só a interface do ramo; o botão de e-mail pede TRANSMITIR.
+
+**E-mail**: a conta é a do ESTABELECIMENTO, guardada no núcleo 5.3.0 — `PUT/GET/DELETE /v1/emitter/smtp-credential` (admin, senha write-only), `src/mail/client-mailer.ts` (o ÚNICO que abre a senha, para UM envio;
+`nodemailer` 6.10.1 exato) e `src/mail/invoice-mail.ts` (a composição das DUAS vias: botão e automática, D-NE261; assunto = `nfe_email_subject`, corpo fixo). A cerca de `deploy-e1-p13.test.ts` libera SÓ esses dois
+arquivos, cada um nas peças dele. A via automática é o gancho `onAuthorized` (`authorized-hook.ts`): disparado só por quem GRAVOU a voz A e o `-procNFe.xml`, fora de transação, nunca desfaz o A.
+**O e-mail do cadastro do destinatário NÃO é lido**: `setes_central.tb_entity_has_mailing`/`tb_mailing` não têm GRANT (D-AU12 — o GRANT é do `nfse-api/ops/grants.sql` e do Valdo); sem `to` = 422 e a via automática
+fica em `no-recipient`. O leitor pronto está nas notas da sessão da P4. **Alerta ao suporte** (D-NE237): `src/mail/ops-alert.ts`, pelo SMTP da SETES (`SMTP_HOST/PORT/USER/PASSWORD/FROM` e `OPS_ALERT_EMAIL`; em produção
+o boot recusa sem as seis); `reportIncident` em `transmit`, `refresh`, `reconfirm` e no rodízio.
+
+**Operação**: o health traz `authorities` (o último `consStatServ` que a passada do rodízio consultou — `status-board.ts`, `status-probe.ts`; teto de 3 min; só H) e as raízes ICP são dado recarregável
+(`watchServerCa`: PEM/ficha que mudam são relidos, recusa mantém a anterior, aviso a 60 dias do vencimento). `GET /v1/emitter` traz `stateRegistration`.
+
+**Limites aceitos**: sem fato de "e-mail enviado" (só log e o botão); o dedup do automático é "só quem gravou o A"; a sondagem do status só roda dentro da passada do rodízio e só em homologação; o aluguel da
+passada é de 10 min sem renovação; o `reconfirm` que pousa A não guarda o procNFe (herdado da P1) e por isso não dispara o e-mail.
+
 ## O que este projeto É (D-F12/D-F17)
 
 Serviço da família NF-e/NFC-e — porta **3003**, contrato `/v1`, instância Node própria (D-F9), compondo o núcleo `D:\Gestao2027\fiscal-api`

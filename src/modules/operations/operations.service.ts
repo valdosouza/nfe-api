@@ -4,6 +4,7 @@ import type { AppContext } from '../../context'
 import { readNumbering, type NumberingView } from '../../nfe/numbering'
 import { refreshAll } from '../../nfe/refresh-all'
 import { findVoidItem, listVoids, voidRange, type VoidListItem, type VoidResult } from '../../nfe/void-range'
+import { reportIncident } from '../../mail/ops-alert'
 import { actorOf, nfeDepsOf, voidDepsOf } from '../nfe-deps'
 import type { NumberingQueryDto, RefreshRunDto, VoidDto, VoidsQueryDto } from './operations.dto'
 
@@ -27,6 +28,7 @@ export async function refreshRun(ctx: AppContext, inst: InstitutionPayload, body
   if (token === null) return IDLE                                                    // outra passada deste estabelecimento está rodando
   try {
     const r = await refreshAll(nfeDepsOf(ctx), actorOf(inst), { limit: body.limit })
+    for (const i of r.incidents) reportIncident(ctx, { route: 'refresh-all', institutionId: inst.institutionId, invoiceId: i.invoiceId, accessKey: null, incident: i.incident })    // D-NE237
     return {
       checked: r.consulted, changed: r.changed, stoppedEarly: r.circuitOpen, skipped: false, throttled: r.throttled, circuitOpen: r.circuitOpen,
       errors: r.incidents.map(i => ({ invoiceId: i.invoiceId, code: i.incident, message: i.incident })),

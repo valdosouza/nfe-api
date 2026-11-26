@@ -11,6 +11,7 @@ import { attemptsOfLife, latestAttempt, voicesOfLife, type AttemptRow } from '..
 import { merchandiseFileKey } from '../../nfe/fiscal-file'
 import { reconfirmNotRegistered, refreshInvoice, type ReconfirmResult, type RefreshResult } from '../../nfe/reconcile'
 import { transmitInvoice, type TransmitResult } from '../../nfe/transmission'
+import { reportIncident } from '../../mail/ops-alert'
 import { actorOf, nfeDepsOf } from '../nfe-deps'
 
 /**
@@ -38,7 +39,9 @@ export function responseOfTransmit(r: TransmitResult): TransmitResponse {
 }
 
 export async function transmit(ctx: AppContext, inst: InstitutionPayload, ref: InvoiceRef): Promise<TransmitResponse> {
-  return responseOfTransmit(await transmitInvoice(nfeDepsOf(ctx), actorOf(inst), ref))
+  const r = await transmitInvoice(nfeDepsOf(ctx), actorOf(inst), ref)
+  if (r.incident) reportIncident(ctx, { route: 'transmit', institutionId: inst.institutionId, invoiceId: r.invoiceId, accessKey: r.accessKey, incident: r.incident })    // D-NE237
+  return responseOfTransmit(r)
 }
 
 export interface RefreshResponse {
@@ -56,11 +59,14 @@ export function responseOfRefresh(r: RefreshResult): RefreshResponse {
 }
 
 export async function refresh(ctx: AppContext, inst: InstitutionPayload, ref: InvoiceRef, all: boolean): Promise<RefreshResponse> {
-  return responseOfRefresh(await refreshInvoice(nfeDepsOf(ctx), actorOf(inst), ref, { all }))
+  const r = await refreshInvoice(nfeDepsOf(ctx), actorOf(inst), ref, { all })
+  if (r.incident) reportIncident(ctx, { route: 'refresh', institutionId: inst.institutionId, invoiceId: r.invoiceId, accessKey: r.accessKey, incident: r.incident })    // D-NE237
+  return responseOfRefresh(r)
 }
 
 export async function reconfirm(ctx: AppContext, inst: InstitutionPayload, ref: InvoiceRef): Promise<{ invoiceId: number; attempt: number; accessKey: string; recorded: boolean; reason: ReconfirmResult['reason']; detail?: string; refresh: RefreshResponse | null }> {
   const r = await reconfirmNotRegistered(nfeDepsOf(ctx), actorOf(inst), ref)
+  if (r.refresh?.incident) reportIncident(ctx, { route: 'reconfirm', institutionId: inst.institutionId, invoiceId: r.invoiceId, accessKey: r.accessKey, incident: r.refresh.incident })    // D-NE237
   return { invoiceId: r.invoiceId, attempt: r.attempt, accessKey: r.accessKey, recorded: r.recorded, reason: r.reason, ...(r.detail ? { detail: r.detail } : {}), refresh: r.refresh ? responseOfRefresh(r.refresh) : null }
 }
 

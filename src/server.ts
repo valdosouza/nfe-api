@@ -12,6 +12,7 @@ import { assertMerchandiseVoiceDomainsEnforced, assertMerchandiseStrictSession }
 import { assertNumberVoidDomainsEnforced, assertNumberVoidUniqueKeys } from './nfe/number-void'
 import { assertNfeNotRegisteredColumn } from './nfe/not-registered'
 import { assertCorsOrigins } from './cors-origins'
+import { assertOpsAlertConfigured } from './mail/ops-alert'
 
 async function main(): Promise<void> {
   const ctx = contextFromEnv()
@@ -21,6 +22,8 @@ async function main(): Promise<void> {
   logger.info(`Ambiente: NODE_ENV=${process.env.NODE_ENV ?? '(ausente — não-produção)'} · arquivo fiscal em ${fiscalStorageRootFromEnv(process.env)}`)
   // D-F236: em produção o núcleo recusa origem que não seja https:// e recusa localhost — o ambiente vem do processo
   logger.info(`CORS (origens do app — D-F146/D-F236): ${assertCorsOrigins(ctx.corsOrigins, process.env.NODE_ENV)}`)
+  // D-NE237 (NFE.E6.P4): o alerta de pendência crítica sai pelo SMTP da Setes — em produção o boot recusa sem as seis variáveis (diz os NOMES que faltam, nunca os valores)
+  logger.info(`Alerta ao suporte (D-NE237): ${assertOpsAlertConfigured(process.env)}`)
   // migrations: núcleo primeiro, depois a família (trava nomeada — duas instâncias sobem juntas — D-F35)
   const applied = await runMigrations(ctx.db, MIGRATION_SETS)
   if (applied.length) logger.info('Migrations aplicadas no boot', { applied })

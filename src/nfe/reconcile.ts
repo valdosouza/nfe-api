@@ -1,3 +1,4 @@
+import { notifyAuthorized } from './authorized-hook'
 import { ErrorCodes, HttpError, logger, notRegisteredProven, recordKindOnce, recordVoiceOnce, releaseCancelRequest, toUtcDb, withInvoiceTx, type InvoiceRef, type InvoiceTx } from 'fiscal-api'
 import { endpointOf, soapBindingOf, type Environment } from '../authority/authorizers'
 import { checkDigest, voiceOfCStat, type VoiceDecision, type VoiceEvent } from '../authority/cstat-voice'
@@ -41,7 +42,7 @@ export const MIN_CANCEL_REQUEST_AGE_BEFORE_RELEASE_MS = 10 * 60_000
 export const MAX_CANCEL_RETRIES = 50
 
 type Opened = { readonly cert: Buffer; readonly key: Buffer }
-export type ReconcileDeps = Pick<NfeDeps, 'pool' | 'storage' | 'now' | 'openIssuer' | 'zoneOf' | 'ca' | 'request'>
+export type ReconcileDeps = Pick<NfeDeps, 'pool' | 'storage' | 'now' | 'openIssuer' | 'zoneOf' | 'ca' | 'request' | 'onAuthorized'>
 
 export interface RefreshResult {
   readonly invoiceId: number
@@ -296,6 +297,8 @@ export async function refreshInvoice(deps: ReconcileDeps, actor: NfeActor, ref: 
       } catch (e) { fileConflict = isFileConflict(e); if (!fileConflict) logger.warn('Arquivo fiscal: o -procNFe.xml não foi gravado', { accessKey: p.row.accessKey, error: e instanceof Error ? e.name : 'erro' }) }   // conflito = incidente; outra falha só avisa, sem conteúdo
     }
     last = fileConflict ? { ...result, incident: 'file-conflict' } : result
+    // o fato "passou a A" (D-NE261): a consulta que GRAVOU a voz A (outcome A) e guardou o procNFe — consulta que só lê o A não chega aqui com outcome A
+    if (result.outcome.kind === 'A' && !fileConflict && proc) await notifyAuthorized(deps, { actor, ref, attempt: p.row.attempt, accessKey: p.row.accessKey })
     if (result.outcome.kind === 'A' || result.outcome.kind === 'D' || (last as RefreshResult).incident !== null) break
   }
   return last as RefreshResult

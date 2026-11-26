@@ -440,3 +440,39 @@ describe('o fonte da reconciliação', () => {
     for (const banned of [/nfe_not_registered_at/, /\bfetch\(/, /from 'https?'/, /Date\.now\(\)/, /new Date\(\)/, /process\.env/, /rejectUnauthorized/]) expect([banned.source, banned.test(src)]).toEqual([banned.source, false])
   })
 })
+
+describe('o gancho pós-autorização pela consulta (NFE.E6.P4 mudança 7; D-NE261) — só a consulta que GRAVOU o A', () => {
+  it('a consulta que pousa o A (e guarda o procNFe) dispara o gancho UMA vez; a falha dele não desfaz o A', async () => {
+    const hook = jest.fn(async () => { throw new Error('e-mail caiu') })
+    const t = setup(); seed(t)
+    t.say(() => ok(sit('100', prot('100'))))
+    const r = await refreshInvoice({ ...t.deps, onAuthorized: hook }, ACTOR, REF)
+    expect(r.outcome.kind).toBe('A')
+    expect(hook).toHaveBeenCalledTimes(1)
+    expect(hook.mock.calls[0]).toEqual([{ actor: ACTOR, ref: REF, attempt: 1, accessKey: KEY }])
+    expect([t.db.events.map(e => e.kind), hasProc(t)]).toEqual([['A'], true])
+  })
+
+  it('consulta que só LÊ o A já registrado (nenhuma voz nova) não dispara: o fisco nem é perguntado', async () => {
+    const hook = jest.fn(async () => undefined)
+    const t = setup(); seed(t, { protocol: '141260000000001', dhRecbto: '2026-11-24 13:20:00' }, [{ kind: 'A', authority_code: '100' }])
+    await refreshInvoice({ ...t.deps, onAuthorized: hook }, ACTOR, REF).catch(() => undefined)
+    expect(hook).not.toHaveBeenCalled()
+  })
+
+  it('digVal divergente, A em tentativa fechada e conflito de gravação única do procNFe NÃO disparam o gancho', async () => {
+    const hook = jest.fn(async () => undefined)
+    const mism = setup(); seed(mism)
+    mism.say(() => ok(sit('100', prot('100', { digVal: 'B'.repeat(27) + '=' }))))
+    expect((await refreshInvoice({ ...mism.deps, onAuthorized: hook }, ACTOR, REF)).incident).toBe('digest-mismatch')
+    const closed = setup(); seed(closed, {}, [{ kind: 'R', authority_code: '703' }])
+    closed.say(() => ok(sit('100', prot('100'))))
+    expect((await refreshInvoice({ ...closed.deps, onAuthorized: hook }, ACTOR, REF)).incident).toBe('authorized-in-closed-attempt')
+    const conflict = setup(); seed(conflict)
+    const nfeKey = [...conflict.storage.files.keys()].find(k => k.endsWith('-nfe.xml')) as string
+    conflict.storage.files.set(nfeKey.replace('-nfe.xml', '-procNFe.xml'), 'OUTROS BYTES')
+    conflict.say(() => ok(sit('100', prot('100'))))
+    expect((await refreshInvoice({ ...conflict.deps, onAuthorized: hook }, ACTOR, REF)).incident).toBe('file-conflict')
+    expect(hook).not.toHaveBeenCalled()
+  })
+})

@@ -1,4 +1,5 @@
-import { HttpError, type InstitutionPayload, type InvoiceRef } from 'fiscal-api'
+import { HttpError, logger, type InstitutionPayload, type InvoiceRef } from 'fiscal-api'
+import type { AuthorizedEvent } from '../nfe/authorized-hook'
 import { DEFAULT_MAIL_SUBJECT, readMailConfig } from '../facts/nfe-lists'
 import type { AppContext } from '../context'
 import { NfeErrors } from '../nfe/errors'
@@ -65,3 +66,30 @@ export async function sendInvoiceEmail(ctx: AppContext, inst: InstitutionPayload
   return { accessKey: composed.accessKey, to, messageId: sent.messageId }
 }
 
+
+/** De onde vêm os destinos do cadastro do destinatário: porta injetável. Hoje NÃO há leitor (as tabelas do e-mail do cadastro não têm GRANT — bloqueante registrado), então a via automática só envia com destino. */
+export type RecipientsReader = (ctx: AppContext, who: Pick<InstitutionPayload, 'institutionId' | 'schemaName'>, ref: InvoiceRef) => Promise<string[]>
+export const NO_CADASTRO_READER: RecipientsReader = async () => []
+
+export type AutoMailResult = 'sent' | 'off' | 'no-recipient' | 'failed'
+
+/**
+ * A VIA AUTOMÁTICA (D-NE261): depois de a nota passar a autorizada, envia o e-mail quando a opção da empresa está ligada (`fiscal_email_auto_send`, padrão 'S'), com a MESMA composição e o MESMO leitor
+ * de destinatário do botão. NUNCA lança e nunca desfaz o A: a falha vai ao log com o código técnico (sem conteúdo, sem endereço, sem senha). Sem destinatário no cadastro, nada é enviado (a via manual segue
+ * valendo). Não há fato de "e-mail enviado" no 1º release: o disparo é só de quem GRAVOU a voz A (`authorized-hook.ts`).
+ */
+export async function autoSendAfterAuthorization(ctx: AppContext, e: AuthorizedEvent, deps: Pick<ClientMailerDeps, 'createTransport'> & { recipients?: RecipientsReader } = {}): Promise<AutoMailResult> {
+  try {
+    const who = { institutionId: e.actor.institutionId, schemaName: e.actor.schemaName }
+    const composed = await composeInvoiceMail(ctx, who as InstitutionPayload, e.ref)
+    if (!composed.autoSend) return 'off'
+    const to = (await (deps.recipients ?? NO_CADASTRO_READER)(ctx, who, e.ref)).slice(0, MAX_RECIPIENTS)
+    if (to.length === 0) { logger.info('E-mail automático da NF-e não enviado: sem destinatário no cadastro (a via manual segue valendo)', { accessKey: e.accessKey }); return 'no-recipient' }
+    await sendThroughClientAccount({ pool: ctx.pool, keyring: ctx.keyring, createTransport: deps.createTransport }, e.actor.institutionId, { ...composed.mail, to })
+    return 'sent'
+  } catch (err) {
+    const code = (err as { code?: unknown } | null)?.code
+    logger.warn('E-mail automático da NF-e falhou; a nota segue autorizada', { accessKey: e.accessKey, error: typeof code === 'string' ? code : err instanceof Error ? err.name : 'erro' })
+    return 'failed'
+  }
+}

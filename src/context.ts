@@ -4,6 +4,7 @@ import {
 } from 'fiscal-api'
 import { loadServerCa, type ServerCa } from './authority/server-ca'
 import { Breaker } from './nfe/breaker'
+import { createOpsAlert, type OpsAlert } from './mail/ops-alert'
 
 /**
  * Dependências do serviço (montadas UMA vez no boot; os testes montam as suas). Nada de estado de CONTROLE aqui — só recursos (pool,
@@ -43,6 +44,11 @@ export interface AppContext {
    * recebem O MESMO (`nfeDepsOf`); sem ele cada chamada teria um disjuntor novo e nunca aberto.
    */
   breaker: Breaker
+  /**
+   * O alerta de pendência crítica ao suporte da Setes (D-NE237; NFE.E6.P4 mudança 7): pelo SMTP da PLATAFORMA (`.env`), nunca pelo do cliente. Opcional: os testes não o montam; o boot de produção
+   * recusa subir sem as variáveis (`assertOpsAlertConfigured`).
+   */
+  opsAlert?: OpsAlert
 }
 
 export function contextFromEnv(env: NodeJS.ProcessEnv = process.env, overrides: Partial<AppContext> = {}): AppContext {
@@ -65,5 +71,6 @@ export function contextFromEnv(env: NodeJS.ProcessEnv = process.env, overrides: 
     checkIdentity: overrides.checkIdentity ?? true,
     technicalResponsible,
     breaker: overrides.breaker ?? new Breaker(() => new Date()),
+    opsAlert: overrides.opsAlert ?? createOpsAlert(env),
   }
 }

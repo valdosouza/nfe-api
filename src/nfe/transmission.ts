@@ -18,6 +18,7 @@ import { buildNfeXml, type NfeInput } from './nfe-builder'
 import { digestValueOf, procNfeXml } from './proc-nfe'
 import { hashCsrt, type CsrtProof } from './tech-responsible'
 import type { Breaker } from './breaker'
+import { notifyAuthorized, type OnAuthorized } from './authorized-hook'
 import { MERCHANDISE_VOICE_FAMILY } from './voice-family'
 
 /**
@@ -77,6 +78,8 @@ export interface NfeDeps {
   readonly random?: (max: number) => number
   /** Injetável: nos testes nada vai à rede. */
   readonly request?: (c: HttpsCall) => Promise<HttpsResult>
+  /** O gancho pós-autorização (e-mail automático — D-NE261): disparado só por quem GRAVOU a voz A, depois do `-procNFe.xml`; nunca desfaz o A (`authorized-hook.ts`). */
+  readonly onAuthorized?: OnAuthorized
 }
 
 /** A T3 de qualquer operação que fala com o fisco sobre a família: o catálogo injetado (testes) ou o do núcleo — o ÚNICO ponto do `src/` que nomeia `VOICE_READINGS` (cerca do P9). */
@@ -246,6 +249,8 @@ export async function transmitInvoice(deps: NfeDeps, actor: NfeActor, ref: Invoi
       try { saveWriteOnce(deps, { cnpj: reserved.cnpj, serie: reserved.serie, environment: reserved.environment, zone: reserved.zone }, `${reserved.accessKey}-procNFe.xml`, xml, deps.now()) } catch (e) { conflict = isFileConflict(e); if (!conflict) logger.warn('Arquivo fiscal: o -procNFe.xml não foi gravado', { accessKey: reserved.accessKey, error: e instanceof Error ? e.name : 'erro' }) }
     }
   }
+  // o fato "passou a A" (D-NE261): a voz e o procNFe já estão gravados; o conflito de gravação única (pendência crítica) não manda e-mail de um arquivo duvidoso
+  if (voice.kind === 'A' && !conflict) await notifyAuthorized(deps, { actor, ref, attempt: reserved.attempt, accessKey: reserved.accessKey })
   return finish(ref, reserved, { kind: voice.kind, authorityCode: voice.authorityCode, message: voice.message }, d.nProt, d.nRec, d.nRec || voice.kind === 'P' ? 'consult-receipt' : null, conflict ? 'file-conflict' : digestCheck === 'absent' ? 'digest-absent' : null)
 }
 

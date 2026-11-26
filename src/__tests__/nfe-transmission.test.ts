@@ -482,3 +482,51 @@ describe('a transmissão nunca fala com a rede por conta própria', () => {
     for (const banned of [/\bfetch\(/, /from 'https?'/, /from 'node:http/, /rejectUnauthorized/, /process\.env/, /Date\.now\(\)/]) expect([banned.source, banned.test(src)]).toEqual([banned.source, false])
   })
 })
+
+describe('o gancho pós-autorização (NFE.E6.P4 mudança 7; D-NE261) — só quem GRAVOU a voz A, depois do procNFe, nunca desfaz o A', () => {
+  it('autorizada: o gancho roda UMA vez, com a nota, a tentativa e a chave, DEPOIS de a voz e o -procNFe.xml estarem gravados e FORA de transação', async () => {
+    const seen: { attempt: number; accessKey: string; ref: InvoiceRef; events: number; proc: boolean; openTx: number }[] = []
+    const t = setup()
+    t.deps = { ...t.deps, onAuthorized: async e => { seen.push({ attempt: e.attempt, accessKey: e.accessKey, ref: e.ref, events: t.db.events.length, proc: [...t.storage.files.keys()].some(k => k.endsWith('-procNFe.xml')), openTx: t.db.openTx }) } }
+    t.say(c => ok(ret(prot(c, '100'))))
+    const r = await run(t)
+    expect(seen).toEqual([{ attempt: 1, accessKey: r.accessKey, ref: REF, events: 1, proc: true, openTx: 0 }])
+  })
+
+  it('a falha do gancho NÃO desfaz o A: o resultado é o mesmo, a voz e o procNFe seguem gravados', async () => {
+    const t = setup({ onAuthorized: async () => { throw new Error('servidor de e-mail caiu') } })
+    t.say(c => ok(ret(prot(c, '100'))))
+    const r = await run(t)
+    expect(r.outcome.kind).toBe('A')
+    expect([t.db.events.length, t.db.events[0].kind, [...t.storage.files.keys()].some(k => k.endsWith('-procNFe.xml'))]).toEqual([1, 'A', true])
+  })
+
+  it('rejeitada (R), denegada (D) e em processamento (P) NÃO disparam o gancho; sem gancho nada muda', async () => {
+    for (const [cStat, kind] of [['703', 'R'], ['110', 'D']] as const) {
+      const hook = jest.fn(async () => undefined)
+      const t = setup({ onAuthorized: hook }); t.say(c => ok(ret(prot(c, cStat))))
+      expect((await run(t)).outcome.kind).toBe(kind)
+      expect(hook).not.toHaveBeenCalled()
+    }
+    const hook = jest.fn(async () => undefined)
+    const p = setup({ onAuthorized: hook }); p.say(() => ok(ret('', '103')))
+    await run(p)
+    expect(hook).not.toHaveBeenCalled()
+    const none = setup(); none.say(c => ok(ret(prot(c, '100'))))
+    expect((await run(none)).outcome.kind).toBe('A')
+  })
+
+  it('o A com conflito de gravação única do procNFe (pendência crítica) NÃO manda e-mail de arquivo duvidoso', async () => {
+    const hook = jest.fn(async () => undefined)
+    const t = setup({ onAuthorized: hook })
+    t.say(c => {
+      const key = keyOf(c)
+      const nfeKey = [...t.storage.files.keys()].find(k => k.endsWith('-nfe.xml')) as string
+      t.storage.files.set(nfeKey.replace(/[0-9]{44}-nfe\.xml$/, `${key}-procNFe.xml`), 'OUTROS BYTES')
+      return ok(ret(prot(c, '100')))
+    })
+    const r = await run(t)
+    expect([r.outcome.kind, r.incident]).toEqual(['A', 'file-conflict'])
+    expect(hook).not.toHaveBeenCalled()
+  })
+})

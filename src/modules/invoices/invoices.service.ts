@@ -1,11 +1,10 @@
-import { ErrorCodes, HttpError, InstitutionPayload, InvoiceRef, erp, fiscalStateOf, openIssuer, requiredFiscalCredentialsFor, toZoneWall } from 'fiscal-api'
+import { ErrorCodes, HttpError, InstitutionPayload, InvoiceRef, erp, fiscalStateOf, toZoneWall } from 'fiscal-api'
 import type { AppContext } from '../../context'
 import { attemptsOfLife, latestAttempt, voicesOfLife, type AttemptRow } from '../../nfe/attempt'
-import { readComposedFacts } from '../../nfe/compose'
-import { documentInvalid } from '../../nfe/errors'
 import { merchandiseFileKey } from '../../nfe/fiscal-file'
-import { reconfirmNotRegistered, refreshInvoice, type ReconfirmResult, type ReconcileDeps, type RefreshResult } from '../../nfe/reconcile'
-import { transmitInvoice, type NfeActor, type NfeDeps, type TransmitResult } from '../../nfe/transmission'
+import { reconfirmNotRegistered, refreshInvoice, type ReconfirmResult, type RefreshResult } from '../../nfe/reconcile'
+import { transmitInvoice, type TransmitResult } from '../../nfe/transmission'
+import { actorOf, nfeDepsOf } from '../nfe-deps'
 
 /**
  * A borda de serviço de `/v1/nfe/invoices` (NFE.E6.P1 mudança 10; ficha §6-10): monta as dependências da composição a partir do `AppContext` (o pool, o anel de chaves, o
@@ -13,25 +12,7 @@ import { transmitInvoice, type NfeActor, type NfeDeps, type TransmitResult } fro
  * contrato. O router é fino; a regra mora em `src/nfe`. NADA aqui fala com o fisco por conta própria: o transporte é o do `callSoap` (o `request` real só entra sem injeção).
  */
 
-export const actorOf = (inst: InstitutionPayload): NfeActor => ({ institutionId: inst.institutionId, schemaName: inst.schemaName, userId: inst.userId })
-
-/** As dependências (montadas por chamada: nada de estado de controle). */
-export function nfeDepsOf(ctx: AppContext, now: () => Date = () => new Date()): NfeDeps & ReconcileDeps {
-  return {
-    pool: ctx.pool, storage: ctx.storage, now,
-    openIssuer: (conn, actor) => openIssuer({ pool: ctx.pool, keyring: ctx.keyring }, actor.institutionId, '55', { conn, forUpdate: true, schemaName: actor.schemaName }),
-    readFacts: (q, actor, ref, environment) => readComposedFacts(q, { storage: ctx.storage, techResponsible: ctx.technicalResponsible }, actor, ref, environment),
-    zoneOf: (q, actor) => erp.institutionZone(q, actor.schemaName, actor.institutionId),
-    establishmentCnpj: (q, actor) => erp.establishmentCnpj(q, actor.institutionId),
-    credentialsFor: async (q, actor, scope) => {
-      const required = await requiredFiscalCredentialsFor(q, { state: scope.uf, model: '55', environment: scope.environment, at: scope.at, institutionId: actor.institutionId })
-      if (required.length === 0) return null                                      // a UF × modelo × ambiente não exige código
-      if (required.length > 1) throw documentInvalid('A UF exige mais de um código fiscal — fora do 1º release', [{ field: 'infRespTec', message: 'Mais de uma credencial exigida' }])
-      return { codeId: required[0].codeId, codeValue: required[0].codeValue }
-    },
-    ca: () => ctx.serverCa.pem as never,
-  }
-}
+export { actorOf, nfeDepsOf }
 
 export interface TransmitResponse { readonly status: 201 | 202; readonly data: { invoiceId: number; attempt: number; accessKey: string; number: number; serie: number; protocol: string | null; receipt: string | null; kind: 'A' | 'P'; authorityCode: string | null; incident: TransmitResult['incident'] } }
 

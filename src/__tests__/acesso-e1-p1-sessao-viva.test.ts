@@ -20,6 +20,7 @@ import { createApp, loadOpenApi } from '../app'
 import { contextFromEnv } from '../context'
 import { FAKE_TECH } from './technical-responsible-fake'
 import type { AppContext } from '../context'
+import { Breaker } from '../nfe/breaker'
 
 jest.mock('fiscal-api', () => {
   const actual = jest.requireActual('fiscal-api')
@@ -85,7 +86,7 @@ afterAll(() => fs.rmSync(storageRoot, { recursive: true, force: true }))
 const ctx = (over: Partial<AppContext> = {}): AppContext => ({
   db: { host: 'x', port: 0, user: 'x', password: 'x', database: 'fiscal_api' },
   pool, keyring: MasterKeyRing.of({ 1: randomBytes(32) }), storage: new FsFiscalStorage(storageRoot),
-  fiscalDb: 'fiscal_api', verifier, corsOrigins: [], checkIdentity: true, serverCa: SERVER_CA, technicalResponsible: FAKE_TECH, ...over,
+  fiscalDb: 'fiscal_api', verifier, corsOrigins: [], checkIdentity: true, serverCa: SERVER_CA, technicalResponsible: FAKE_TECH, breaker: new Breaker(() => new Date()), ...over,
 })
 const EMITTER = { issuers: [], certificate: { certificate: false, privateKey: false, certificateInfo: null } }
 const get = (app: ReturnType<typeof createApp>, token: string) => request(app).get('/v1/emitter').set('Authorization', `Bearer ${token}`)

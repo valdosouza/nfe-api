@@ -12,6 +12,7 @@ import * as fiscal from 'fiscal-api'
 import { FsFiscalStorage, invoiceRef, MasterKeyRing, ProductTokenVerifier } from 'fiscal-api'
 import { createApp } from '../app'
 import type { AppContext } from '../context'
+import { Breaker } from '../nfe/breaker'
 import { loadServerCa } from '../authority/server-ca'
 import * as service from '../modules/invoices/invoices.service'
 import type { TransmitResult } from '../nfe/transmission'
@@ -41,7 +42,7 @@ const SERVER_CA = loadServerCa(path.resolve(__dirname, '..', '..', 'acervo', 'ic
 const ctx = (over: Partial<AppContext> = {}): AppContext => ({
   db: { host: 'x', port: 0, user: 'x', password: 'x', database: 'fiscal_api' },
   pool: { query: jest.fn(async () => [[{ x: 1 }]]), getConnection: jest.fn() } as any, keyring: MasterKeyRing.of({ 1: randomBytes(32) }), storage: new FsFiscalStorage('/tmp/nfe-routes-nao-usado'),
-  fiscalDb: 'fiscal_api', verifier: ProductTokenVerifier.of({ k1: pubPem }), corsOrigins: [], checkIdentity: true, serverCa: SERVER_CA, technicalResponsible: FAKE_TECH, ...over,
+  fiscalDb: 'fiscal_api', verifier: ProductTokenVerifier.of({ k1: pubPem }), corsOrigins: [], checkIdentity: true, serverCa: SERVER_CA, technicalResponsible: FAKE_TECH, breaker: new Breaker(() => new Date()), ...over,
 })
 const A = { Authorization: `Bearer ${token()}` }
 

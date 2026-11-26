@@ -3,6 +3,7 @@ import {
   fiscalStorageRootFromEnv, technicalResponsibleFromEnv, type TechnicalResponsible,
 } from 'fiscal-api'
 import { loadServerCa, type ServerCa } from './authority/server-ca'
+import { Breaker } from './nfe/breaker'
 
 /**
  * Dependências do serviço (montadas UMA vez no boot; os testes montam as suas). Nada de estado de CONTROLE aqui — só recursos (pool,
@@ -37,6 +38,11 @@ export interface AppContext {
    * fora da forma = o serviço NÃO sobe. O builder (NFE.E5.P3) lê daqui; o valor nunca vai a log. Congelado no boot: troca = reiniciar.
    */
   technicalResponsible: TechnicalResponsible
+  /**
+   * O disjuntor contra o 656 (D-NE54 b; NFE.E6.P4 mudança 1): UM por processo, estado em memória (cai com o reinício — o fisco é quem segura o bloqueio). As rotas e o rodízio
+   * recebem O MESMO (`nfeDepsOf`); sem ele cada chamada teria um disjuntor novo e nunca aberto.
+   */
+  breaker: Breaker
 }
 
 export function contextFromEnv(env: NodeJS.ProcessEnv = process.env, overrides: Partial<AppContext> = {}): AppContext {
@@ -58,5 +64,6 @@ export function contextFromEnv(env: NodeJS.ProcessEnv = process.env, overrides: 
     corsOrigins: overrides.corsOrigins ?? String(env.CORS_ORIGINS ?? '').split(',').map(s => s.trim()).filter(Boolean),
     checkIdentity: overrides.checkIdentity ?? true,
     technicalResponsible,
+    breaker: overrides.breaker ?? new Breaker(() => new Date()),
   }
 }

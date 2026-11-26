@@ -74,6 +74,33 @@ describe('D-F243 — a prova abre A1 guardado pelo verifyStoredKeys REAL do núc
   })
 })
 
+describe('DEPLOY.E1.P13 — a prova com os dois donos do cofre (verifyStoredKeys REAL do núcleo 5.3.0)', () => {
+  const smtps = [{ institutionId: 7, sealedWith: ringA }]
+
+  it('só senha SMTP guardada (sem A1): o anel certo prova → true', async () => {
+    const p = new KeyProof({ pool: storedA1Pool([], smtps), keyring: ringA }, { log: recordingLog().log })
+    expect(await p.run()).toBe(true)
+  })
+
+  it('senha SMTP com a chave ERRADA de 32 bytes → false e KEY_PROOF_FAILED; nada da chave no log', async () => {
+    const { calls, log } = recordingLog()
+    const p = new KeyProof({ pool: storedA1Pool([], smtps), keyring: ringB }, { log })
+    expect(await p.run()).toBe(false)
+    expect(calls.map(c => [c[0], c[2]?.code])).toEqual([['error', KEY_PROOF_LOG_CODES.failed]])
+    const text = JSON.stringify(calls)
+    for (const form of leakForms(keyA, keyB)) expect(text).not.toContain(form)
+  })
+
+  it('versão que só a senha SMTP usa e o anel não tem (rotação mal feita) → false, mesmo com os A1 abrindo', async () => {
+    const v2 = MasterKeyRing.of({ 2: keyB })
+    const { calls, log } = recordingLog()
+    const p = new KeyProof({ pool: storedA1Pool([{ institutionId: 3, sealedWith: ringA }], [{ institutionId: 8, sealedWith: v2 }]), keyring: ringA }, { log })
+    expect(await p.run()).toBe(false)
+    expect(calls.map(c => [c[0], c[2]?.code])).toEqual([['error', KEY_PROOF_LOG_CODES.failed]])
+    expect(calls[0][2].versions.find((v: { version: number }) => v.version === 2)).toMatchObject({ version: 2, ok: false })
+  })
+})
+
 describe('D-F244/D-F250 — o sinal e o motivo no log', () => {
   it('(d) anel vazio → false e KEY_PROOF_FAILED, SEM chamar a prova', async () => {
     const verify = jest.fn(async () => okCheck)

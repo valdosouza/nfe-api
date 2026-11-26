@@ -10,21 +10,25 @@ export interface StoredA1 { institutionId: number; sealedWith: MasterKeyRing }
 /** Senha SMTP guardada: mesma forma do A1. */
 export type StoredSmtp = StoredA1
 
-function rowsOf(list: StoredA1[], aadOf: (id: number) => string) {
+function rowsOf(list: StoredA1[], aadOf: (id: number) => string, plains: Buffer[]) {
   return list.map(({ institutionId, sealedWith }) => {
-    const s = sealedWith.seal(randomBytes(64), aadOf(institutionId))
+    const plain = randomBytes(64)
+    plains.push(plain)
+    const s = sealedWith.seal(plain, aadOf(institutionId))
     return { v: s.version, id: institutionId, cipher: s.cipher, iv: s.iv, tag: s.tag }
   }).sort((a, b) => a.v - b.v || a.id - b.id)
 }
 
+/** O pool falso; `plains` traz os conteúdos selados (gerados na hora) para o teste conferir que nenhum deles vaza em log. */
 export function storedA1Pool(a1s: StoredA1[], smtps: StoredSmtp[] = []): any {
-  const a1Rows = rowsOf(a1s, certificateAad)
-  const smtpRows = rowsOf(smtps, smtpCredentialAad)
+  const plains: Buffer[] = []
+  const a1Rows = rowsOf(a1s, certificateAad, plains)
+  const smtpRows = rowsOf(smtps, smtpCredentialAad, plains)
   const query = jest.fn(async (sql: string) => {
     const rows = /tb_establishment_smtp_credential/.test(sql) ? smtpRows : a1Rows
     if (/ROW_NUMBER\(\)/.test(sql)) return [rows]
     if (/SELECT DISTINCT cipher_key_version/.test(sql)) return [[...new Set(rows.map(r => r.v))].map(v => ({ v }))]
     return [[{ x: 1 }]]
   })
-  return { query, getConnection: jest.fn() }
+  return { query, getConnection: jest.fn(), plains }
 }

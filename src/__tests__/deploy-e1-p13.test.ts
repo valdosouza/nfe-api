@@ -7,6 +7,7 @@
 import fs from 'fs'
 import path from 'path'
 import ts from 'typescript'
+import * as core from 'fiscal-api'
 import { CORE_MIGRATIONS_DIR } from 'fiscal-api'
 
 const SRC = path.resolve(__dirname, '..')
@@ -16,6 +17,18 @@ const walk = (node: ts.Node, visit: (n: ts.Node) => void): void => { visit(node)
 const has = (node: ts.Node, test: (n: ts.Node) => boolean) => { let found = false; walk(node, n => { if (test(n)) found = true }); return found }
 const isCall = (n: ts.Node, name: string): n is ts.CallExpression => ts.isCallExpression(n) && ts.isIdentifier(n.expression) && n.expression.text === name
 const isMethodCall = (n: ts.Node, name: string) => ts.isCallExpression(n) && ts.isPropertyAccessExpression(n.expression) && n.expression.name.text === name
+/** `x.listen(…)` ou `x['listen'](…)`. */
+const isListen = (n: ts.Node) => isMethodCall(n, 'listen') || (ts.isCallExpression(n) && ts.isElementAccessExpression(n.expression) &&
+  ts.isStringLiteralLike(n.expression.argumentExpression) && n.expression.argumentExpression.text === 'listen')
+const isProcessExit = (n: ts.Node) => ts.isCallExpression(n) && ts.isPropertyAccessExpression(n.expression) && n.expression.name.text === 'exit' &&
+  ts.isIdentifier(n.expression.expression) && n.expression.expression.text === 'process'
+/** Como `has`, sem descer em função aninhada (o `return` de um callback não sai do `main`). */
+const hasOutsideFunctions = (node: ts.Node, test: (n: ts.Node) => boolean): boolean => {
+  let found = false
+  const go = (n: ts.Node): void => { if (found) return; if (test(n)) { found = true; return } if (ts.isFunctionLike(n)) return; n.forEachChild(go) }
+  go(node)
+  return found
+}
 
 describe('núcleo 5.3.0 — o pacote instalado (DEPLOY.E1.P13, D-F237)', () => {
   it('a versão instalada é a 5.3.0 ou posterior e o vendor é o do package.json', () => {
@@ -50,11 +63,16 @@ function smtpProbeFacts(source: string) {
   const csrtIndex = at(n => isCall(n, 'assertRequiredProviderCodesPresent'))
   const sessionIndex = at(n => isMethodCall(n, 'assertSessionViewReadable'))
   const keyProofIndex = at(n => ts.isNewExpression(n) && ts.isIdentifier(n.expression) && n.expression.text === 'KeyProof')
-  const listenIndex = at(n => isMethodCall(n, 'listen'))
+  const listenIndex = at(isListen)
+  // gate adversarial: o arquivo ouve a porta UMA vez, dentro do `main` (também por elemento, `x['listen']`), e o `main` não tem saída antecipada
+  // (return, throw ou process.exit) — senão um `if (…) return outraPartida()` sobe o serviço sem a sonda com as posições todas certas
+  let listenCalls = 0
+  walk(sf, n => { if (isListen(n)) listenCalls++ })
+  const earlyExit = statements.some(s => hasOutsideFunctions(s, n => ts.isReturnStatement(n) || ts.isThrowStatement(n) || isProcessExit(n)))
   const holds = calls.length === 1 && directIndex >= 0 && args.length === 1 && args[0] === 'ctx.pool' &&
-    [migrationsIndex, csrtIndex, sessionIndex, keyProofIndex, listenIndex].every(i => i >= 0) &&
+    [migrationsIndex, csrtIndex, sessionIndex, keyProofIndex, listenIndex].every(i => i >= 0) && listenCalls === 1 && !earlyExit &&
     migrationsIndex < directIndex && directIndex < csrtIndex && directIndex < sessionIndex && directIndex < keyProofIndex && keyProofIndex < listenIndex
-  return { count: calls.length, directIndex, args, migrationsIndex, csrtIndex, sessionIndex, keyProofIndex, listenIndex, holds }
+  return { count: calls.length, directIndex, args, migrationsIndex, csrtIndex, sessionIndex, keyProofIndex, listenIndex, listenCalls, earlyExit, holds }
 }
 
 describe('DEPLOY.E1.P13 — a partida confere a sonda da 009 (cerca do `server.ts` pela árvore do TypeScript)', () => {
@@ -105,6 +123,13 @@ describe('DEPLOY.E1.P13 — a partida confere a sonda da 009 (cerca do `server.t
       'com falha engolida': real.replace(CALL, '  try { await assertSmtpCredentialDomainsEnforced(ctx.pool) } catch { /* sobe assim */ }\n'),
       'outro pool': real.replace(CALL, '  await assertSmtpCredentialDomainsEnforced(ctx.db)\n'),
       'duas chamadas': real.replace(CALL, CALL + CALL),
+      // gate adversarial (MEDIUM 1): outra partida antes da sonda, por retorno antecipado, com `listen` por elemento
+      'retorno antecipado para outra partida': real
+        .replace('async function main', "async function devMain() { const c = contextFromEnv(); const k = new KeyProof(c); await k.run(); createApp(c, k)['listen'](3003) }\nasync function main")
+        .replace('  const applied = await runMigrations(', "  if (process.env.NFE_FAST_BOOT === '1') return devMain()\n  const applied = await runMigrations("),
+      'throw antecipado': real.replace('  const applied = await runMigrations(', "  if (process.env.X === '1') throw new Error('x')\n  const applied = await runMigrations("),
+      'process.exit antecipado': real.replace('  const applied = await runMigrations(', "  if (process.env.X === '1') process.exit(0)\n  const applied = await runMigrations("),
+      'listen por elemento fora do main': real + "\nfunction other(app: any) { app['listen'](1) }\n",
     }
     for (const [what, source] of Object.entries(mutations)) {
       expect([what, source !== real]).toEqual([what, true])
@@ -114,22 +139,32 @@ describe('DEPLOY.E1.P13 — a partida confere a sonda da 009 (cerca do `server.t
 })
 
 describe('DEPLOY.E1.P13 — a nfe-api ainda não lê nem grava a credencial SMTP (é da NFE.E6.P4)', () => {
-  // os nomes da peça `smtp-credential` do 5.3.0 (funções, repositório e o dono do cofre) e a tabela da 009
-  const SMTP_NAMES = /\b(openSmtpCredential|storeSmtpCredential|clearSmtpCredential|smtpCredentialStatus|getSmtpCredential|saveSmtpCredential|eraseSmtpCredential|rewrapSmtpCredentialPassword|readSmtpPasswordSealedForUpdate|smtpCredentialKeyVersions|smtpCredentialsOutsideKeyVersion|sampleSmtpCredentialsPerKeyVersion|SMTP_CREDENTIAL_SEALED_STORE|tb_establishment_smtp_credential)\b/
+  // Gate adversarial (MEDIUM 2): a lista sai do PACOTE INSTALADO — todo export com "smtp" no nome (menos a sonda do boot) entra sozinho, mais o acesso
+  // genérico ao cofre (`SEALED_STORES` e os donos, que abrem qualquer segredo) e a rotação (que é da nfse-api); mais a tabela da 009 e os métodos do
+  // dono do cofre (`.readSealedForUpdate(`, `.rewrap(`). Limite aceito (como na P11): acesso por elemento montado (`core['SEALED' + '_STORES']`) não é visto por texto.
+  const ALLOWED = new Set(['assertSmtpCredentialDomainsEnforced'])
+  const VAULT = ['SEALED_STORES', 'CERTIFICATE_SEALED_STORE', 'rotateStoredKeys', 'storedSecretsOutsideKeyVersion', 'StoredKeyRotationAborted', 'rotateCertificateKeys', 'KeyRotationAborted']
+  const NAMES = [...Object.keys(core).filter(n => /smtp/i.test(n) && !ALLOWED.has(n)), ...VAULT]
+  const FORBIDDEN = new RegExp(`\\b(${[...NAMES, 'tb_establishment_smtp_credential'].join('|')})\\b|\\.(readSealedForUpdate|rewrap)\\s*\\(`)
+  const TESTS_DIR = path.join(SRC, '__tests__')
 
-  it('nenhum arquivo de código em `src/` (fora de `__tests__`) nem em `scripts/` usa a peça ou cita a tabela', () => {
+  it('nenhum arquivo de código ou SQL em `src/` (fora de `src/__tests__`) nem em `scripts/` usa a peça, o cofre ou cita a tabela', () => {
     const users = (dir: string): string[] => !fs.existsSync(dir) ? [] : fs.readdirSync(dir, { withFileTypes: true }).flatMap(e => {
       const full = path.join(dir, e.name)
-      if (e.isDirectory()) return e.name === '__tests__' || e.name === 'node_modules' ? [] : users(full)
-      if (!/\.(ts|tsx|mts|cts|js|mjs|cjs)$/.test(e.name)) return []
-      return SMTP_NAMES.test(fs.readFileSync(full, 'utf8')) ? [path.relative(ROOT, full)] : []
+      if (e.isDirectory()) return full === TESTS_DIR || e.name === 'node_modules' ? [] : users(full)
+      if (!/\.(ts|tsx|mts|cts|js|mjs|cjs|sql)$/.test(e.name)) return []
+      return FORBIDDEN.test(fs.readFileSync(full, 'utf8')) ? [path.relative(ROOT, full)] : []
     })
     expect([...users(SRC), ...users(path.join(ROOT, 'scripts'))]).toEqual([])
   })
 
-  it('o padrão reconhece cada nome (a cerca não é vazia)', () => {
-    for (const name of ['openSmtpCredential', 'saveSmtpCredential', 'SMTP_CREDENTIAL_SEALED_STORE', 'tb_establishment_smtp_credential']) {
-      expect([name, SMTP_NAMES.test(`x ${name}(`)]).toEqual([name, true])
+  it('a lista não é vazia: os nomes do 5.3.0 estão nela e o padrão reconhece cada forma', () => {
+    for (const name of ['openSmtpCredential', 'saveSmtpCredential', 'smtpCredentialAad', 'SMTP_CREDENTIAL_SEALED_STORE', 'SEALED_STORES', 'rotateStoredKeys']) {
+      expect([name, NAMES.includes(name)]).toEqual([name, true])
     }
+    for (const text of ['x openSmtpCredential(', 'SEALED_STORES.find(', 'FROM tb_establishment_smtp_credential', 'store.readSealedForUpdate(conn, 1)', 's.rewrap (c)']) {
+      expect([text, FORBIDDEN.test(text)]).toEqual([text, true])
+    }
+    expect(FORBIDDEN.test('await assertSmtpCredentialDomainsEnforced(ctx.pool)')).toBe(false)   // a sonda do boot é a única permitida
   })
 })

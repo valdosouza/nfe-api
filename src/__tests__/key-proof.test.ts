@@ -1,6 +1,6 @@
 /// <reference types="jest" />
 // nfe-api DEPLOY.E1.P6.T1 (D-NE189; D-F243, D-F244, D-F245, D-F250, D-F251 — 2026-11-19; ficha `projetos/nfe-api/GERAL/
-// ficha-deploy-e1-p6-chave-mestra-health.md` no Vault): a prova da chave do SERVIDOR abre os A1 guardados (`verifyStoredKeys` REAL), roda na
+// ficha-deploy-e1-p6-chave-mestra-health.md` no Vault): a prova da chave do SERVIDOR abre os segredos guardados — A1 e, desde a DEPLOY.E1.P13, a senha SMTP (`verifyStoredKeys` REAL), roda na
 // partida antes do `listen` e a cada 5 min; o health só lê o sinal; falha = `masterKey=false` e o motivo no log. Gêmea: nfse-api b3f192e.
 import { randomBytes } from 'crypto'
 import fs from 'fs'
@@ -77,18 +77,23 @@ describe('D-F243 — a prova abre A1 guardado pelo verifyStoredKeys REAL do núc
 describe('DEPLOY.E1.P13 — a prova com os dois donos do cofre (verifyStoredKeys REAL do núcleo 5.3.0)', () => {
   const smtps = [{ institutionId: 7, sealedWith: ringA }]
 
-  it('só senha SMTP guardada (sem A1): o anel certo prova → true', async () => {
-    const p = new KeyProof({ pool: storedA1Pool([], smtps), keyring: ringA }, { log: recordingLog().log })
+  it('só senha SMTP guardada (sem A1): o anel certo prova → true, e a prova LEU a tabela da 009 (não passou por não ver nada)', async () => {
+    const pool = storedA1Pool([], smtps)
+    const p = new KeyProof({ pool, keyring: ringA }, { log: recordingLog().log })
     expect(await p.run()).toBe(true)
+    const sqls: string[] = pool.query.mock.calls.map((c: unknown[]) => String(c[0]))
+    expect(sqls.some(s => /tb_establishment_smtp_credential/.test(s) && /ROW_NUMBER\(\)/.test(s))).toBe(true)
   })
 
-  it('senha SMTP com a chave ERRADA de 32 bytes → false e KEY_PROOF_FAILED; nada da chave no log', async () => {
+  it('senha SMTP com a chave ERRADA de 32 bytes → false e KEY_PROOF_FAILED pelo dono SMTP; nada da chave nem da senha no log', async () => {
     const { calls, log } = recordingLog()
-    const p = new KeyProof({ pool: storedA1Pool([], smtps), keyring: ringB }, { log })
+    const pool = storedA1Pool([], smtps)
+    const p = new KeyProof({ pool, keyring: ringB }, { log })
     expect(await p.run()).toBe(false)
     expect(calls.map(c => [c[0], c[2]?.code])).toEqual([['error', KEY_PROOF_LOG_CODES.failed]])
+    expect(calls[0][2].versions).toEqual([{ version: 1, ok: false, code: 'SMTP_CREDENTIAL_UNREADABLE', unreadable: 1 }])
     const text = JSON.stringify(calls)
-    for (const form of leakForms(keyA, keyB)) expect(text).not.toContain(form)
+    for (const form of leakForms(keyA, keyB, ...pool.plains)) expect(text).not.toContain(form)
   })
 
   it('versão que só a senha SMTP usa e o anel não tem (rotação mal feita) → false, mesmo com os A1 abrindo', async () => {
@@ -97,7 +102,21 @@ describe('DEPLOY.E1.P13 — a prova com os dois donos do cofre (verifyStoredKeys
     const p = new KeyProof({ pool: storedA1Pool([{ institutionId: 3, sealedWith: ringA }], [{ institutionId: 8, sealedWith: v2 }]), keyring: ringA }, { log })
     expect(await p.run()).toBe(false)
     expect(calls.map(c => [c[0], c[2]?.code])).toEqual([['error', KEY_PROOF_LOG_CODES.failed]])
-    expect(calls[0][2].versions.find((v: { version: number }) => v.version === 2)).toMatchObject({ version: 2, ok: false })
+    expect(calls[0][2].versions).toEqual([
+      { version: 1, ok: true, code: null, unreadable: 0 },
+      { version: 2, ok: false, code: 'FISCAL_MASTER_KEY_UNAVAILABLE', unreadable: 1 },
+    ])
+  })
+
+  it('LIMITE do núcleo 5.3.0 (D-F243 entre donos; ficha §3): versão em que o A1 abre e TODAS as senhas SMTP não → true, só KEY_PROOF_DEGRADED no log', async () => {
+    // fixado aqui para a NFE.E6.P4 herdar o aviso: um dono inteiro ilegível numa versão (cofre divergente) não derruba a prova — o alarme próprio é decisão do Valdo
+    const { calls, log } = recordingLog()
+    const pool = storedA1Pool([{ institutionId: 3, sealedWith: ringA }], [{ institutionId: 7, sealedWith: ringB }, { institutionId: 8, sealedWith: ringB }])
+    const p = new KeyProof({ pool, keyring: ringA }, { log })
+    expect(await p.run()).toBe(true)
+    expect(calls.map(c => [c[0], c[2]?.code])).toEqual([['warn', KEY_PROOF_LOG_CODES.degraded]])
+    const text = JSON.stringify(calls)
+    for (const form of leakForms(keyA, keyB, ...pool.plains)) expect(text).not.toContain(form)
   })
 })
 

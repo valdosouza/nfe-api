@@ -94,7 +94,7 @@ export class KeyProof {
           })
         }
         if (check.degraded) {
-          this.log.warn('Prova da chave-mestra: segredo ilegível com a chave certa (D-F243 — alarme, não queda)', {
+          this.log.warn('Prova da chave-mestra: há segredo ilegível numa versão que a chave do servidor abre (D-F243 — alarme, não queda; pode ser um dono inteiro)', {
             code: KEY_PROOF_LOG_CODES.degraded,
             versions: check.versions.filter(v => v.ok && v.unreadable > 0).map(v => ({ version: v.version, unreadable: v.unreadable })),
           })

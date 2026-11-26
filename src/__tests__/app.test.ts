@@ -172,7 +172,7 @@ describe('entrada — corpo, envelope, CORS e health', () => {
     expect((await request(app).options('/v1/emitter').set('Origin', 'https://app.setesgestao.com.br')).status).toBe(204)
     expect(() => createApp(ctx({ corsOrigins: ['*'] }))).toThrow(/D-F146/)
   })
-  // DEPLOY.E1.P6 (D-NE189 → D-F243/D-F244/D-F245): o sinal `masterKey` é o último resultado da prova (abre A1 guardado); o health só LÊ
+  // DEPLOY.E1.P6 (D-NE189 → D-F243/D-F244/D-F245): o sinal `masterKey` é o último resultado da prova (abre segredo guardado — A1 ou senha SMTP); o health só LÊ
   const quiet = { info() {}, warn() {}, error() {} }
   const proof = (check: StoredKeyCheck | Error) => {
     const verify = jest.fn(async () => { if (check instanceof Error) throw check; return check })

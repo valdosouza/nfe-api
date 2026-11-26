@@ -1,7 +1,7 @@
 /// <reference types="jest" />
 /**
  * A tentativa da NF-e no MOTOR REAL, num banco DESCARTÁVEL (NFE.E6.P1 mudanças 4 e 6 — ficha-nfe-e6-p1-transmitir-consultar-reconferir.md §6; D-F53): criado pelo
- * runner de migrations (núcleo 001–008 + família 001 e 002) e APAGADO no afterAll. Nunca escreve no `fiscal_api` nem nos `setes_*`. **Só roda com NFE_ADV_E6P1_DB=1**
+ * runner de migrations (núcleo 001–009 + família 001 e 002) e APAGADO no afterAll. Nunca escreve no `fiscal_api` nem nos `setes_*`. **Só roda com NFE_ADV_E6P1_DB=1**
  * (credenciais do `.env` da nfe-api; o usuário precisa poder criar `fiscal_api_adv%`) — **NÃO foi executado na sessão que o escreveu**: o dev local estava fora do ar e
  * rodar é do Valdo, com o "vai". O que prova: o runner e a sonda da coluna da 002; `insertAttempt` (MAX+1, e a colisão da UNIQUE da chave sorteia outra chave);
  * write-once no motor (`fillReceipt`, `fillAuthorityData`, `recordNfeNotRegistered` — este NÃO grava se entrou voz depois da que a pergunta viu); a política do número

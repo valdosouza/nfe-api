@@ -101,7 +101,7 @@ export async function readComposedFacts(q: Queryable, env: ComposeEnv, actor: Nf
   const serie = Number(header.serie)
   if (!trial.emit.CNPJ || !uf) throw documentInvalid('O emitente não pôde ser composto', [{ field: 'emit', message: 'CNPJ ou UF do emitente ausente' }])
   return {
-    serie, cnpj: trial.emit.CNPJ, uf: uf as ComposedFacts['uf'], hasStateRegistration: !!trial.emit.IE, dtEmission: header.dtEmission, createdAt: header.createdAt, lifeEvent: header.lifeEvent,
+    serie, cnpj: trial.emit.CNPJ, uf: uf as ComposedFacts['uf'], hasStateRegistration: !!trial.emit.IE, dtEmission: header.dtEmission, createdAt: header.createdAt, lifeEvent: header.lifeEvent, lifeDate: header.lifeDate,
     buildInput: ({ dhEmi, csrt }) => nfeInputFromFacts({ ...base, dhEmi, csrt }),
   }
 }

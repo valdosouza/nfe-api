@@ -14,7 +14,7 @@ type Row = Record<string, unknown>
 type Call = { sql: string; params: unknown[] }
 
 /** A vida e o evento E de faturamento padrão da nota (D-NE296): vida 1, faturada em 2026-11-23 13:05:09 UTC. Regra explícita do teste vence. */
-const LIFE_DEFAULTS: [string, Row[]][] = [['vw_invoice_life', [{ lifeEvent: 1 }]], ['tb_invoice_event', [{ createdAt: '2026-11-23 13:05:09' }]]]
+const LIFE_DEFAULTS: [string, Row[]][] = [['vw_invoice_life', [{ lifeEvent: 1 }]], ['tb_invoice_event', [{ createdAt: '2026-11-23 13:05:09', lifeDate: '2026-11-23' }]]]
 
 /** Devolve as linhas da 1ª regra cujo texto aparece depois do FROM principal da consulta. */
 function fakeDb(rules: [from: string, rows: Row[] | ((params: unknown[]) => Row[])][]) {
@@ -63,7 +63,7 @@ describe('NFE.E5.P2.T1 — nota e ramo de mercadoria', () => {
     const db = fakeDb([['tb_invoice', [invoiceRow]]])
     const h = await readMerchandiseInvoice(db, SCHEMA, REF)
     expect(h).toEqual({
-      invoiceId: 5001, number: null, serie: '1', model: '55', dtEmission: '2026-11-23', createdAt: '2026-11-23 13:05:09', lifeEvent: 1, entityId: 321, status: '0', note: 'obs da nota',
+      invoiceId: 5001, number: null, serie: '1', model: '55', dtEmission: '2026-11-23', createdAt: '2026-11-23 13:05:09', lifeEvent: 1, lifeDate: '2026-11-23', entityId: 321, status: '0', note: 'obs da nota',
       totalValue: '4000.00', indPres: 3,
     })
     expect(db.calls).toHaveLength(3)                                     // a nota, a vida, o evento da vida
@@ -74,26 +74,27 @@ describe('NFE.E5.P2.T1 — nota e ramo de mercadoria', () => {
     expect(db.calls[0].sql).not.toMatch(/base_icms_value|icms_value|freight_value|ipi_value/)   // os outros totais do ramo NÃO são lidos (D-NE27)
   })
 
-  it('D-NE296 — a vida vem da view com WHERE pela chave (forma do núcleo, nunca junção) e a hora do evento E dessa vida pela chave, com a data da nota', async () => {
+  it('D-NE296 — a vida vem da view com WHERE pela chave (forma do núcleo, nunca junção) e a hora e a data do evento E dessa vida pela chave, vivo', async () => {
     const db = fakeDb([['tb_invoice', [invoiceRow]]])
     await readMerchandiseInvoice(db, SCHEMA, REF)
     const norm = (x: string) => x.replace(/\s+/g, ' ').trim()
     expect(norm(db.calls[1].sql)).toBe('SELECT life_event AS lifeEvent FROM `setes_cliente_x`.vw_invoice_life WHERE tb_invoice_id = ? AND tb_institution_id = ? AND terminal = ?')
     expect(db.calls[1].params).toEqual([5001, INST, TERMINAL])
-    expect(norm(db.calls[2].sql)).toBe("SELECT DATE_FORMAT(created_at, '%Y-%m-%d %H:%i:%s') AS createdAt FROM `setes_cliente_x`.tb_invoice_event WHERE tb_invoice_id = ? AND tb_institution_id = ? AND terminal = ? AND event = ? AND kind = 'E' AND dt_record = ?")
-    expect(db.calls[2].params).toEqual([5001, INST, TERMINAL, 1, '2026-11-23'])
+    expect(norm(db.calls[2].sql)).toBe("SELECT DATE_FORMAT(created_at, '%Y-%m-%d %H:%i:%s') AS createdAt, DATE_FORMAT(dt_record, '%Y-%m-%d') AS lifeDate FROM `setes_cliente_x`.tb_invoice_event WHERE tb_invoice_id = ? AND tb_institution_id = ? AND terminal = ? AND event = ? AND kind = 'E' AND deleted = 'N'")
+    expect(db.calls[2].params).toEqual([5001, INST, TERMINAL, 1])
     for (const c of db.calls) expect(c.sql).not.toMatch(/\bJOIN\b[^]*vw_invoice_life/)   // a view nunca como lado de uma junção (materializa o schema)
   })
 
   it('D-NE296 — a nota que REVIVEU (faturada de novo depois do cancelamento) entrega a hora do evento E da vida nova', async () => {
-    // o caso do dev de 2026-11-26 (nota 8014): vida 3, evento E de 26/11 18:05:55; o falso só acha o evento pela vida e pela data certas
+    // o caso do dev de 2026-11-26 (nota 8014): vida 3, evento E de 26/11 18:05:55; o falso só acha o evento pela vida certa
     const db = fakeDb([
       ['tb_invoice', [{ ...invoiceRow, dtEmission: '2026-11-26' }]],
       ['vw_invoice_life', [{ lifeEvent: 3 }]],
-      ['tb_invoice_event', (p: unknown[]) => p[3] === 3 && p[4] === '2026-11-26' ? [{ createdAt: '2026-11-26 18:05:55' }] : []],
+      ['tb_invoice_event', (p: unknown[]) => p[3] === 3 ? [{ createdAt: '2026-11-26 18:05:55', lifeDate: '2026-11-26' }] : []],
     ])
     const h = await readMerchandiseInvoice(db, SCHEMA, REF)
-    expect([h.dtEmission, h.createdAt, h.lifeEvent]).toEqual(['2026-11-26', '2026-11-26 18:05:55', 3])
+    expect([h.dtEmission, h.createdAt, h.lifeEvent, h.lifeDate]).toEqual(['2026-11-26', '2026-11-26 18:05:55', 3, '2026-11-26'])
+    expect(dhEmiOf(h.dtEmission, h.createdAt, 'America/Sao_Paulo', h.lifeDate)).toBe('2026-11-26T15:05:55-03:00')   // 18:05:55 UTC = 15:05:55 em Brasília
   })
 
   it('qualquer leitura com mais de uma linha → 409 RESOURCE_BUSY, nunca a primeira (PADROES_BANCO §11 regra 13)', async () => {
@@ -101,21 +102,31 @@ describe('NFE.E5.P2.T1 — nota e ramo de mercadoria', () => {
     expect(await refused(readMerchandiseInvoice(twoInvoices, SCHEMA, REF))).toMatchObject({ status: 409, code: 'RESOURCE_BUSY' })
     const twoLives = fakeDb([['tb_invoice', [invoiceRow]], ['vw_invoice_life', [{ lifeEvent: 1 }, { lifeEvent: 2 }]]])
     expect(await refused(readMerchandiseInvoice(twoLives, SCHEMA, REF))).toMatchObject({ status: 409, code: 'RESOURCE_BUSY' })
-    const twoEvents = fakeDb([['tb_invoice', [invoiceRow]], ['tb_invoice_event', [{ createdAt: '2026-11-23 13:05:09' }, { createdAt: '2026-11-23 20:00:00' }]]])
+    const twoEvents = fakeDb([['tb_invoice', [invoiceRow]], ['tb_invoice_event', [{ createdAt: '2026-11-23 13:05:09', lifeDate: '2026-11-23' }, { createdAt: '2026-11-23 20:00:00', lifeDate: '2026-11-23' }]]])
     expect(await refused(readMerchandiseInvoice(twoEvents, SCHEMA, REF))).toMatchObject({ status: 409, code: 'RESOURCE_BUSY' })
   })
 
-  it('S-A — sem vida (carga ou sincronização) ou com o evento de OUTRA data (linha regravada): `createdAt` e `lifeEvent` nulos, e o dhEmi é recusado com a causa certa', async () => {
+  it('S-A — sem vida (carga ou sincronização) ou sem o evento E vivo dela: `createdAt` nulo, e o dhEmi é recusado com a causa certa', async () => {
     const noLife = fakeDb([['tb_invoice', [invoiceRow]], ['vw_invoice_life', [{ lifeEvent: null }]]])
     const a = await readMerchandiseInvoice(noLife, SCHEMA, REF)
-    expect([a.createdAt, a.lifeEvent, noLife.calls.length]).toEqual([null, null, 2])     // sem vida, o evento nem é lido
-    const otherDate = fakeDb([['tb_invoice', [invoiceRow]], ['tb_invoice_event', []]])   // o evento da vida tem outra data: a chave com `dt_record` não acha
-    const b = await readMerchandiseInvoice(otherDate, SCHEMA, REF)
-    expect([b.createdAt, b.lifeEvent]).toEqual([null, null])
+    expect([a.createdAt, a.lifeEvent, a.lifeDate, noLife.calls.length]).toEqual([null, null, null, 2])     // sem vida, o evento nem é lido
+    const noEvent = fakeDb([['tb_invoice', [invoiceRow]], ['tb_invoice_event', []]])
+    const b = await readMerchandiseInvoice(noEvent, SCHEMA, REF)
+    expect([b.createdAt, b.lifeEvent, b.lifeDate]).toEqual([null, 1, null])                               // a vida é crua: a corrida (409) é da transmissão
     let err: any
-    try { dhEmiOf(b.dtEmission, b.createdAt, 'America/Sao_Paulo') } catch (e) { err = e }
+    try { dhEmiOf(b.dtEmission, b.createdAt, 'America/Sao_Paulo', b.lifeDate) } catch (e) { err = e }
     expect(err?.statusCode).toBe(422)
-    expect(JSON.stringify(err?.fields)).toMatch(/evento de faturamento da vida da nota/)
+    expect(JSON.stringify(err?.fields)).toMatch(/evento de faturamento da vida da nota ausente/)
+  })
+
+  it('S-B — o evento E da vida tem OUTRA data que não a da nota (linha regravada): a leitura entrega as duas datas e o dhEmi recusa com a causa própria', async () => {
+    const db = fakeDb([['tb_invoice', [invoiceRow]], ['tb_invoice_event', [{ createdAt: '2026-11-20 13:05:09', lifeDate: '2026-11-20' }]]])
+    const h = await readMerchandiseInvoice(db, SCHEMA, REF)
+    expect([h.dtEmission, h.lifeDate]).toEqual(['2026-11-23', '2026-11-20'])
+    let err: any
+    try { dhEmiOf(h.dtEmission, h.createdAt, 'America/Sao_Paulo', h.lifeDate) } catch (e) { err = e }
+    expect(err?.statusCode).toBe(422)
+    expect(JSON.stringify(err?.fields)).toMatch(/tem a data 2026-11-20 e a nota tem a data 2026-11-23/)
   })
 
   it('nota inexistente ou de outro estabelecimento → 404 INVOICE_NOT_FOUND; sem ramo → 422 INVOICE_MERCHANDISE_BRANCH_MISSING', async () => {

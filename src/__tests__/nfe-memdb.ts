@@ -16,13 +16,15 @@ export class MemDb {
   /** Transações abertas agora (o fisco NUNCA é chamado com uma aberta). */
   openTx = 0
   clock = new Date('2026-11-24T13:20:00Z')
+  /** A vida que a reserva trava (`vw_invoice_life`); o teste pode separar a vida do último evento. */
+  life = { lifeEvent: 1, lastEvent: 1, lastKind: 'E' }
   /** Ganchos para o teste mexer no banco "no meio" (a voz que entra durante a pergunta ao fisco). */
   async query(sql: string, params: unknown[] = []): Promise<[any, any]> {
     await new Promise(r => setImmediate(r))
     const s = sql.replace(/\s+/g, ' ').trim()
     const now = fmt(this.clock)
     if (/FROM `setes_x`\.tb_invoice WHERE/.test(s)) return [[{ deleted: this.deleted ? 'S' : 'N' }], []]
-    if (/FROM `setes_x`\.vw_invoice_life/.test(s)) return [[{ lifeEvent: 1, lastEvent: 1, lastKind: 'E' }], []]
+    if (/FROM `setes_x`\.vw_invoice_life/.test(s)) return [[{ ...this.life }], []]
     if (/^SELECT COALESCE\(MAX\(attempt\)/.test(s)) return [[{ next: this.attempts.length + 1 }], []]
     if (/^SELECT COALESCE\(MAX\(event\)/.test(s)) return [[{ next: this.events.filter(e => e.attempt === params[3]).length + 1 }], []]
     if (/^INSERT INTO tb_invoice_merchandise_transmission_event/.test(s)) {

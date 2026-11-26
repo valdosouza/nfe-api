@@ -53,12 +53,13 @@ export interface MerchandiseInvoiceHeader {
   /**
    * O instante do faturamento da VIDA ATUAL da nota, em UTC ('AAAA-MM-DD HH:MM:SS' — PADROES_BANCO §10.1): o `created_at` do evento E da vida
    * (`vw_invoice_life.life_event` — D-F32), não o da `tb_invoice`, que fica com a hora do 1º faturamento quando a nota REVIVE na mesma linha
-   * (D-NE296, que ajusta a D-NE284). A HORA do `dhEmi`. Nulo = a nota não tem evento E da vida com a MESMA data da nota (carga, sincronização ou
-   * linha regravada) — o `dhEmiOf` recusa (S-A).
+   * (D-NE296, que ajusta a D-NE284). A HORA do `dhEmi`. Nulo = a nota não tem evento E da vida (carga ou sincronização) — o `dhEmiOf` recusa (S-A).
    */
   createdAt:  string | null
-  /** O evento E da vida de onde veio a hora (`vw_invoice_life.life_event`); a transmissão confere que é a vida que ela travou. */
+  /** A vida da nota pela view (`vw_invoice_life.life_event`), crua; a transmissão confere que é a vida que ela travou (409 antes de qualquer 422). */
   lifeEvent:  number | null
+  /** A data (`dt_record`, 'AAAA-MM-DD') do evento E da vida; diferente do `dt_emission` = linha regravada — o `dhEmiOf` recusa (S-B). */
+  lifeDate:   string | null
   entityId:   number
   status:     string
   note:       string | null
@@ -74,8 +75,9 @@ export interface MerchandiseInvoiceHeader {
  * A hora do `dhEmi` (D-NE296) sai em DUAS leituras simples, nunca por junção com a view: (1) a vida pela view publicada `vw_invoice_life`
  * (D-F32: uma verdade só) com WHERE pela chave da nota — a forma do núcleo, que o MariaDB funde (a view como lado de dentro de um LEFT JOIN
  * materializou o schema inteiro no dev: mais de 2 min no banco de um cliente, contra 19 ms assim); (2) o evento E dessa vida pela chave
- * primária de `tb_invoice_event`, só se a data dele (`dt_record`) é a da nota (`dt_emission`) — o faturamento grava as duas iguais na mesma
- * transação (setes-api `issueInvoice`). Mais de uma linha em qualquer leitura = 409 `RESOURCE_BUSY`, nunca a primeira (PADROES_BANCO §11 regra 13).
+ * primária de `tb_invoice_event` (vivo), com a data dele (`dt_record`) — o faturamento grava `dt_record` = `dt_emission` na mesma transação
+ * (setes-api `issueInvoice`); a conferência das duas datas é do `dhEmiOf` (S-B), com a causa própria. Mais de uma linha em qualquer leitura = 409
+ * `RESOURCE_BUSY`, nunca a primeira (PADROES_BANCO §11 regra 13). Só dentro da reserva (`withInvoiceTx`): as leituras confiam no retrato aberto pela trava.
  */
 export async function readMerchandiseInvoice(q: Queryable, schemaName: string, ref: InvoiceRef): Promise<MerchandiseInvoiceHeader> {
   const s = assertSchema(schemaName)
@@ -102,18 +104,20 @@ export async function readMerchandiseInvoice(q: Queryable, schemaName: string, r
     [ref.invoiceId, ref.institutionId, ref.terminal])
   if (lives.length > 1) throw busy('a leitura da vida')
   const lifeEvent = int(lives[0]?.lifeEvent)
-  // (2) o evento E da vida, pela chave primária, com a data da nota
+  // (2) o evento E da vida, pela chave primária, vivo, com a data dele
   let createdAt: string | null = null
+  let lifeDate: string | null = null
   if (lifeEvent !== null) {
     const [events] = await q.query(
-      `SELECT DATE_FORMAT(created_at, '%Y-%m-%d %H:%i:%s') AS createdAt FROM \`${s}\`.tb_invoice_event
-        WHERE tb_invoice_id = ? AND tb_institution_id = ? AND terminal = ? AND event = ? AND kind = 'E' AND dt_record = ?`,
-      [ref.invoiceId, ref.institutionId, ref.terminal, lifeEvent, dtEmission])
+      `SELECT DATE_FORMAT(created_at, '%Y-%m-%d %H:%i:%s') AS createdAt, DATE_FORMAT(dt_record, '%Y-%m-%d') AS lifeDate FROM \`${s}\`.tb_invoice_event
+        WHERE tb_invoice_id = ? AND tb_institution_id = ? AND terminal = ? AND event = ? AND kind = 'E' AND deleted = 'N'`,
+      [ref.invoiceId, ref.institutionId, ref.terminal, lifeEvent])
     if (events.length > 1) throw busy('a leitura do evento da vida')
     createdAt = txt(events[0]?.createdAt)
+    lifeDate = txt(events[0]?.lifeDate)
   }
   return {
-    invoiceId: Number(r.id), number: txt(r.number), serie: txt(r.serie), model: txt(r.model), dtEmission, createdAt, lifeEvent: createdAt === null ? null : lifeEvent,
+    invoiceId: Number(r.id), number: txt(r.number), serie: txt(r.serie), model: txt(r.model), dtEmission, createdAt, lifeEvent, lifeDate,
     entityId: Number(r.entityId), status: String(r.status ?? ''), note: txt(r.note), totalValue: txt(r.totalValue), indPres: int(r.indPres),
   }
 }

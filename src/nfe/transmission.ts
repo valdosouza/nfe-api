@@ -49,6 +49,8 @@ export interface ComposedFacts {
   readonly createdAt: string | null
   /** A vida da nota de onde veio a hora do `dhEmi` (D-NE296); tem de ser a vida travada pela reserva. */
   readonly lifeEvent: number | null
+  /** A data do evento E da vida (S-B: tem de ser a do `dt_emission`). */
+  readonly lifeDate: string | null
   /** O candidato com o `dhEmi` e a prova do CSRT dados (ou nenhuma). */
   readonly buildInput: (p: { dhEmi: string; csrt: CsrtProof | null }) => NfeInput
 }
@@ -143,7 +145,7 @@ export async function transmitInvoice(deps: NfeDeps, actor: NfeActor, ref: Invoi
     const environment = opened.issuer.environment as Environment
     const facts = await readFactsGuarded(deps, conn, actor, ref, environment)
     // D-NE296: a hora do dhEmi é da vida que esta reserva travou — vida diferente (corrida com um refaturamento) é 409, nunca a hora de outra vida.
-    // Sem evento da vida (`lifeEvent` nulo) segue: o `dhEmiOf` recusa com 422 pela causa (S-A).
+    // Sem vida (`lifeEvent` nulo) segue: o `dhEmiOf` recusa com 422 pela causa (S-A; e S-B se a data do evento não é a da nota).
     if (facts.lifeEvent !== null && facts.lifeEvent !== life) {
       throw new HttpError(409, 'A nota mudou de vida durante a transmissão (faturada de novo) — tente de novo', [{ field: 'lifeEvent', message: `lida ${facts.lifeEvent}, travada ${life}` }], ErrorCodes.RESOURCE_BUSY)
     }
@@ -162,7 +164,7 @@ export async function transmitInvoice(deps: NfeDeps, actor: NfeActor, ref: Invoi
     }
 
     const zone = await deps.zoneOf(conn, actor)
-    const dhEmi = dhEmiOf(facts.dtEmission, facts.createdAt, zone)
+    const dhEmi = dhEmiOf(facts.dtEmission, facts.createdAt, zone, facts.lifeDate)
     const authorizer = resolveAuthorizer({ uf: facts.uf, model: '55', environment, emissionType: 1, hasStateRegistration: facts.hasStateRegistration, at: now })
     if (!authorizer.ok) throw documentInvalid('Não há autorizador para esta nota', [{ field: 'emit.UF', message: `Autorizador indisponível: ${authorizer.reason}` }])
     // o serviço de autorização tem de existir ANTES de reservar: sem ele (produção não tem parte SOAP registrada — recusa por construção) NADA é reservado nem fica em voo

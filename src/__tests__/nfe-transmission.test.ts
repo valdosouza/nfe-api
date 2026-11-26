@@ -44,7 +44,7 @@ function setup(over: Partial<NfeDeps> = {}, facts: Partial<ComposedFacts> = {}) 
   const base = db.connection()
   const conn = { ...base, rollback: jest.fn(base.rollback) }
   const composed: ComposedFacts = {
-    serie: 1, cnpj: '07742094000113', uf: 'PR', hasStateRegistration: true, dtEmission: '2026-11-24', createdAt: '2026-11-24 13:15:30', lifeEvent: 1,
+    serie: 1, cnpj: '07742094000113', uf: 'PR', hasStateRegistration: true, dtEmission: '2026-11-24', createdAt: '2026-11-24 13:15:30', lifeEvent: 1, lifeDate: '2026-11-24',
     buildInput: ({ dhEmi, csrt }) => saleInput({ dhEmi, csrt }), ...facts,
   }
   const base0 = conn.query
@@ -328,8 +328,19 @@ describe('o que recusa ANTES de abrir tentativa e de enviar', () => {
     const c = setup({}, { lifeEvent: 2 })                                // a reserva travou a vida 1 (nfe-memdb)
     await expect(run(c)).rejects.toMatchObject({ statusCode: 409, code: 'RESOURCE_BUSY' })
     expect([c.db.inserted, c.calls.length]).toEqual([0, 0])
-    const d = setup({}, { lifeEvent: null, createdAt: null })            // sem evento da vida: a causa é a S-A (422), não a corrida
+    const d = setup({}, { lifeEvent: null, createdAt: null, lifeDate: null })   // sem vida: a causa é a S-A (422), não a corrida
     await expect(run(d)).rejects.toMatchObject({ statusCode: 422 })
+    const e = setup({}, { lifeDate: '2026-11-20' })                      // S-B: o evento da vida com outra data → 422, nada aberto
+    await expect(run(e)).rejects.toMatchObject({ statusCode: 422 })
+    expect([e.db.inserted, e.calls.length]).toEqual([0, 0])
+  })
+
+  it('D-NE296: a conferência é com a VIDA travada, não com o último evento (vida 2, último evento 3) — a nota segue', async () => {
+    const f = setup({}, { lifeEvent: 2 })
+    f.db.life = { lifeEvent: 2, lastEvent: 3, lastKind: 'E' }
+    f.say(c => ok(ret(prot(c, '100'))))
+    await expect(run(f)).resolves.toBeDefined()
+    expect(f.db.inserted).toBe(1)
   })
 })
 

@@ -216,7 +216,7 @@ describe('G3 [FIXED] ponte — dois fatos que podem discordar não se escolhem c
   })
   const src = (over: Partial<NfeInputSources> = {}): NfeInputSources => ({
     environment: '2', dhEmi: '2026-11-24T10:15:30-03:00',
-    header: { invoiceId: 5001, number: null, serie: '1', model: '55', dtEmission: '2026-11-24', createdAt: '2026-11-24 13:15:30', lifeEvent: 1, entityId: 321, status: '0', note: null, totalValue: '1019.00', indPres: 3 },
+    header: { invoiceId: 5001, number: null, serie: '1', model: '55', dtEmission: '2026-11-24', createdAt: '2026-11-24 13:15:30', lifeEvent: 1, lifeDate: '2026-11-24', entityId: 321, status: '0', note: null, totalValue: '1019.00', indPres: 3 },
     items: [item(10)], operationNature: 'Venda', emitter: party(98, SETES_CNPJ), recipient: party(321, CLIENT_CNPJ),
     payments: { billing: { paymentTypeId: 1, nfePaymentCode: '01', plots: null, deadline: null }, installments: [] },
     shipping: { freightMode: '0', carrierId: null, carrier: null }, returnOrigins: [],
@@ -301,7 +301,7 @@ describe('D-NE276 — valor unitário tributável arredondado em 10 casas, com a
     tax: { taxRegime: '1 - Simples Nacional', crt: '1', indIeDest: '1', consumer: 'N' } })
   const run = (it: MerchandiseItemFact, total: string) => nfeInputFromFacts({
     environment: '2', dhEmi: '2026-11-24T10:15:30-03:00',
-    header: { invoiceId: 5001, number: null, serie: '1', model: '55', dtEmission: '2026-11-24', createdAt: '2026-11-24 13:15:30', lifeEvent: 1, entityId: 321, status: '0', note: null, totalValue: total, indPres: 3 },
+    header: { invoiceId: 5001, number: null, serie: '1', model: '55', dtEmission: '2026-11-24', createdAt: '2026-11-24 13:15:30', lifeEvent: 1, lifeDate: '2026-11-24', entityId: 321, status: '0', note: null, totalValue: total, indPres: 3 },
     items: [it], operationNature: 'Venda', emitter: party(98, SETES_CNPJ), recipient: party(321, CLIENT_CNPJ),
     payments: { billing: null, installments: [] }, shipping: { freightMode: '0', carrierId: null, carrier: null }, returnOrigins: [],
     techResponsible: { cnpj: SETES_CNPJ, contactName: 'Suporte Setes', email: 'suporte@setes.example', phone: '4133334444' },

@@ -289,16 +289,17 @@ export async function refreshInvoice(deps: ReconcileDeps, actor: NfeActor, ref: 
     const applied = await apply(deps, actor, ref, consulted)
     const { proc, ...result } = applied
     let fileConflict = false
+    let procSaved = false
     if (proc) {
       try {
         const zone = await deps.zoneOf(deps.pool as never, actor)
         const key = merchandiseFileKey({ cnpj: p.row.accessKey.slice(6, 20), model: '55', serie: p.row.serie, environment: p.row.environment, zone })
-        deps.storage.save(key, `${p.row.accessKey}-procNFe.xml`, proc, deps.now())         // gravação única do núcleo 5.2.0: bytes iguais = ok, outros = conflito
+        deps.storage.save(key, `${p.row.accessKey}-procNFe.xml`, proc, deps.now()); procSaved = true         // gravação única do núcleo 5.2.0: bytes iguais = ok, outros = conflito
       } catch (e) { fileConflict = isFileConflict(e); if (!fileConflict) logger.warn('Arquivo fiscal: o -procNFe.xml não foi gravado', { accessKey: p.row.accessKey, error: e instanceof Error ? e.name : 'erro' }) }   // conflito = incidente; outra falha só avisa, sem conteúdo
     }
     last = fileConflict ? { ...result, incident: 'file-conflict' } : result
     // o fato "passou a A" (D-NE261): a consulta que GRAVOU a voz A (outcome A) e guardou o procNFe — consulta que só lê o A não chega aqui com outcome A
-    if (result.outcome.kind === 'A' && !fileConflict && proc) await notifyAuthorized(deps, { actor, ref, attempt: p.row.attempt, accessKey: p.row.accessKey })
+    if (result.outcome.kind === 'A' && !fileConflict && procSaved) await notifyAuthorized(deps, { actor, ref, attempt: p.row.attempt, accessKey: p.row.accessKey })
     if (result.outcome.kind === 'A' || result.outcome.kind === 'D' || (last as RefreshResult).incident !== null) break
   }
   return last as RefreshResult

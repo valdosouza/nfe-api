@@ -165,7 +165,7 @@ export async function fiscalView(ctx: AppContext, inst: InstitutionPayload, ref:
     documentEvents: [],
     // D-F28 (a pendência é DERIVADA, nada é gravado): a vigente tem voz C — ou D, nota denegada, cujo cancelamento é local (D-NE280) — e a nota no ERP ainda não tem o evento C
     localCancelPending: localCancelPendingIn(MERCHANDISE_VOICE_READING, latest ? { lastKind: latest.lastKind, lastCode: latest.lastCode } : null, life.lastKind)
-      || (latest?.lastKind === 'D' && life.lastKind !== 'C'),
+      || (latest?.lastKind === 'D' && !life.invoiceDeleted && life.lastKind !== 'C'),
     cancelDeadline: latest ? deadlineOf(latest, zone) : null,
     xmlAvailable: !!(latest && key && ctx.storage.find(key, `${latest.accessKey}-nfe.xml`, [latest.dhEmission]) !== null),
     danfeAvailable: !!(latest && latest.protocol !== null && latest.lastKind !== null && AUTHORIZED_VOICES.has(latest.lastKind)),

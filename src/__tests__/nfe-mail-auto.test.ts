@@ -157,6 +157,19 @@ describe('o alerta de pendência crítica ao suporte (D-NE237, S-10)', () => {
     expect(alert).toHaveBeenCalledTimes(5)
   })
 
+  it('a chave do dedup é a NOTA (a mesma pendência avisa uma vez por qualquer rota, com ou sem a chave de acesso); o envio que FALHA não cala a pendência por 6 h', async () => {
+    const alert = jest.fn(async () => undefined)
+    reportIncident({ opsAlert: alert }, { route: 'invoice-refresh', institutionId: 1, invoiceId: 2, accessKey: KEY, incident: 'digest-mismatch' }, 1_000)
+    reportIncident({ opsAlert: alert }, { route: 'refresh-all', institutionId: 1, invoiceId: 2, accessKey: null, incident: 'digest-mismatch' }, 2_000)
+    expect(alert).toHaveBeenCalledTimes(1)
+    const broken = jest.fn(async () => { throw new Error('smtp caiu') })
+    const b = { route: 'refresh-all', institutionId: 5, invoiceId: 9, accessKey: null, incident: 'file-conflict' }
+    reportIncident({ opsAlert: broken }, b, 1_000)
+    await new Promise(r => setImmediate(r))
+    reportIncident({ opsAlert: broken }, b, 2_000)
+    expect(broken).toHaveBeenCalledTimes(2)                                                   // a 1ª falhou: a chave saiu do mapa e a próxima ocorrência avisa de novo
+  })
+
   it('cada rota com pendência crítica AVISA o suporte (comportamento): transmit, refresh, reconfirm e a passada do rodízio; sem incidente, silêncio', async () => {
     const real = jest.requireActual('../modules/invoices/invoices.service') as typeof import('../modules/invoices/invoices.service')
     const ops = jest.requireActual('../modules/operations/operations.service') as typeof import('../modules/operations/operations.service')

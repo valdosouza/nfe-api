@@ -453,6 +453,17 @@ describe('o gancho pós-autorização pela consulta (NFE.E6.P4 mudança 7; D-NE2
     expect([t.db.events.map(e => e.kind), hasProc(t)]).toEqual([['A'], true])
   })
 
+  it('falha de disco do procNFe (que não é conflito): o A fica gravado e o gancho NÃO dispara (o e-mail morreria sem o arquivo)', async () => {
+    const hook = jest.fn(async () => undefined)
+    const t = setup(); seed(t)
+    const save = t.storage.save.bind(t.storage)
+    ;(t.storage as any).save = (key: unknown, name: string, content: string, at: Date) => { if (name.endsWith('-procNFe.xml')) throw new Error('disco cheio'); return save(key as never, name, content, at) }
+    t.say(() => ok(sit('100', prot('100'))))
+    const r = await refreshInvoice({ ...t.deps, onAuthorized: hook }, ACTOR, REF)
+    expect([r.outcome.kind, r.incident, t.db.events.map(e => e.kind)]).toEqual(['A', null, ['A']])
+    expect(hook).not.toHaveBeenCalled()
+  })
+
   it('consulta que só LÊ o A já registrado (nenhuma voz nova) não dispara: o fisco nem é perguntado', async () => {
     const hook = jest.fn(async () => undefined)
     const t = setup(); seed(t, { protocol: '141260000000001', dhRecbto: '2026-11-24 13:20:00' }, [{ kind: 'A', authority_code: '100' }])

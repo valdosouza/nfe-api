@@ -27,6 +27,12 @@ jest.mock('fiscal-api', () => {
   return { __esModule: true, ...actual, logger: { info: jest.fn(), warn: jest.fn(), error: jest.fn() }, emitterView: jest.fn() }
 })
 
+// o `GET /v1/emitter` (NFE.E6.P4) lê o cadastro do emitente para o `stateRegistration`: aqui o ERP não existe — o leitor devolve o 422 de "emitente incompleto" (cai em "sem IE"); erro de banco subiria
+jest.mock('../facts/merchandise-facts', () => {
+  const { HttpError } = jest.requireActual('fiscal-api')
+  return { ...jest.requireActual('../facts/merchandise-facts'), readEmitter: jest.fn(async () => { throw new HttpError(422, 'emitente incompleto (teste)', undefined, 'FISCAL_EMITTER_INCOMPLETE') }) }
+})
+
 const core = fiscal as unknown as Record<string, jest.Mock>
 const ROOT = path.resolve(__dirname, '..', '..')
 const WORKSPACE = path.resolve(ROOT, '..')

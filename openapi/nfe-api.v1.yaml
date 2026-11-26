@@ -630,7 +630,7 @@ paths:
       tags: [numeração]
       summary: Numeração do 55 por série — números usados pelo ERP, BURACOS derivados e faixas inutilizadas (D-NE8)
       description: >-
-        Leitura DERIVADA, nunca tabela: buracos = números sem nota viva entre 1 e o último número GERADO da série (D-NE257/D-NE263; o contador é da nfe-api, não do ERP), descontadas as faixas
+        Leitura DERIVADA, nunca tabela: buracos = números sem nota viva entre o PRIMEIRO e o último número GERADOS por esta API na série e no ambiente (a sequência pode ter sido aberta em N > 1 para continuar o legado — os números do legado abaixo do 1º nunca são buraco nosso) (D-NE257/D-NE263; o contador é da nfe-api, não do ERP), descontadas as faixas
         homologadas (102/563). Obrigação legal de inutilizar até o 10º dia do mês seguinte (Ajuste SINIEF 07/05 cl. 14ª) — a tela avisa.
         Admin.
       parameters:
@@ -1000,7 +1000,7 @@ components:
       properties:
         serie: { type: string }
         environment: { type: string, enum: [H, P] }
-        highestNumber: { type: integer, nullable: true, description: 'maior número do ERP na série (viva ou não)' }
+        highestNumber: { type: integer, nullable: true, description: 'maior número GERADO pela nfe-api na série e no ambiente (qualquer tentativa, viva ou não); null = nenhum' }
         gaps:
           type: array
           description: 'buracos DERIVADOS (sem nota viva e fora de faixa retirada: pendente ou inutilizada)'

@@ -4,7 +4,7 @@ import type { Environment } from '../authority/authorizers'
 
 /**
  * A numeração do 55 por série (NFE.E6.P4 mudança 2; contrato `Numbering`; S-9): leitura DERIVADA, nunca tabela, SEM trava. `highestNumber` = o último número JÁ GERADO pela nfe-api (D-NE257:
- * o contador é desta API; qualquer tentativa, viva ou não); os BURACOS são os números de 1 a ele sem dono e fora de faixa retirada. Dono (o mesmo critério de `findNumberOwner`): a tentativa
+ * o contador é desta API; qualquer tentativa, viva ou não); os BURACOS são os números do 1º gerado (limite de baixo — o legado abaixo dele nunca é buraco nosso) até ele, sem dono e fora de faixa retirada. Dono (o mesmo critério de `findNumberOwner`): a tentativa
  * REGISTRADA no fisco (protocolo), sempre; ou a sem protocolo da vida ATUAL de uma nota viva (que reaproveita o número — D-NE282). A faixa retirada (pendente ou inutilizada) vem da view do núcleo
  * (`readWithdrawnRanges`). `oldestInvoiceMonth` = o mês (AAAA-MM, da zona do estabelecimento, pela emissão da tentativa mais antiga que passou por números do buraco); null se nenhum número do
  * buraco teve tentativa — o prazo legal de inutilizar é o 10º dia do mês seguinte (a tela avisa).

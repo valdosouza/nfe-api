@@ -297,3 +297,34 @@ export async function openAttemptsOfInstitution(q: Q, institutionId: number, sin
   return Array.isArray(rows) ? rows : []
 }
 
+
+// ---------------------------------------------------------------------------------------------------------------------------------------
+// Leituras da NFE.E6.P4 (a lista `pending`, a numeração e a listagem) — só este arquivo nomeia a tabela das tentativas
+// ---------------------------------------------------------------------------------------------------------------------------------------
+
+/** As tentativas (com a última voz) de VÁRIAS notas do mesmo estabelecimento e terminal, da mais antiga à mais nova; lote (a chave da nota inteira por parâmetro, D-NE12). */
+export async function attemptsOfInvoices(q: Q, institutionId: number, terminal: number, invoiceIds: readonly number[]): Promise<(AttemptRow & { invoiceId: number })[]> {
+  if (invoiceIds.length === 0) return []
+  const [rows] = await q.query(
+    `${SELECT_ATTEMPT.replace('SELECT t.attempt,', 'SELECT t.tb_invoice_id AS invoiceId, t.attempt,')} WHERE t.tb_institution_id = ? AND t.terminal = ? AND t.tb_invoice_id IN (?) AND t.deleted = 'N' ORDER BY t.tb_invoice_id, t.attempt ASC`,
+    [institutionId, terminal, [...invoiceIds]])
+  return Array.isArray(rows) ? rows.map((r: any) => ({ ...mapAttempt(r), invoiceId: Number(r.invoiceId) })) : []
+}
+
+/** O maior número JÁ GERADO da série no ambiente (posições 26–34 da chave; qualquer tentativa, viva ou não) — leitura simples, sem trava (D-NE257: o contador é desta API); null = nenhum. */
+export async function highestAttemptNumber(q: Q, institutionId: number, environment: 'H' | 'P', serie: number): Promise<number | null> {
+  const [rows] = await q.query(
+    `SELECT MAX(CAST(SUBSTRING(access_key, 26, 9) AS UNSIGNED)) AS highest FROM ${T} WHERE tb_institution_id = ? AND environment = ? AND CAST(SUBSTRING(access_key, 23, 3) AS UNSIGNED) = ? AND deleted = 'N'`,
+    [institutionId, environment, serie])
+  const v = Array.isArray(rows) && rows[0] ? rows[0].highest : null
+  return v == null ? null : Number(v)
+}
+
+/** As tentativas da série (número, nota, terminal, vida, protocolo e o instante da emissão em UTC) para derivar os buracos. */
+export async function attemptsOfSerie(q: Q, institutionId: number, environment: 'H' | 'P', serie: number): Promise<{ number: number; invoiceId: number; terminal: number; lifeEvent: number; protocol: string | null; dhEmission: string }[]> {
+  const [rows] = await q.query(
+    `SELECT CAST(SUBSTRING(access_key, 26, 9) AS UNSIGNED) AS number, tb_invoice_id AS invoiceId, terminal, life_event AS lifeEvent, protocol, ${fmt('dh_emission', 'dhEmission')} FROM ${T} `
+    + `WHERE tb_institution_id = ? AND environment = ? AND CAST(SUBSTRING(access_key, 23, 3) AS UNSIGNED) = ? AND deleted = 'N' ORDER BY number`,
+    [institutionId, environment, serie])
+  return (Array.isArray(rows) ? rows : []).map((r: any) => ({ number: Number(r.number), invoiceId: Number(r.invoiceId), terminal: Number(r.terminal), lifeEvent: Number(r.lifeEvent), protocol: r.protocol == null ? null : String(r.protocol), dhEmission: String(r.dhEmission) }))
+}

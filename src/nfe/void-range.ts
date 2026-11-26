@@ -279,3 +279,29 @@ function resultOf(row: VoidRow, req: VoidRequest, environment: Environment, refu
     authorityCode: row.authorityCode, protocol: row.protocol, message: row.message, incident, refusedCStat,
   }
 }
+
+// ---------------------------------------------------------------------------------------------------------------------------------------
+// A listagem dos pedidos de inutilização (NFE.E6.P4 mudança 2; contrato `NumberVoid`)
+// ---------------------------------------------------------------------------------------------------------------------------------------
+
+/** Um pedido de inutilização como o contrato o publica; `state`: sem resposta = em voo; 102/563 retirada = homologada; resposta sem retirada = rejeitada. `dh` em UTC do banco (a rota converte à zona). */
+export interface VoidListItem {
+  readonly id: number; readonly environment: Environment; readonly serie: number; readonly year: number; readonly from: number; readonly to: number; readonly reason: string; readonly voidId: string
+  readonly state: 'in_flight' | 'homologated' | 'rejected'; readonly authorityCode: string | null; readonly protocol: string | null; readonly dh: string | null
+}
+
+/** Do mais novo ao mais antigo (id decrescente). `total` ao lado da página; só o estabelecimento e o modelo 55 (a numeração do 55 é a desta API). */
+export async function listVoids(q: Queryable, institutionId: number, page: number, pageSize: number): Promise<{ total: number; items: VoidListItem[] }> {
+  const [count] = await q.query(`SELECT COUNT(*) AS n FROM ${NUMBER_VOID_TABLE} WHERE tb_institution_id = ? AND model = '55' AND deleted = 'N'`, [institutionId])
+  const [rows] = await q.query(
+    `SELECT id, environment, serie, 2000 + CAST(SUBSTRING(void_id, 5, 2) AS UNSIGNED) AS year, number_from AS nFrom, number_to AS nTo, reason, void_id AS voidId, authority_code AS authorityCode,
+            protocol, withdrawn, DATE_FORMAT(dh_recbto, '%Y-%m-%d %H:%i:%s') AS dh
+       FROM ${NUMBER_VOID_TABLE} WHERE tb_institution_id = ? AND model = '55' AND deleted = 'N' ORDER BY id DESC LIMIT ? OFFSET ?`,
+    [institutionId, pageSize, (page - 1) * pageSize])
+  const items = (Array.isArray(rows) ? rows : []).map((r: any): VoidListItem => ({
+    id: Number(r.id), environment: r.environment as Environment, serie: Number(r.serie), year: Number(r.year), from: Number(r.nFrom), to: Number(r.nTo), reason: String(r.reason), voidId: String(r.voidId),
+    state: r.authorityCode == null ? 'in_flight' : r.withdrawn === 'S' ? 'homologated' : 'rejected',
+    authorityCode: r.authorityCode == null ? null : String(r.authorityCode), protocol: r.protocol == null ? null : String(r.protocol), dh: r.dh == null ? null : String(r.dh),
+  }))
+  return { total: Number((count as any[])[0]?.n ?? 0), items }
+}

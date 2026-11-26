@@ -12,7 +12,7 @@ import { FiscalFileConflictError, FsFiscalStorage } from 'fiscal-api'
 const SRC = path.resolve(__dirname, '..')
 const PKG_DIR = path.dirname(require.resolve('fiscal-api/package.json'))
 
-describe('núcleo 5.2.0 — o pacote instalado (DEPLOY.E1.P12, D-F237)', () => {
+describe('núcleo 5.2.0 ou posterior — o pacote instalado (DEPLOY.E1.P12, D-F237)', () => {
   it('a versão instalada é a 5.2.0 ou posterior e o vendor é o do package.json', () => {
     const [major, minor] = String(JSON.parse(fs.readFileSync(path.join(PKG_DIR, 'package.json'), 'utf8')).version).split('.').map(Number)
     expect(major > 5 || (major === 5 && minor >= 2)).toBe(true)

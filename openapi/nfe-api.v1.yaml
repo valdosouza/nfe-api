@@ -60,7 +60,7 @@ paths:
           description: >-
             banco, chave-mestra, storage e a CADEIA do servidor carregada (D-NE54 a — dado recarregável) respondem; `authorities` traz o
             último `consStatServ` de cada autorizador consultado, com teto de frequência (≥ 3 min por autorizador — MOC; nunca mais que
-            isso — 656). "SEFAZ-PR fora" × "defeito nosso" se lê aqui. A chave-mestra é provada abrindo UM A1 guardado por versão em
+            isso — 656). "SEFAZ-PR fora" × "defeito nosso" se lê aqui. A chave-mestra é provada abrindo UM segredo guardado (A1 ou senha SMTP) por versão em
             uso (D-F243, adotada pela D-NE189) — chave errada ou rotação mal feita aparece aqui, não na 1ª emissão; a prova roda na
             partida, antes de ouvir a porta, e a cada 5 minutos, e o health só lê o último resultado (D-F245/D-F250). Um sinal só,
             `masterKey` sim ou não (D-F244): nada de versão, código ou quantidade
@@ -70,7 +70,7 @@ paths:
         '503':
           description: >-
             alguma dependência LOCAL falhou (o corpo diz qual) — autorizador fora não derruba o health. `masterKey=false` = a chave do
-            servidor não abre os A1 de alguma versão em uso (D-F243), ou não há prova recente (nunca rodou, resultado vencido, ou a
+            servidor não abre os segredos de alguma versão em uso (D-F243), ou não há prova recente (nunca rodou, resultado vencido, ou a
             prova não rodou — banco fora); a causa vai para o log, nunca para esta resposta
           content:
             application/json:

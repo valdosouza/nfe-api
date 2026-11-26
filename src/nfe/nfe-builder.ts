@@ -49,8 +49,10 @@ const isRealDate = (date: string): boolean => {
   const d = new Date(Date.UTC(Number(m[1]), Number(m[2]) - 1, Number(m[3])))
   return d.getUTCFullYear() === Number(m[1]) && d.getUTCMonth() === Number(m[2]) - 1 && d.getUTCDate() === Number(m[3])
 }
-/** A partir desta data o Simples Nacional declara IBS/CBS em todo documento (RF-CAL-04 — Ato Conjunto 4/2026); o builder do 1º release não escreve. */
+/** A partir desta data o Simples Nacional declara IBS/CBS em todo documento (RF-CAL-04 — Ato Conjunto 4/2026): o builder escreve o grupo do Simples (NFE.E5.P6); antes dela NÃO escreve (RF-NFE-69). */
 export const IBSCBS_SIMPLES_FROM = '2027-01-01'
+/** `cAtivSN` aceito pelo 1º release: 01 a 04 (a 90 — não tributável — é recusada: D-NE290, RF-SN-16). */
+const SIMPLES_ACTIVITIES = ['01', '02', '03', '04']
 /** `indPres` que obriga o `indIntermed` (rej. 434); nos demais ele não vai (rej. 435). */
 const PRES_WITH_INTERMED = ['2', '3', '4', '9']
 const UF_CODES = ['AC', 'AL', 'AM', 'AP', 'BA', 'CE', 'DF', 'ES', 'GO', 'MA', 'MG', 'MS', 'MT', 'PA', 'PB', 'PE', 'PI', 'PR', 'RJ', 'RN', 'RO', 'RR', 'RS', 'SC', 'SE', 'SP', 'TO']
@@ -67,6 +69,24 @@ export interface NfePisCofinsInput {
   CST: string | null
   /** Só nos CST 49 a 99 (`…Outr`): base, alíquota e valor como texto decimal; ausentes = zero. */
   vBC?: string | null; pAliq?: string | null; value?: string | null
+}
+
+/**
+ * IBS/CBS do Simples no DAS (NFE.E5.P6; NT 2026.005; D-NE286): o que o faturamento congelou para o item — o builder só ESCREVE, nunca calcula
+ * (D-F10/D-F11). `classification` = `cClassTrib` (6 dígitos; o CST é o prefixo de 3 — S1). Percentuais em % como texto decimal; valores e base em centavos.
+ */
+export interface NfeItemSimples {
+  /** `cAtivSN`: 01 a 04. */
+  activity: string | null
+  classification: string | null
+  ibsRate: string | null
+  cbsRate: string | null
+  /** `true` = o item de ORIGEM não tinha o `gIBSSN` (opcional na NT): a devolução o espelha e não escreve `ibsRate`/`ibsCents`. */
+  withoutIbs?: boolean
+  ibsCents: number
+  cbsCents: number
+  /** Base do item (a soma é o `vBCIBSCBS` do total — D-NE287); não vai ao item do XML. */
+  baseCents: number
 }
 
 export interface NfeItemInput {
@@ -92,6 +112,11 @@ export interface NfeItemInput {
   cofins: NfePisCofinsInput
   /** Devolução (finNFe 4): a nota e o item de ORIGEM referenciados por este item (D-NE103/D-NE219). */
   origin?: { accessKey: string; numbered: NumberedItem } | null
+  /**
+   * Nota de 01/01/2027 em diante (CRT 1): o grupo do Simples do item — obrigatório na VENDA; na devolução, o grupo copiado do item da origem
+   * (D-NE288) ou `null` quando a origem não o tinha (D-NE289). Em nota anterior a 2027 o dado do Simples é recusado (RF-NFE-69).
+   */
+  simples?: NfeItemSimples | null
 }
 
 export interface NfeInput {
@@ -181,8 +206,59 @@ function pisCofinsXml(w: Writer, path: string, kind: 'PIS' | 'COFINS', v: NfePis
   return { xml: xmlGroup(kind, xmlGroup(`${kind}Outr`, inner)), cents }
 }
 
-function itemXml(w: Writer, input: NfeInput, it: NfeItemInput): { xml: string; totals: ItemTotalsCents } {
+interface SimplesCents { base: number; ibs: number; cbs: number }
+
+/**
+ * Valida o grupo do Simples do item e devolve o que escreve; recusas viram linhas da lista (nunca XML incompleto). Compra governamental (RF-SN-18: com a União, `pIBSSN` = 0
+ * e `pCBSSN` = a soma) NÃO é detectável hoje — nenhum fato de ente governamental no ERP web (S7 da ficha do P6, `it.todo` em nfe-ibscbs-2027.test.ts).
+ */
+function simplesOf(w: Writer, input: NfeInput, it: NfeItemInput, p: string, from2027: boolean): { activityXml: string; group: string; cents: SimplesCents } | null {
+  const s0 = it.simples                                                      // lido UMA vez: um accessor que muda de valor não driblava a recusa (gate adversarial)
+  const isReturn = input.finNFe === '4'
+  if (!from2027) {
+    if (s0 !== undefined && s0 !== null) w.fail(`${p}.simples`, 'IBS/CBS do Simples não vai em nota anterior a 01/01/2027 (RF-NFE-69)')
+    return null
+  }
+  if (s0 === null && isReturn) return null                                   // D-NE289: a origem de 2026 não tinha o grupo
+  if (s0 === undefined || s0 === null) {
+    w.fail(`${p}.simples`, isReturn
+      ? `Devolução sem a decisão do grupo do Simples da origem — ${OUT_OF_FIRST_RELEASE}`
+      : `Item sem o IBS/CBS do Simples guardado pelo faturamento (ou regime regular) — ${OUT_OF_FIRST_RELEASE}`)
+    return null
+  }
+  if (!isObject(s0)) { w.fail(`${p}.simples`, 'Entrada malformada'); return null }
+  // Cópia ÚNICA dos campos: validar e escrever leem a mesma coisa.
+  const s = { activity: s0.activity, classification: s0.classification, ibsRate: s0.ibsRate, cbsRate: s0.cbsRate, ibsCents: s0.ibsCents, cbsCents: s0.cbsCents, baseCents: s0.baseCents, withoutIbs: s0.withoutIbs === true }
+  const before = w.fields.length
+  if (s.activity === '90') w.fail(`${p}.cAtivSN`, `Atividade 90 (não tributável) — ${OUT_OF_FIRST_RELEASE}`)
+  else if (s.activity === null || s.activity === undefined || s.activity === '') w.fail(`${p}.cAtivSN`, 'Campo obrigatório vazio')
+  else if (typeof s.activity !== 'string' || !SIMPLES_ACTIVITIES.includes(s.activity)) w.fail(`${p}.cAtivSN`, 'Valor fora do domínio do leiaute')
+  const cls = s.classification
+  if (cls === null || cls === undefined || cls === '') w.fail(`${p}.cClassTrib`, 'Campo obrigatório vazio')
+  else if (typeof cls !== 'string' || !/^[0-9]{6}$/.test(cls)) w.fail(`${p}.cClassTrib`, 'Valor inválido (6 dígitos)')
+  const rate = (field: string, value: string | null): string => w.try(`${p}.${field}`, () => {
+    const text = dec0302a04(value)
+    if (Number(text) > 100) throw new FormatError('texto-invalido', 'percentual acima de 100')
+    return text
+  })
+  const cents = (field: string, value: number): string => w.try(`${p}.${field}`, () => dec1302(value))
+  const ibsRate = s.withoutIbs ? '' : rate('pIBSSN', s.ibsRate), cbsRate = rate('pCBSSN', s.cbsRate)
+  const vIBS = s.withoutIbs ? '' : cents('vIBSSN', s.ibsCents), vCBS = cents('vCBSSN', s.cbsCents)
+  if (!Number.isSafeInteger(s.baseCents) || s.baseCents < 0) w.fail(`${p}.vBCIBSCBS`, 'Base do item inválida')
+  if (w.fields.length > before) return null
+  const activityXml = w.try(`${p}.cAtivSN`, () => xmlElement('cAtivSN', s.activity))                 // só com o domínio já conferido: sem recusa em dobro
+  if (w.fields.length > before) return null
+  const group = xmlGroup('IBSCBS',
+    xmlElement('CST', (cls as string).slice(0, 3)) + xmlElement('cClassTrib', cls as string)
+    + xmlGroup('gTribSN',
+      (s.withoutIbs ? '' : xmlGroup('gIBSSN', xmlElement('pIBSSN', ibsRate) + xmlElement('vIBSSN', vIBS)))
+      + xmlGroup('gCBSSN', xmlElement('pCBSSN', cbsRate) + xmlElement('vCBSSN', vCBS))))
+  return { activityXml, group, cents: { base: s.baseCents, ibs: s.withoutIbs ? 0 : s.ibsCents, cbs: s.cbsCents } }
+}
+
+function itemXml(w: Writer, input: NfeInput, it: NfeItemInput, from2027: boolean): { xml: string; totals: ItemTotalsCents; simples: SimplesCents | null } {
   const p = `det[${it.numbered.itemId}]`
+  const simples = simplesOf(w, input, it, p, from2027)
   const cents = (field: string, value: number, optional: boolean, tag: string): string => w.try(`${p}.${field}`, () => {
     const text = optional ? dec1302Opc(value) : dec1302(value)
     return text === null ? '' : xmlElement(tag, text)
@@ -211,7 +287,8 @@ function itemXml(w: Writer, input: NfeInput, it: NfeItemInput): { xml: string; t
     + cents('vSeg', it.vSegCents, true, 'vSeg')
     + cents('vDesc', it.vDescCents, true, 'vDesc')
     + cents('vOutro', it.vOutroCents, true, 'vOutro')
-    + xmlElement('indTot', '1'))
+    + xmlElement('indTot', '1')
+    + (simples ? simples.activityXml : ''))
 
   // ICMS do Simples Nacional — só os grupos do perfil (S1).
   const csosn = it.icms.CSOSN
@@ -229,7 +306,7 @@ function itemXml(w: Writer, input: NfeInput, it: NfeItemInput): { xml: string; t
   const pis = pisCofinsXml(w, `${p}.pis`, 'PIS', it.pis)
   const cofins = pisCofinsXml(w, `${p}.cofins`, 'COFINS', it.cofins)
   const imposto = xmlGroup('imposto',
-    (it.vTotTribCents === 0 ? '' : cents('vTotTrib', it.vTotTribCents, false, 'vTotTrib')) + xmlGroup('ICMS', icms) + pis.xml + cofins.xml)
+    (it.vTotTribCents === 0 ? '' : cents('vTotTrib', it.vTotTribCents, false, 'vTotTrib')) + xmlGroup('ICMS', icms) + pis.xml + cofins.xml + (simples ? simples.group : ''))
 
   // Devolução: a referência POR ITEM (chave + nItem da origem) é o último filho do `det`.
   let reference = ''
@@ -253,6 +330,7 @@ function itemXml(w: Writer, input: NfeInput, it: NfeItemInput): { xml: string; t
       vProd: safe(it.vProdCents), vDesc: safe(it.vDescCents), vFrete: safe(it.vFreteCents), vSeg: safe(it.vSegCents), vOutro: safe(it.vOutroCents),
       vBC: 0, vICMS: 0, vPIS: pis.cents, vCOFINS: cofins.cents, vTotTrib: safe(it.vTotTribCents),
     },
+    simples: simples ? simples.cents : null,
   }
 }
 
@@ -283,6 +361,7 @@ function assertShape(input: NfeInput): void {
       need(isObject(it.numbered) && Number.isInteger(it.numbered.itemId) && Number.isInteger(it.numbered.nItem), `${p}.numbered`)
       texts(it, p, ['cProd', 'cEAN', 'xProd', 'NCM', 'CEST', 'indEscala', 'CNPJFab', 'CFOP', 'uCom', 'qCom', 'vUnCom', 'cEANTrib', 'uTrib', 'qTrib', 'vUnTrib'])
       if (need(isObject(it.icms), `${p}.icms`)) texts(it.icms, `${p}.icms`, ['orig', 'CSOSN', 'pCredSN', 'vCredICMSSN'])
+      if (it.simples !== null && it.simples !== undefined && need(isObject(it.simples), `${p}.simples`)) texts(it.simples, `${p}.simples`, ['activity', 'classification', 'ibsRate', 'cbsRate'])
       for (const tax of ['pis', 'cofins'] as const) if (need(isObject(it[tax]), `${p}.${tax}`)) texts(it[tax], `${p}.${tax}`, ['CST', 'vBC', 'pAliq', 'value'])
       if (it.origin !== null && it.origin !== undefined && need(isObject(it.origin), `${p}.origin`)) need(typeof it.origin.accessKey === 'string' && isObject(it.origin.numbered), `${p}.origin`)
     })
@@ -319,10 +398,10 @@ export function buildNfeXml(input: NfeInput, accessKey: string): { xml: string; 
   else if (`${dh[1].slice(2)}${dh[2]}` !== key.yymm) w.fail('ide.dhEmi', 'Ano e mês da emissão diferentes dos da chave de acesso')
   if (dh && !isRealDate(`${dh[1]}-${dh[2]}-${dh[3]}`)) w.fail('ide.dhEmi', 'Data da emissão inexistente no calendário')
   const emissionDate = dh && isRealDate(`${dh[1]}-${dh[2]}-${dh[3]}`) ? `${dh[1]}-${dh[2]}-${dh[3]}` : ''
-  // D-NE277 (NFE.E5.P4): de 01/01/2027 em diante o Simples declara IBS/CBS em todo documento (`cAtivSN` por item, `gTribSN` e totais — NT 2026.005),
-  // campos que ainda não estão em XSD nenhum do acervo nem na fonte de fatos: o builder RECUSA em vez de autorizar uma nota sem o que a norma
-  // passa a exigir. Vale para toda nota (venda e devolução). Sai com o NFE.E5.P6. Até 31/12/2026 o grupo IBSCBS NÃO vai para o CRT 1.
-  if (emissionDate >= IBSCBS_SIMPLES_FROM) w.fail('ide.dhEmi', `Emissão a partir de 01/01/2027 — IBS/CBS do Simples — ${OUT_OF_FIRST_RELEASE}`)  // a mensagem é fixa e não ecoa dado da nota
+  // D-NE277/D-NE286 (NFE.E5.P6): de 01/01/2027 em diante o Simples declara IBS/CBS em todo documento — `cAtivSN` por item, `gTribSN` e os totais (NT 2026.005),
+  // escritos a partir do que o faturamento congelou (`NfeItemInput.simples`); item sem o grupo é RECUSADO (D-NE290), nunca autorizado sem o que a norma exige.
+  // Até 31/12/2026 o grupo NÃO vai para o CRT 1 (RF-NFE-69). A data é a do `dhEmi` (D-NE278).
+  const from2027 = emissionDate !== '' && emissionDate >= IBSCBS_SIMPLES_FROM
   if (input.emit.CNPJ !== key.cnpj) w.fail('emit.CNPJ', input.emit.CNPJ ? 'CNPJ do emitente diferente do da chave de acesso' : 'Campo obrigatório vazio')
   if (input.finNFe !== '1' && input.finNFe !== '4') w.fail('ide.finNFe', `Finalidade ${String(input.finNFe).slice(0, 1)} — ${OUT_OF_FIRST_RELEASE}`)
   if (input.idDest === '3') w.fail('ide.idDest', `Operação com o exterior — ${OUT_OF_FIRST_RELEASE}`)
@@ -376,7 +455,7 @@ export function buildNfeXml(input: NfeInput, accessKey: string): { xml: string; 
   if (ieDest === '9' && input.tpNF === '1' && input.indFinal !== '1') w.fail('ide.indFinal', 'Destinatário não contribuinte exige consumidor final (rej. 696)')
 
   // ---- det --------------------------------------------------------------------------------------------------------------------------
-  const built = input.items.map(it => itemXml(w, input, it))
+  const built = input.items.map(it => itemXml(w, input, it, from2027))
   if (ieDest === '9' && input.tpNF === '1' && input.items.some(it => it.icms.CSOSN === SN101)) w.fail('dest.indIEDest', 'CSOSN 101 não é aceito para destinatário não contribuinte (rej. 600)')
 
   // ---- pagamento e cobrança ---------------------------------------------------------------------------------------------------------
@@ -428,8 +507,14 @@ export function buildNfeXml(input: NfeInput, accessKey: string): { xml: string; 
     // "90 - sem pagamento" sozinha e com valor zero dispensa a conferência da soma (a rej. 865 não se aplica à forma 90 — D-NE275).
     if (!isReturn && !noPayment && paid !== t.vNF) w.fail('pag', 'A soma das formas de pagamento é diferente do total da nota (sem troco no 1º release)')
     const ORDER = ['vBC', 'vICMS', 'vICMSDeson', 'vFCP', 'vBCST', 'vST', 'vFCPST', 'vFCPSTRet', 'vProd', 'vFrete', 'vSeg', 'vDesc', 'vII', 'vIPI', 'vIPIDevol', 'vPIS', 'vCOFINS', 'vOutro', 'vNF'] as const
+    // IBS/CBS do Simples (D-NE287): vBCIBSCBS = soma das bases; vIBSSN/vCBSSN = soma EXATA dos itens (rej. 1275, 1276, 1277, 1284 morrem por construção); sem vNFTot.
+    const groups = built.map(b => b.simples).filter((x): x is SimplesCents => x !== null)
+    const simplesTot = groups.length === 0 ? '' : w.try('total.IBSCBSTot', () => {
+      const sum = (f: keyof SimplesCents): number => { const n = groups.reduce((a, g) => a + g[f], 0); if (!Number.isSafeInteger(n)) throw new FormatError('texto-invalido', 'soma fora do limite'); return n }
+      return xmlGroup('IBSCBSTot', xmlElement('vBCIBSCBS', dec1302(sum('base'))) + xmlGroup('gTribSN', xmlElement('vIBSSN', dec1302(sum('ibs'))) + xmlElement('vCBSSN', dec1302(sum('cbs')))))
+    })
     total = xmlGroup('total', xmlGroup('ICMSTot', ORDER.map(f => w.try(`total.${f}`, () => xmlElement(f, dec1302(t[f])))).join('')
-      + (t.vTotTrib === 0 ? '' : xmlElement('vTotTrib', dec1302(t.vTotTrib)))))
+      + (t.vTotTrib === 0 ? '' : xmlElement('vTotTrib', dec1302(t.vTotTrib)))) + simplesTot)
   }
 
   // ---- transp -----------------------------------------------------------------------------------------------------------------------

@@ -495,3 +495,49 @@ export async function readReturnOrigins(q: Queryable, schemaName: string, ref: I
     originItemId: Number(r.originItemId), originKind: String(r.originKind),
   }))
 }
+
+// ---------------------------------------------------------------------------------------------------------------------------------------
+// IBS/CBS do Simples no DAS, de 2027 (NFE.E5.P6, D-NE286 a D-NE290) — o que o faturamento CONGELOU por item
+// ---------------------------------------------------------------------------------------------------------------------------------------
+
+/**
+ * O grupo do Simples que o faturamento do ERP web congelou para UM item (`tb_order_item_ibscbs_simples`, migration 084 do setes-api,
+ * D-IB138 a D-IB142) mais a classificação (`tb_order_item_ibscbs.classification_code`, 083; o CST é o prefixo de 3 dígitos — S1 da ficha).
+ * Decimais como TEXTO EXATO. `classificationCode` é `null` quando a 083 não tem linha para o item (quem monta recusa).
+ */
+export interface ItemSimplesFact {
+  itemId: number
+  activityCode: string
+  competence: string
+  ibsRate: string
+  cbsRate: string
+  baseValue: string
+  ibsValue: string
+  cbsValue: string
+  classificationCode: string | null
+}
+
+/**
+ * Só VENDA de mercadoria do CRT 1, de 01/01/2027 em diante, tem linha (D-IB141, D-IB142): quem compõe só chama esta leitura nesse caso — em
+ * 2026 a tabela nem precisa existir (a 084 não está aplicada no dev). Só SELECT; as duas tabelas são lidas à parte (nunca num JOIN pelo `kind`);
+ * a linha `deleted = 'S'` (nota cancelada sem registro fiscal) não conta. Item sem linha simplesmente não aparece na lista.
+ */
+export async function readItemSimples(q: Queryable, schemaName: string, ref: InvoiceRef): Promise<ItemSimplesFact[]> {
+  const s = assertSchema(schemaName)
+  const key = [ref.invoiceId, ref.institutionId, ref.terminal]
+  const [rows] = await q.query(
+    `SELECT tb_order_item_id AS itemId, activity_code AS activityCode, competence, CAST(ibs_rate AS CHAR) AS ibsRate, CAST(cbs_rate AS CHAR) AS cbsRate,
+            CAST(base_value AS CHAR) AS baseValue, CAST(ibs_value AS CHAR) AS ibsValue, CAST(cbs_value AS CHAR) AS cbsValue
+       FROM \`${s}\`.tb_order_item_ibscbs_simples
+      WHERE tb_order_id = ? AND tb_institution_id = ? AND terminal = ? AND deleted = 'N'
+      ORDER BY tb_order_item_id`, key)
+  const [classRows] = await q.query(
+    `SELECT tb_order_item_id AS itemId, classification_code AS classificationCode
+       FROM \`${s}\`.tb_order_item_ibscbs
+      WHERE tb_order_id = ? AND tb_institution_id = ? AND terminal = ? AND deleted = 'N'`, key)
+  const classification = new Map<number, string | null>((classRows as any[]).map(r => [Number(r.itemId), txt(r.classificationCode)]))
+  return (rows as any[]).map(r => ({
+    itemId: Number(r.itemId), activityCode: String(r.activityCode), competence: String(r.competence), ibsRate: String(r.ibsRate), cbsRate: String(r.cbsRate),
+    baseValue: String(r.baseValue), ibsValue: String(r.ibsValue), cbsValue: String(r.cbsValue), classificationCode: classification.get(Number(r.itemId)) ?? null,
+  }))
+}

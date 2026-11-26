@@ -6,7 +6,10 @@ import fs from 'fs'
 import os from 'os'
 import path from 'path'
 import { DEFAULT_XSD_DIR, SCHEMA_SETS, XsdManifestError, loadSchemaSets, validateMessage, type MessageKind } from '../authority/xsd'
+import { buildNfeXml } from '../nfe/nfe-builder'
 import * as fx from './xsd-fixtures'
+import { sale2027, saleInput, saleKey, signNfe } from './nfe-fixtures'
+import { enviNFe } from '../authority/messages'
 
 jest.setTimeout(60_000)
 
@@ -167,5 +170,47 @@ describe('os retornos do evento e da inutilização (NFE.E6.P2 mudança 1)', () 
   it('os conjuntos do procEventoNFe e do procInutNFe carregam (as cópias estão no manifesto)', () => {
     for (const k of ['procEventoNFe', 'procInutNFe', 'retEnvEvento', 'retInutNFe'] as const) expect([k, typeof SCHEMA_SETS[k].root]).toEqual([k, 'string'])
     expect(() => loadSchemaSets()).not.toThrow()
+  })
+})
+
+describe('NFe — o conjunto é o PL_010h (NFE.E5.P6, D-NE285): o total do Simples exige vBCIBSCBS', () => {
+  // O grupo do Simples só passa a ser escrito pelo builder na mudança 3; aqui o XSD é provado com o `IBSCBSTot` escrito à mão.
+  const sale = () => buildNfeXml(saleInput({ dhEmi: '2026-11-24T10:15:30-03:00', installments: [{ dueDate: '2026-12-22', cents: 400000 }] }), saleKey({ emissionDate: '2026-11-24' }))
+  const withTotal = (inner: string) => { const b = sale(); return signNfe({ ...b, xml: b.xml.replace('</ICMSTot>', `</ICMSTot><IBSCBSTot>${inner}</IBSCBSTot>`) }) }
+  const GROUP = '<gTribSN><vIBSSN>4.00</vIBSSN><vCBSSN>36.00</vCBSSN></gTribSN>'
+  it('IBSCBSTot só com gTribSN, sem vBCIBSCBS → recusa (o esquema é o 010h, que o exige)', async () => {
+    const r = await validateMessage('NFe', withTotal(GROUP))
+    expect(r.ok).toBe(false)
+    expect((r as { errors: readonly string[] }).errors.join(' ')).toMatch(/Expected is \( \{http:\/\/www\.portalfiscal\.inf\.br\/nfe\}vBCIBSCBS \)/)
+  })
+  it('IBSCBSTot com vBCIBSCBS e gTribSN passa; a nota de 2026 sem o grupo continua passando', async () => {
+    expect(await validateMessage('NFe', withTotal(`<vBCIBSCBS>4000.00</vBCIBSCBS>${GROUP}`))).toEqual({ ok: true })
+    expect(await validateMessage('NFe', signNfe(sale()))).toEqual({ ok: true })
+  })
+})
+
+describe('o lote da autorização e os retornos validam pelo PL_010h (NFE.E5.P7, junção — a lista da junção, item 3)', () => {
+  it('o enviNFe com a NF-e do Simples de 2027 (cAtivSN e IBSCBS > gTribSN) passa; o mesmo XML sem vBCIBSCBS é recusado no lote', async () => {
+    const s = sale2027()
+    const signed = signNfe(buildNfeXml(s.input, s.key))
+    expect(signed).toMatch(/<cAtivSN>/)
+    expect(signed).toMatch(/<IBSCBS>[\s\S]*<gTribSN>/)
+    expect(await validateMessage('enviNFe', enviNFe('1', signed))).toEqual({ ok: true })
+    const b = buildNfeXml(s.input, s.key)
+    const semBase = signNfe({ ...b, xml: b.xml.replace(/<vBCIBSCBS>[^<]*<\/vBCIBSCBS>/, '') })
+    const r = await validateMessage('enviNFe', enviNFe('1', semBase))
+    expect(r.ok).toBe(false)
+    expect((r as { errors: readonly string[] }).errors.join(' ')).toMatch(/Expected is \( \{http:\/\/www\.portalfiscal\.inf\.br\/nfe\}vBCIBSCBS \)/)
+  })
+
+  it('nenhum conjunto aponta para o leiaute ou o DFeTiposBasicos do PL_010f; enviNFe, retEnviNFe e retConsReciNFe usam o PL_010h', () => {
+    for (const [kind, set] of Object.entries(SCHEMA_SETS)) {
+      const files = Object.values(set.files ?? {}) as string[]
+      expect([kind, files.filter(f => /PL_010f_v1\.04\/(leiauteNFe|DFeTiposBasicos)/.test(f))]).toEqual([kind, []])
+    }
+    for (const k of ['enviNFe', 'retEnviNFe', 'retConsReciNFe'] as const) {
+      expect([k, SCHEMA_SETS[k].files['leiauteNFe_v4.00.xsd'], SCHEMA_SETS[k].files['DFeTiposBasicos_v1.00.xsd']])
+        .toEqual([k, 'PL_010h_v1.03/NFe/leiauteNFe_v4.00.xsd', 'PL_010h_v1.03/NFe/DFeTiposBasicos_v1.00.xsd'])
+    }
   })
 })

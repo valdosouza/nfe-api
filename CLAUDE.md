@@ -64,8 +64,8 @@ homologação e CNPJ do destinatário, R6 responsável técnico, R7 `nItem`, R8 
 texto, R12 tamanho, R13 pagamento, R14 devolução e chave referenciada). O tamanho é conferido ANTES de ler. Quem compõe a transmissão (NFE.E6.P1) monta o
 contexto e chama `assertLayer1` antes de assinar e de abrir tentativa; os limites aceitos (indTot, PISST, CPF, NFref em venda, ISSQN, emitente trocado) estão
 na ficha §9 e na árvore. Teste: `src/__tests__/nfe-layer1.test.ts` (a cerca do catálogo confere as regras que de fato acenderam).
-**Transmitir, consultar e reconferir** (NFE.E6.P1, D-NE282/D-NE283/D-NE284 — ficha `projetos/nfe-api/SUBJECT/NFE_SEFAZ/ficha-nfe-e6-p1-transmitir-consultar-reconferir.md`): `src/nfe/dh-emi.ts` (o `dhEmi` =
-data do `dt_emission` + hora de parede do `created_at` UTC na zona do estabelecimento — nunca o relógio); `src/nfe/compose.ts` (os fatos do ERP só por `src/facts`; na devolução cada item é
+**Transmitir, consultar e reconferir** (NFE.E6.P1, D-NE282/D-NE283/D-NE284/D-NE296 — ficha `projetos/nfe-api/SUBJECT/NFE_SEFAZ/ficha-nfe-e6-p1-transmitir-consultar-reconferir.md`): `src/nfe/dh-emi.ts` (o `dhEmi` =
+data do `dt_emission` + hora de parede, na zona do estabelecimento, do `created_at` UTC do evento E da VIDA ATUAL da nota (`vw_invoice_life` — D-NE296: a linha da nota guarda o 1º faturamento quando ela revive) — nunca o relógio; nota sem evento E = 422); `src/nfe/compose.ts` (os fatos do ERP só por `src/facts`; na devolução cada item é
 conferido contra o `-procNFe.xml` ARQUIVADO da origem antes de qualquer tentativa); `src/nfe/attempt.ts` (o ÚNICO escritor da tabela das tentativas e o ÚNICO que chama `nextInvoiceNumber`:
 INSERT com `cNF` por `crypto`, write-once de `receipt`/`protocol`/`dh_recbto`, a barreira de nova tentativa e a política do número — R e F reaproveitam número e série, em voo/autorizada/
 denegada/cancelada barram; em voo com o 217 PROVADO — o fato — solta, mesmo número, D-NE292); `src/nfe/transmission.ts` (`transmitInvoice`: habilitação travada antes de qualquer leitura comum → número → chave → CSRT por nota depois do lock →

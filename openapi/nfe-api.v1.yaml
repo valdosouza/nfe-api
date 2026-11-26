@@ -250,7 +250,7 @@ paths:
       description: >-
         A nfe-api lê a nota no ERP (viva, emitida por este estabelecimento, com ramo de mercadoria; a SÉRIE é do ERP — D-NE11 — e o NÚMERO nasce AQUI, na transmissão, do último número guardado no núcleo — D-NE257/D-NE282) e monta
         a NF-e 4.00 com o que está congelado no faturamento + emitente/destinatário lidos agora. Pré-validação camada 1 (D-NE43: o que a
-        API deriva — chave/cNF/cDV, dhEmi × janela de 5 minutos e 30 dias (a data do faturamento + a hora do `created_at` na zona do estabelecimento — D-NE278/D-NE284), coerência de totais com o vNF do ERP (D-NE27), textos de homologação, tamanhos — + XSD)
+        API deriva — chave/cNF/cDV, dhEmi × janela de 5 minutos e 30 dias (a data do faturamento + a hora do faturamento da VIDA ATUAL da nota — o evento E de `vw_invoice_life`, não a linha da nota, que guarda o 1º faturamento quando ela revive — na zona do estabelecimento — D-NE278/D-NE284/D-NE296; nota sem evento E = 422), coerência de totais com o vNF do ERP (D-NE27), textos de homologação, tamanhos — + XSD)
         sobre o CANDIDATO montado em memória que a reserva grava IGUAL; violação = 422 com a lista inteira, sem tentativa. Reserva a
         tentativa sob o FOR UPDATE da nota (D-F27); a chave, o cNF, o cDV, o autorizador, o tpEmis e a presença de IE nascem NA reserva e
         são write-once (D-NE7/D-NE37/D-NE96 — emitente SEM IE vai à SVRS). Fisco FORA da transação. Privilégio TRANSMITIR na interface do

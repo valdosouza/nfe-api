@@ -102,7 +102,7 @@ describe('autorizada (104 com protNFe 100)', () => {
     expect(nextInvoiceNumber.mock.calls[0][1]).toEqual({ institutionId: 98, model: '55', serie: 1 })
   })
 
-  it('o dhEmi do XML é a data do dt_emission com a hora do created_at na zona (D-NE284), e o XML guardado é o MESMO que foi ao fisco', async () => {
+  it('o dhEmi do XML é a data do dt_emission com a hora do faturamento da vida atual na zona (D-NE284, D-NE296), e o XML guardado é o MESMO que foi ao fisco', async () => {
     const t = setup()
     t.say(c => ok(ret(prot(c, '100'))))
     const r = await run(t)

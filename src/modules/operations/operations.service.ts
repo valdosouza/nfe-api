@@ -3,7 +3,7 @@ import type { Environment } from '../../authority/authorizers'
 import type { AppContext } from '../../context'
 import { readNumbering, type NumberingView } from '../../nfe/numbering'
 import { refreshAll } from '../../nfe/refresh-all'
-import { findVoidItem, listVoids, voidRange, type VoidListItem, type VoidResult } from '../../nfe/void-range'
+import { findVoidItem, listVoids, voidRange, voidsOfSerie, type VoidListItem, type VoidResult } from '../../nfe/void-range'
 import { reportIncident } from '../../mail/ops-alert'
 import { probeAuthorityStatus } from '../../authority/status-probe'
 import { readEmitter } from '../../facts/merchandise-facts'
@@ -16,8 +16,8 @@ import type { NumberingQueryDto, RefreshRunDto, VoidDto, VoidsQueryDto } from '.
  * (`refresh-all.ts`, `numbering.ts`, `void-range.ts`); aqui se monta as dependências (`nfe-deps.ts`), se traduz o resultado para o contrato e se converte os instantes à zona do estabelecimento.
  */
 
-/** O aluguel da passada por estabelecimento (molde da nfse-api): quem não obtém recebe 200 `skipped`. Mais que o tempo de uma passada de 50 notas com o fisco lento. */
-export const REFRESH_LEASE_SECONDS = 600
+/** O aluguel da passada por estabelecimento (molde da nfse-api): quem não obtém recebe 200 `skipped`. Cobre uma passada INTEIRA no pior caso: o teto de 50 notas × 35 s (o timeout da consulta é 30 s) + a sondagem e a margem — o aluguel não vence no meio da passada (gate adversarial M3). */
+export const REFRESH_LEASE_SECONDS = 50 * 35 + 120
 const MODEL = '55' as const
 
 export interface RefreshRunView {
@@ -73,7 +73,7 @@ export async function numbering(ctx: AppContext, inst: InstitutionPayload, q: Nu
   const serie = Number(q.serie)
   const view = await readNumbering(ctx.pool as never, ctx.fiscalDb, inst.schemaName, { institutionId: inst.institutionId, terminal: WEB_TERMINAL }, serie, environment, utc => (toZoneWall(utc, zone) ?? utc).slice(0, 7))
   // as faixas inutilizadas da série e do ambiente (a tela as mostra ao lado dos buracos)
-  const voids = (await listVoids(ctx.pool as never, inst.institutionId, 1, 100)).items.filter(v => v.serie === serie && v.environment === environment)
+  const voids = await voidsOfSerie(ctx.pool as never, inst.institutionId, serie, environment)
   return { serie: q.serie, environment, highestNumber: view.highestNumber, gaps: view.gaps, voids: voids.map(v => voidView(v, zone)) }
 }
 

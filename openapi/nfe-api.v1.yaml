@@ -258,7 +258,7 @@ paths:
       tags: [nfe]
       summary: Notas de mercadoria faturadas sem NF-e viva, autorizada ou denegada — PAGINADO (o lote é do APP)
       description: >-
-        Fora da lista: última voz da vida vigente P, A, D, K ou C (a voz S não existe na família — D-NE107; a reserva sem voz é o "em
+        Fora da lista: última voz da vida vigente P, A, D, K, N ou C (a voz S não existe na família — D-NE107; a reserva sem voz é o "em
         voo" e também fica fora). Só ramos CONTRATADOS (D-F14/D-F37 — nenhum = lista vazia).
         Ordem estável (mais antiga primeiro, id).
       parameters:
@@ -561,14 +561,15 @@ paths:
         O botão de envio — a VIA MANUAL da D-NE261 (a automática, depois da autorização, usa a mesma composição e o mesmo destinatário). Privilégio TRANSMITIR do ramo (o ato envia o documento fiscal pela conta do
         estabelecimento). Anexa o XML da VOZ com protocolo (`procNFe`, e o `procEventoNFe` se cancelada) e o DANFE em PDF (D-NE53, RF-NFE-43). Sai pela conta de e-mail do ESTABELECIMENTO, guardada no núcleo
         (D-NE236); assunto = configuração `nfe_email_subject` da empresa (com `{number}`) e corpo = texto padrão fixo (D-NE264). Destino: o `to` do pedido (até 5) ou, sem ele, os e-mails do destinatário
-        no cadastro (grupo nfe; sem nenhum, o principal). Falha do e-mail NUNCA desfaz a nota.
+        no cadastro (grupo nfe; sem nenhum, o principal) — leitura AINDA não liberada (as tabelas do e-mail não têm GRANT para o `fiscal_api`, D-AU12): por ora o `to` é obrigatório e a via automática só envia
+        quando essa leitura existir. Falha do e-mail NUNCA desfaz a nota.
       requestBody:
         content:
           application/json:
             schema:
               type: object
               properties:
-                to: { type: array, maxItems: 5, items: { type: string, format: email }, description: 'opcional — sem ele, o e-mail do destinatário no cadastro' }
+                to: { type: array, minItems: 1, maxItems: 5, items: { type: string, format: email }, description: 'o destino (até 5). Sem ele o destino seria o e-mail do destinatário no cadastro (grupo nfe; sem nenhum, o principal), mas essa leitura ainda NÃO está liberada (as tabelas do e-mail não têm GRANT para o fiscal_api — D-AU12): por ora, sem `to` = 422 FISCAL_RECIPIENT_EMAIL_MISSING' }
       responses:
         '200':
           description: enviado
@@ -1002,7 +1003,7 @@ components:
         highestNumber: { type: integer, nullable: true, description: 'maior número do ERP na série (viva ou não)' }
         gaps:
           type: array
-          description: 'buracos DERIVADOS (sem nota viva e fora de faixa homologada)'
+          description: 'buracos DERIVADOS (sem nota viva e fora de faixa retirada: pendente ou inutilizada)'
           items:
             type: object
             properties:

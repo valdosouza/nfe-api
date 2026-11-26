@@ -253,6 +253,17 @@ describe('fiscalView — localCancelPending e cancelDeadline (S2 da P2, NFE.E6.P
     expect((await view('C', 'C')).localCancelPending).toBe(false)
     expect((await view('A', 'E')).localCancelPending).toBe(false)
   })
+
+  it('a DENEGADA também espera o cancelamento local (D-NE280, contrato): voz D com a nota ainda emitida no ERP = pendente; com o C já aplicado, não — e não tem prazo (não se cancela no fisco)', async () => {
+    const d = await view('D', 'E')
+    expect([d.localCancelPending, d.cancelDeadline]).toEqual([true, null])
+    expect((await view('D', 'C')).localCancelPending).toBe(false)
+  })
+
+  it('o prazo vale enquanto a nota está AUTORIZADA e cancelável: A, K (pedido em voo) e N (pedido liberado)', async () => {
+    for (const kind of ['A', 'K', 'N']) expect([kind, (await view(kind, 'E')).cancelDeadline]).toEqual([kind, '2026-12-01 10:20:00'])
+    expect((await view('C', 'E')).cancelDeadline).toBeNull()
+  })
 })
 
 describe('GET …/xml e …/danfe (NFE.E6.P4 mudança 4) — código real, banco em memória e arquivo fiscal em mapa', () => {

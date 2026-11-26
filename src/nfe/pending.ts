@@ -4,14 +4,14 @@ import { attemptsOfInvoices, type AttemptRow } from './attempt'
 
 /**
  * A lista `GET /v1/nfe/invoices/pending` (NFE.E6.P4 mudança 2; contrato `openapi/nfe-api.v1.yaml`): as notas faturadas SEM NF-e viva, autorizada ou denegada. Fora da lista: a nota sem vida
- * (apagada, ou sem o evento E — nunca transmite, S-A da P1), a de vida cancelada e a cuja ÚLTIMA voz da vida vigente é P, A, D, K ou C; a reserva sem voz (em voo) também fica fora. Só os ramos
+ * (apagada, ou sem o evento E — nunca transmite, S-A da P1), a de vida cancelada e a cuja ÚLTIMA voz da vida vigente é P, A, D, K, N ou C; a reserva sem voz (em voo) também fica fora. Só os ramos
  * pedidos (o chamador passa os CONTRATADOS — D-F14/D-F37; nenhum = lista vazia). Ordem estável: a mais antiga primeiro, depois o id. Leitura por lote, sem junção com view.
  */
 export interface PendingItem { readonly invoiceId: number; readonly number: string | null; readonly serie: string | null; readonly dtEmission: string; readonly finality: '1' | '4'; readonly interfaceKey: 'orders' | 'order-returns' }
 export interface PendingPage { readonly total: number; readonly items: readonly PendingItem[] }
 
 const BATCH = 500
-export const PENDING_EXCLUDED_KINDS: ReadonlySet<string> = new Set(['P', 'A', 'D', 'K', 'C'])
+export const PENDING_EXCLUDED_KINDS: ReadonlySet<string> = new Set(['P', 'A', 'D', 'K', 'N', 'C'])
 const chunks = <T>(list: readonly T[]): T[][] => { const out: T[][] = []; for (let i = 0; i < list.length; i += BATCH) out.push(list.slice(i, i + BATCH)); return out }
 
 export async function listPending(q: Queryable, schemaName: string, scope: { institutionId: number; terminal: number }, opts: { page: number; pageSize: number; allowed: readonly ('orders' | 'order-returns')[] }): Promise<PendingPage> {

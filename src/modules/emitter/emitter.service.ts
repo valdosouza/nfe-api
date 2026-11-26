@@ -26,7 +26,7 @@ export const SERVED_MODELS = Object.freeze(['55'] as const satisfies readonly Is
 
 const actorOf = (inst: InstitutionPayload): EmitterActor => ({ institutionId: inst.institutionId, userId: inst.userId, schemaName: inst.schemaName })
 
-/** D-NE96 (o `stateRegistration` do contrato): o emitente tem IE no ERP? sem IE = contribuinte exclusivo do IBS/CBS → SVRS; e o autorizador que o 55 usaria neste ambiente. Cadastro do emitente ilegível ou sem habilitação do 55 = `authorizer55` nulo. */
+/** D-NE96 (o `stateRegistration` do contrato): o emitente tem IE no ERP? sem IE = contribuinte exclusivo do IBS/CBS → SVRS; e o autorizador que o 55 usaria neste ambiente. Cadastro do emitente incompleto (422) ou sem habilitação do 55 = `authorizer55` nulo; erro do banco sobe. */
 export interface StateRegistrationView { present: boolean; authorizer55: string | null }
 export type EmitterStatusView = EmitterView & { stateRegistration: StateRegistrationView }
 
@@ -44,8 +44,10 @@ async function stateRegistrationOf(ctx: AppContext, inst: InstitutionPayload, vi
     const uf = emitterFromParty(party).uf
     const r = resolveAuthorizer({ uf, model: '55', environment: issuer.environment as 'H' | 'P', emissionType: 1, hasStateRegistration: present, at: new Date() })
     return { present, authorizer55: r.ok ? r.authorizer : null }
-  } catch {
-    return { present: false, authorizer55: null }                                  // o status do emitente não cai por dado do ERP: o cadastro incompleto aparece como "sem IE" e sem autorizador
+  } catch (e) {
+    // só o cadastro INCOMPLETO do emitente (422 do leitor) aparece como "sem IE" e sem autorizador; erro do banco ou do ERP sobe — nunca vira "sem IE → SVRS" calado
+    if (e instanceof HttpError && e.statusCode === 422) return { present: false, authorizer55: null }
+    throw e
   }
 }
 

@@ -85,14 +85,20 @@ export function serverCaDaysLeft(ca: ServerCa, now: Date): number {
   return Math.floor((Math.min(...ends) - now.getTime()) / DAY_MS)
 }
 
+/** O vencimento (ISO, dia) da raiz que vence primeiro. */
+export function firstExpiry(ca: ServerCa): string {
+  const ends = ca.certificates.map(c => Date.parse(c.notAfter)).filter(t => !Number.isNaN(t))
+  return ends.length === 0 ? '' : new Date(Math.min(...ends)).toISOString().slice(0, 10)
+}
+
 export interface ServerCaWatchHooks {
   readonly now?: () => Date
   /** Recarregou um PEM novo (o conjunto de raízes mudou na ficha). */
   readonly onReload?: (ca: ServerCa) => void
   /** O PEM mudou mas NÃO passou na conferência (ou sumiu): ficou a cadeia anterior; só o motivo, nunca o conteúdo. */
   readonly onRefused?: (reason: string) => void
-  /** Falta `days` dias (≤ 60) para a primeira raiz vencer — no máximo uma vez por dia. */
-  readonly onExpiring?: (days: number) => void
+  /** Falta `days` dias (≤ 60) para a primeira raiz vencer (`notAfter` = o vencimento dela, ISO) — no máximo uma vez por dia. */
+  readonly onExpiring?: (days: number, notAfter: string) => void
 }
 
 /**
@@ -114,7 +120,7 @@ export function watchServerCa(target: { serverCa: ServerCa }, pemPath: string, h
         catch (e) { hooks.onRefused?.(e instanceof ServerCaRefusedError ? e.reason : 'erro') }
       }
       const days = serverCaDaysLeft(target.serverCa, now())
-      if (days <= CA_EXPIRY_WARN_DAYS && now().getTime() - lastWarned >= DAY_MS) { lastWarned = now().getTime(); hooks.onExpiring?.(days) }
+      if (days <= CA_EXPIRY_WARN_DAYS && now().getTime() - lastWarned >= DAY_MS) { lastWarned = now().getTime(); hooks.onExpiring?.(days, firstExpiry(target.serverCa)) }
     },
   }
 }

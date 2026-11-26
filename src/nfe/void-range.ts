@@ -317,3 +317,12 @@ export async function findVoidItem(q: Queryable, institutionId: number, id: numb
   const r = Array.isArray(rows) ? (rows as any[])[0] : null
   return r ? voidItemOf(r) : null
 }
+
+/** Os pedidos de UMA série e UM ambiente, do mais novo ao mais antigo, SEM corte (a numeração mostra todas as faixas da série — nunca só as 100 mais novas do estabelecimento). */
+export async function voidsOfSerie(q: Queryable, institutionId: number, serie: number, environment: Environment): Promise<VoidListItem[]> {
+  const [rows] = await q.query(
+    `SELECT id, environment, serie, 2000 + CAST(SUBSTRING(void_id, 5, 2) AS UNSIGNED) AS year, number_from AS nFrom, number_to AS nTo, reason, void_id AS voidId, authority_code AS authorityCode,
+            protocol, withdrawn, DATE_FORMAT(dh_recbto, '%Y-%m-%d %H:%i:%s') AS dh
+       FROM ${NUMBER_VOID_TABLE} WHERE tb_institution_id = ? AND model = '55' AND deleted = 'N' AND serie = ? AND environment = ? ORDER BY id DESC`, [institutionId, serie, environment])
+  return (Array.isArray(rows) ? rows : []).map(voidItemOf)
+}

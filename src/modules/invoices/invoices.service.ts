@@ -130,10 +130,10 @@ const STATE_OF_NONE = 'none' as const
 
 /**
  * O fim do prazo de cancelamento da UF (AVISO — a recusa é da SEFAZ; a única trava é a das 480 h, `cancellation.ts`): a hora da autorização (`dh_recbto`, UTC) + o prazo DADO da UF do emitente (`cancel-deadlines.ts`, nunca um
- * `if (uf === …)`), na zona do estabelecimento. Só da tentativa AUTORIZADA (voz A com protocolo e hora gravados); outra coisa = null.
+ * `if (uf === …)`), na zona do estabelecimento. Só da tentativa AUTORIZADA (voz A, K ou N com protocolo e hora gravados); outra coisa = null.
  */
 function cancelDeadlineWall(a: AttemptRow, zone: string): string | null {
-  if (a.lastKind !== 'A' || a.protocol === null || a.dhRecbto === null) return null
+  if ((a.lastKind !== 'A' && a.lastKind !== 'K' && a.lastKind !== 'N') || a.protocol === null || a.dhRecbto === null) return null     // autorizada e ainda cancelável: A, K (pedido em voo) e N (pedido liberado)
   const uf = ufOfCode(a.accessKey.slice(0, 2))
   const at = Date.parse(`${a.dhRecbto.replace(' ', 'T')}Z`)
   if (uf === null || Number.isNaN(at)) return null
@@ -164,7 +164,8 @@ export async function fiscalView(ctx: AppContext, inst: InstitutionPayload, ref:
     voices: voices.map(v => ({ ...v, dh: wall(v.dh) })),
     documentEvents: [],
     // D-F28 (a pendência é DERIVADA, nada é gravado): a vigente tem voz C — ou D, nota denegada, cujo cancelamento é local (D-NE280) — e a nota no ERP ainda não tem o evento C
-    localCancelPending: localCancelPendingIn(MERCHANDISE_VOICE_READING, latest ? { lastKind: latest.lastKind, lastCode: latest.lastCode } : null, life.lastKind),
+    localCancelPending: localCancelPendingIn(MERCHANDISE_VOICE_READING, latest ? { lastKind: latest.lastKind, lastCode: latest.lastCode } : null, life.lastKind)
+      || (latest?.lastKind === 'D' && life.lastKind !== 'C'),
     cancelDeadline: latest ? deadlineOf(latest, zone) : null,
     xmlAvailable: !!(latest && key && ctx.storage.find(key, `${latest.accessKey}-nfe.xml`, [latest.dhEmission]) !== null),
     danfeAvailable: !!(latest && latest.protocol !== null && latest.lastKind !== null && AUTHORIZED_VOICES.has(latest.lastKind)),

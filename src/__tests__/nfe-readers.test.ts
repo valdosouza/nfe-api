@@ -70,6 +70,15 @@ describe('listPending — as notas faturadas sem NF-e viva, autorizada ou denega
     expect((await listPending(qq as never, 'setes_x', SCOPE, { page: 1, pageSize: 25, allowed: ['orders'] })).items).toEqual([])
   })
 
+  it('o N (cancelamento liberado) é nota AUTORIZADA e também sai da fila (gate adversarial M1)', async () => {
+    const qq = fakeQ([
+      { match: /FROM `setes_x`\.tb_invoice i/, rows: billed.slice(0, 2) },
+      { match: /vw_order_interface/, rows: interfaces },
+      { match: /tb_invoice_merchandise_transmission/, rows: [attemptRow(1, 1, 'N'), attemptRow(2, 1, 'R')] },
+    ])
+    expect((await listPending(qq as never, 'setes_x', SCOPE, { page: 1, pageSize: 25, allowed: ['orders'] })).items.map(i => i.invoiceId)).toEqual([2])
+  })
+
   it('só os ramos contratados: o filtro do ramo e a lista vazia sem ramo (sem ir ao banco)', async () => {
     expect((await listPending(q() as never, 'setes_x', SCOPE, { page: 1, pageSize: 25, allowed: ['order-returns'] })).items.map(i => i.invoiceId)).toEqual([7])
     const none = q()
@@ -137,10 +146,18 @@ describe('readNumbering — os buracos derivados', () => {
     expect(fiscal.readWithdrawnRanges).toHaveBeenCalledWith(expect.anything(), 'fiscal_api', { institutionId: 7, model: '55', serie: 1, environment: 'H' })
   })
 
-  it('buraco no fim da série e no começo; sem trava (nenhuma instrução FOR UPDATE)', async () => {
+  it('a sequência aberta em N > 1 (continua o legado — D-NE265): os números do legado ABAIXO do 1º gerado por esta API NUNCA são buraco; o buraco real dentro do trecho nosso aparece', async () => {
+    fiscal.erp.invoiceLives.mockResolvedValue(new Map())
+    const q = qOf(120010, attempts([{ n: 120000, id: 1, protocol: '1' }, { n: 120001, id: 2, protocol: '2' }, { n: 120004, id: 4, protocol: '4' }, { n: 120010, id: 10, protocol: '10' }]))
+    const r = await readNumbering(q as never, 'fiscal_api', 'setes_x', SCOPE, 1, 'P', month)
+    expect(r.gaps.map(g => [g.from, g.to])).toEqual([[120002, 120003], [120005, 120009]])
+    expect(r.gaps.some(g => g.from < 120000)).toBe(false)
+  })
+
+  it('buraco no fim da série (o começo é o 1º gerado por esta API); sem trava (nenhuma instrução FOR UPDATE)', async () => {
     const q = qOf(4, attempts([{ n: 2, id: 12, protocol: '2' }]))
     const r = await readNumbering(q as never, 'fiscal_api', 'setes_x', SCOPE, 1, 'P', month)
-    expect(r.gaps.map(g => [g.from, g.to])).toEqual([[1, 1], [3, 4]])
+    expect(r.gaps.map(g => [g.from, g.to])).toEqual([[3, 4]])                              // o começo NÃO é buraco: o 1º número é o 1º gerado por esta API (aqui o 2)
     for (const c of q.calls) expect(c.sql).not.toMatch(/FOR UPDATE|LOCK IN SHARE/i)
   })
 })

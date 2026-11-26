@@ -70,9 +70,19 @@ export function incidentAlertMessage(a: IncidentAlert): { subject: string; text:
   }
 }
 
-/** Dispara o alerta SEM esperar e sem poder falhar a operação que o causou (a pendência já está gravada e no log). Sem emissor no contexto (testes), nada. */
-export function reportIncident(ctx: { readonly opsAlert?: OpsAlert }, a: IncidentAlert): void {
+/** A janela do dedup: a MESMA pendência (estabelecimento × nota × chave × código) avisa o suporte uma vez a cada 6 horas — a passada do rodízio e o `refresh` repetem a consulta e a pendência continua. */
+export const INCIDENT_DEDUP_MS = 6 * 3_600_000
+const recentIncidents = new Map<string, number>()
+export const resetIncidentDedup = (): void => recentIncidents.clear()
+
+/** Dispara o alerta SEM esperar e sem poder falhar a operação que o causou (a pendência já está gravada e no log). Sem emissor no contexto (testes), nada. Repetida dentro da janela, não avisa de novo. */
+export function reportIncident(ctx: { readonly opsAlert?: OpsAlert }, a: IncidentAlert, nowMs: number = Date.now()): void {
   if (!ctx.opsAlert) return
+  const key = `${a.institutionId}|${a.invoiceId}|${a.accessKey}|${a.incident}`
+  const last = recentIncidents.get(key)
+  if (last !== undefined && nowMs - last < INCIDENT_DEDUP_MS) return
+  recentIncidents.set(key, nowMs)
+  if (recentIncidents.size > 5000) for (const [k, t] of recentIncidents) if (nowMs - t >= INCIDENT_DEDUP_MS) recentIncidents.delete(k)
   const m = incidentAlertMessage(a)
   void ctx.opsAlert(m.subject, m.text).catch(() => undefined)
 }

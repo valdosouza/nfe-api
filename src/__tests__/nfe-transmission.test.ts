@@ -530,3 +530,16 @@ describe('o gancho pós-autorização (NFE.E6.P4 mudança 7; D-NE261) — só qu
     expect(hook).not.toHaveBeenCalled()
   })
 })
+
+describe('o gancho só com o -procNFe.xml de fato GRAVADO (gate adversarial L1)', () => {
+  it('falha de disco do procNFe (que não é conflito) deixa o A gravado, avisa no log e NÃO dispara o e-mail', async () => {
+    const hook = jest.fn(async () => undefined)
+    const t = setup({ onAuthorized: hook })
+    const save = t.storage.save.bind(t.storage)
+    ;(t.storage as any).save = (key: unknown, name: string, content: string, at: Date) => { if (name.endsWith('-procNFe.xml')) throw new Error('disco cheio'); return save(key as never, name, content, at) }
+    t.say(c => ok(ret(prot(c, '100'))))
+    const r = await run(t)
+    expect([r.outcome.kind, r.incident, t.db.events[0].kind]).toEqual(['A', null, 'A'])
+    expect(hook).not.toHaveBeenCalled()
+  })
+})

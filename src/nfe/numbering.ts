@@ -44,7 +44,10 @@ export async function readNumbering(q: Queryable, db: string, schemaName: string
     gaps.push({ from: start, to: end, oldestInvoiceMonth: oldest === null ? null : toZoneMonth(oldest) })
     start = null
   }
-  for (let n = 1; n <= highest; n++) {
+  // o limite de baixo é o 1º número gerado por ESTA API na série e no ambiente (a sequência pode ter sido aberta em N > 1 para continuar a numeração do legado — D-NE265): os números do legado
+  // abaixo dele NUNCA são buraco nosso (inutilizá-los queimaria nota do ERP Desktop)
+  const lowest = attempts.length > 0 ? attempts[0].number : highest
+  for (let n = lowest; n <= highest; n++) {
     const hole = !owned.has(n) && !withdrawn(n)
     if (hole && start === null) start = n
     if (!hole) close(n - 1)

@@ -83,12 +83,11 @@ export function contextFromEnv(env: NodeJS.ProcessEnv = process.env, overrides: 
     statusBoard: overrides.statusBoard ?? new StatusBoard(() => new Date()),
   }
   if (!overrides.serverCa) {
-    const when = new Date()
     ctx.checkServerCa = watchServerCa(ctx, String(env.SEFAZ_SERVER_CA_PATH), {
       onReload: ca => logger.info('Raízes ICP do servidor da SEFAZ recarregadas (D-NE54 a)', { certificates: ca.certificates.length, source: ca.source }),
       onRefused: reason => logger.warn(`Raízes ICP novas recusadas (${reason}): fica a cadeia anterior — o serviço segue (D-NE187)`),
-      onExpiring: days => {
-        const text = `A primeira raiz ICP-Brasil do servidor da SEFAZ vence em ${days} dia(s) (D-NE187): troque o PEM e a ficha em ${when.toISOString().slice(0, 10)} ou antes — a nfe-api relê o arquivo sem reiniciar.`
+      onExpiring: (days, notAfter) => {
+        const text = `A primeira raiz ICP-Brasil do servidor da SEFAZ vence em ${days} dia(s), em ${notAfter} (D-NE187): troque o PEM e a ficha antes dessa data — a nfe-api relê o arquivo sem reiniciar.`
         logger.warn(text)
         if (ctx.opsAlert) void ctx.opsAlert('[nfe-api] raízes ICP do servidor da SEFAZ perto de vencer', text).catch(() => undefined)
       },

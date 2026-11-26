@@ -11,13 +11,16 @@ import * as fiscal from 'fiscal-api'
 import { invoiceRef, MasterKeyRing } from 'fiscal-api'
 import type { AppContext } from '../context'
 import { autoSendAfterAuthorization } from '../mail/invoice-mail'
-import { OPS_ALERT_VARS, assertOpsAlertConfigured, createOpsAlert, incidentAlertMessage, isProduction, missingOpsAlertVars, reportIncident } from '../mail/ops-alert'
+import { INCIDENT_DEDUP_MS, OPS_ALERT_VARS, assertOpsAlertConfigured, createOpsAlert, incidentAlertMessage, isProduction, missingOpsAlertVars, reportIncident, resetIncidentDedup } from '../mail/ops-alert'
 import * as invoicesService from '../modules/invoices/invoices.service'
 import { Breaker } from '../nfe/breaker'
 import { FAKE_TECH } from './technical-responsible-fake'
 
 jest.mock('../modules/invoices/invoices.service', () => ({ ...jest.requireActual('../modules/invoices/invoices.service'), xml: jest.fn(), danfe: jest.fn() }))
-jest.mock('fiscal-api', () => ({ ...jest.requireActual('fiscal-api'), logger: { info: jest.fn(), warn: jest.fn(), error: jest.fn() }, openSmtpCredential: jest.fn() }))
+jest.mock('../nfe/transmission', () => ({ ...jest.requireActual('../nfe/transmission'), transmitInvoice: jest.fn() }))
+jest.mock('../nfe/reconcile', () => ({ ...jest.requireActual('../nfe/reconcile'), refreshInvoice: jest.fn(), reconfirmNotRegistered: jest.fn() }))
+jest.mock('../nfe/refresh-all', () => ({ ...jest.requireActual('../nfe/refresh-all'), refreshAll: jest.fn() }))
+jest.mock('fiscal-api', () => ({ ...jest.requireActual('fiscal-api'), logger: { info: jest.fn(), warn: jest.fn(), error: jest.fn() }, openSmtpCredential: jest.fn(), acquireRefreshLease: jest.fn(), releaseRefreshLease: jest.fn() }))
 jest.setTimeout(60_000)
 
 const f = fiscal as unknown as Record<string, any>
@@ -37,6 +40,7 @@ const loggedAll = (): string => JSON.stringify([...(f.logger.info as jest.Mock).
 
 beforeEach(() => {
   jest.clearAllMocks()
+  resetIncidentDedup()
   xmlM.mockResolvedValue({ accessKey: KEY, procNFe: '<nfeProc/>', cancelEvent: null })
   danfeM.mockResolvedValue({ accessKey: KEY, pdfBase64: 'JVBERg==' })
   f.openSmtpCredential.mockResolvedValue(ACCOUNT)
@@ -56,6 +60,7 @@ describe('autoSendAfterAuthorization — a via automática (D-NE261)', () => {
     const r = await autoSendAfterAuthorization(ctx([{ name: 'fiscal_email_auto_send', content: 'N' }]), EVENT, { createTransport: () => ({ sendMail }), recipients: async () => ['dest@x.com'] })
     expect(r).toBe('off')
     expect([sendMail.mock.calls.length, f.openSmtpCredential.mock.calls.length]).toEqual([0, 0])
+    expect([xmlM.mock.calls.length, danfeM.mock.calls.length]).toEqual([0, 0])                  // nem lê o arquivo nem renderiza o DANFE (até 20 s numa nota longa) à toa
   })
 
   it('sem destinatário no cadastro (e hoje sem leitor, por falta do GRANT): nada é enviado, só o log informativo sem endereço', async () => {
@@ -63,6 +68,7 @@ describe('autoSendAfterAuthorization — a via automática (D-NE261)', () => {
     expect(await autoSendAfterAuthorization(ctx(), EVENT, { createTransport: () => ({ sendMail }) })).toBe('no-recipient')
     expect(await autoSendAfterAuthorization(ctx(), EVENT, { createTransport: () => ({ sendMail }), recipients: async () => [] })).toBe('no-recipient')
     expect(sendMail).not.toHaveBeenCalled()
+    expect([xmlM.mock.calls.length, danfeM.mock.calls.length]).toEqual([0, 0])
     expect(loggedAll()).toContain(KEY)
   })
 
@@ -140,11 +146,43 @@ describe('o alerta de pendência crítica ao suporte (D-NE237, S-10)', () => {
     expect(() => reportIncident({}, { route: 'transmit', institutionId: 1, invoiceId: 2, accessKey: null, incident: 'x' })).not.toThrow()
   })
 
-  it('os pontos de pendência crítica das rotas avisam o suporte: transmit, refresh, reconfirm e a passada do rodízio', () => {
-    const read = (p: string): string => fs.readFileSync(path.join(__dirname, '..', p), 'utf8')
-    const inv = read('modules/invoices/invoices.service.ts')
-    for (const route of ['invoice-transmit', 'invoice-refresh', 'invoice-reconfirm']) expect(inv).toContain(`reportIncident(ctx, { route: '${route}'`)
-    expect(read('modules/operations/operations.service.ts')).toContain("reportIncident(ctx, { route: 'refresh-all'")
+  it('a MESMA pendência avisa UMA vez por janela (a passada repete a consulta e a pendência continua): outra nota, outro código ou a janela vencida avisam de novo', () => {
+    const alert = jest.fn(async () => undefined)
+    const a = { route: 'refresh-all', institutionId: 1, invoiceId: 2, accessKey: KEY, incident: 'digest-mismatch' }
+    reportIncident({ opsAlert: alert }, a, 1_000); reportIncident({ opsAlert: alert }, a, 1_000 + 60_000); reportIncident({ opsAlert: alert }, a, 1_000 + INCIDENT_DEDUP_MS - 1)
+    expect(alert).toHaveBeenCalledTimes(1)
+    reportIncident({ opsAlert: alert }, { ...a, invoiceId: 3 }, 2_000); reportIncident({ opsAlert: alert }, { ...a, incident: 'file-conflict' }, 2_000); reportIncident({ opsAlert: alert }, { ...a, institutionId: 9 }, 2_000)
+    expect(alert).toHaveBeenCalledTimes(4)
+    reportIncident({ opsAlert: alert }, a, 1_000 + INCIDENT_DEDUP_MS)
+    expect(alert).toHaveBeenCalledTimes(5)
+  })
+
+  it('cada rota com pendência crítica AVISA o suporte (comportamento): transmit, refresh, reconfirm e a passada do rodízio; sem incidente, silêncio', async () => {
+    const real = jest.requireActual('../modules/invoices/invoices.service') as typeof import('../modules/invoices/invoices.service')
+    const ops = jest.requireActual('../modules/operations/operations.service') as typeof import('../modules/operations/operations.service')
+    const alert = jest.fn(async () => undefined)
+    const c = { ...ctx(), opsAlert: alert }
+    const inst = { institutionId: 98, userId: 7, schemaName: 'setes_x' } as any
+    const tick = () => new Promise(r => setImmediate(r))
+    const base = { invoiceId: 5001, attempt: 1, accessKey: KEY, via: 'key' as const, outcome: { kind: 'none' as const, reason: 'digest-divergente' }, digestCheck: 'mismatch' as const, notRegistered: false, next: null }
+    const tx = jest.requireMock('../nfe/transmission') as { transmitInvoice: jest.Mock }
+    const rc = jest.requireMock('../nfe/reconcile') as { refreshInvoice: jest.Mock; reconfirmNotRegistered: jest.Mock }
+    tx.transmitInvoice.mockResolvedValue({ invoiceId: 5001, attempt: 1, accessKey: KEY, number: 15, serie: 1, outcome: { kind: 'A', authorityCode: '100', message: 'm' }, nProt: '1', nRec: null, next: null, authorityCode: '100', incident: 'file-conflict' })
+    await real.transmit(c, inst, EVENT.ref); await tick()
+    rc.refreshInvoice.mockResolvedValue({ ...base, incident: 'digest-mismatch' })
+    await real.refresh(c, inst, EVENT.ref, false); await tick()
+    rc.reconfirmNotRegistered.mockResolvedValue({ invoiceId: 5001, attempt: 1, accessKey: KEY, recorded: false, reason: 'nao-e-217', refresh: { ...base, incident: 'authorized-in-closed-attempt' } })
+    await real.reconfirm(c, inst, EVENT.ref); await tick()
+    expect(alert.mock.calls.map(x => (x as unknown as [string])[0])).toEqual(['[nfe-api] pendência crítica: file-conflict', '[nfe-api] pendência crítica: digest-mismatch', '[nfe-api] pendência crítica: authorized-in-closed-attempt'])
+    alert.mockClear()
+    rc.refreshInvoice.mockResolvedValue({ ...base, incident: null })
+    await real.refresh(c, inst, EVENT.ref, false); await tick()
+    expect(alert).not.toHaveBeenCalled()                                                       // sem pendência, nenhum alerta
+    f.acquireRefreshLease.mockResolvedValue('tok'); f.releaseRefreshLease.mockResolvedValue(true)
+    const all = jest.requireMock('../nfe/refresh-all') as { refreshAll: jest.Mock }
+    all.refreshAll.mockResolvedValue({ scanned: 1, consulted: 1, throttled: 0, tooOld: 0, skipped: 0, circuitOpen: false, changed: 0, incidents: [{ invoiceId: 77, incident: 'open-attempt-outside-current-life' }], results: [] })
+    await ops.refreshRun(c, inst, {}); await tick()
+    expect(alert.mock.calls.map(x => (x as unknown as [string])[0])).toEqual(['[nfe-api] pendência crítica: open-attempt-outside-current-life'])
   })
 
   it('o boot confere as variáveis ANTES de ouvir a porta, uma vez', () => {

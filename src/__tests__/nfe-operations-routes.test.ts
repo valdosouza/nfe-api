@@ -24,7 +24,7 @@ import { FAKE_TECH } from './technical-responsible-fake'
 
 jest.mock('../modules/invoices/invoices.service', () => ({ ...jest.requireActual('../modules/invoices/invoices.service'), pending: jest.fn() }))
 jest.mock('../nfe/refresh-all', () => ({ ...jest.requireActual('../nfe/refresh-all'), refreshAll: jest.fn() }))
-jest.mock('../nfe/void-range', () => ({ ...jest.requireActual('../nfe/void-range'), voidRange: jest.fn(), listVoids: jest.fn(), findVoidItem: jest.fn() }))
+jest.mock('../nfe/void-range', () => ({ ...jest.requireActual('../nfe/void-range'), voidRange: jest.fn(), listVoids: jest.fn(), findVoidItem: jest.fn(), voidsOfSerie: jest.fn() }))
 jest.mock('../nfe/numbering', () => ({ readNumbering: jest.fn() }))
 jest.mock('../authority/status-probe', () => ({ probeAuthorityStatus: jest.fn() }))
 jest.mock('../facts/merchandise-facts', () => ({ ...jest.requireActual('../facts/merchandise-facts'), readEmitter: jest.fn() }))
@@ -50,6 +50,7 @@ const refreshAllM = refreshAllModule.refreshAll as unknown as jest.Mock
 const voidRangeM = voidModule.voidRange as unknown as jest.Mock
 const listVoidsM = voidModule.listVoids as unknown as jest.Mock
 const findVoidM = voidModule.findVoidItem as unknown as jest.Mock
+const voidsOfSerieM = voidModule.voidsOfSerie as unknown as jest.Mock
 
 const { privateKey, publicKey } = generateKeyPairSync('rsa', { modulusLength: 2048 })
 const privPem = privateKey.export({ type: 'pkcs8', format: 'pem' }) as string
@@ -155,10 +156,12 @@ describe('GET /v1/nfe/numbering e GET/POST /v1/nfe/voids', () => {
     expect([none.status, none.body.code]).toEqual([404, 'FISCAL_ISSUER_MISSING'])
     f.getIssuer.mockResolvedValue({ environment: 'H' })
     numberingModule.readNumbering.mockResolvedValue({ serie: 1, environment: 'H', highestNumber: 12, gaps: [{ from: 3, to: 4, oldestInvoiceMonth: '2026-10' }] })
-    listVoidsM.mockResolvedValue({ total: 2, items: [voidItem, { ...voidItem, id: 4, serie: 2 }, { ...voidItem, id: 5, environment: 'P' }] })
+    voidsOfSerieM.mockResolvedValue([voidItem])
     const r = await request(createApp(ctx())).get('/v1/nfe/numbering?serie=1').set(A)
     expect(r.body.data).toMatchObject({ serie: '1', environment: 'H', highestNumber: 12, gaps: [{ from: 3, to: 4, oldestInvoiceMonth: '2026-10' }] })
-    expect(r.body.data.voids.map((v: any) => v.id)).toEqual([3])                           // só a série 1 de H
+    expect(r.body.data.voids.map((v: any) => v.id)).toEqual([3])
+    expect(voidsOfSerieM.mock.calls[0].slice(1)).toEqual([1, 1, 'H'])                       // o filtro de série e ambiente é do SQL, sem corte: nunca só as 100 mais novas do estabelecimento
+    expect(listVoidsM).not.toHaveBeenCalled()
     expect(r.body.data.voids[0].dh).toBe('2026-11-20 12:00:00')                            // 15:00 UTC → Brasília
     const call = numberingModule.readNumbering.mock.calls[0]
     expect([call[1], call[2], call[3], call[4], call[5]]).toEqual(['fiscal_api', 'setes_setes', { institutionId: 1, terminal: 0 }, 1, 'H'])

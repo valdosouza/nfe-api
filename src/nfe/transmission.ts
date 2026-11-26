@@ -243,14 +243,15 @@ export async function transmitInvoice(deps: NfeDeps, actor: NfeActor, ref: Invoi
   if (wrote === 'changed') return finish(ref, reserved, { kind: 'none', reason: 'voz-mudou-depois-da-pergunta' }, null, null, null)
   // o `-procNFe.xml` da autorizada e da denegada (D-NE35): conflito de gravação única = pendência crítica (nunca silêncio); outra falha do `save` (disco cheio, link físico) só avisa, com log SEM conteúdo — o `-procNFe.xml` perdido NÃO é refeito por rota nenhuma (limite aceito; a reconstrução é da NFE.E6.P4)
   let conflict = false
+  let procSaved = false
   if (voice.kind === 'A' || voice.kind === 'D') {
     const xml = outcome.kind === 'answered' || outcome.kind === 'rejected' ? procNfeXml(reserved.signedXml, outcome.xml, reserved.accessKey) : null
     if (xml) {
-      try { saveWriteOnce(deps, { cnpj: reserved.cnpj, serie: reserved.serie, environment: reserved.environment, zone: reserved.zone }, `${reserved.accessKey}-procNFe.xml`, xml, deps.now()) } catch (e) { conflict = isFileConflict(e); if (!conflict) logger.warn('Arquivo fiscal: o -procNFe.xml não foi gravado', { accessKey: reserved.accessKey, error: e instanceof Error ? e.name : 'erro' }) }
+      try { saveWriteOnce(deps, { cnpj: reserved.cnpj, serie: reserved.serie, environment: reserved.environment, zone: reserved.zone }, `${reserved.accessKey}-procNFe.xml`, xml, deps.now()); procSaved = true } catch (e) { conflict = isFileConflict(e); if (!conflict) logger.warn('Arquivo fiscal: o -procNFe.xml não foi gravado', { accessKey: reserved.accessKey, error: e instanceof Error ? e.name : 'erro' }) }
     }
   }
   // o fato "passou a A" (D-NE261): a voz e o procNFe já estão gravados; o conflito de gravação única (pendência crítica) não manda e-mail de um arquivo duvidoso
-  if (voice.kind === 'A' && !conflict) await notifyAuthorized(deps, { actor, ref, attempt: reserved.attempt, accessKey: reserved.accessKey })
+  if (voice.kind === 'A' && !conflict && procSaved) await notifyAuthorized(deps, { actor, ref, attempt: reserved.attempt, accessKey: reserved.accessKey })
   return finish(ref, reserved, { kind: voice.kind, authorityCode: voice.authorityCode, message: voice.message }, d.nProt, d.nRec, d.nRec || voice.kind === 'P' ? 'consult-receipt' : null, conflict ? 'file-conflict' : digestCheck === 'absent' ? 'digest-absent' : null)
 }
 

@@ -65,3 +65,30 @@ describe('voidDepsOf — o emitente sem nota', () => {
     await expect(voidDepsOf(ctxOf()).emitterOf({} as never, actor)).rejects.toMatchObject({ statusCode: 422, code: 'FISCAL_EMITTER_INCOMPLETE' })
   })
 })
+
+describe('nfeDepsOf — a recarga das raízes e o gancho do e-mail estão LIGADOS (NFE.E6.P4 mudanças 7 e 8)', () => {
+  it('`ca()` chama a recarga do contexto ANTES de devolver o PEM vigente (a chamada ao fisco usa a cadeia nova); sem recarga no contexto devolve o PEM', () => {
+    const check = jest.fn()
+    const ctx = ctxOf({ checkServerCa: check, serverCa: { pem: 'PEM-VIGENTE', source: 's', certificates: [] } as never })
+    expect(nfeDepsOf(ctx).ca()).toBe('PEM-VIGENTE')
+    expect(check).toHaveBeenCalledTimes(1)
+    ctx.serverCa = { pem: 'PEM-NOVO', source: 's', certificates: [] } as never                  // a recarga troca `ctx.serverCa`: a próxima chamada vê a nova
+    expect(nfeDepsOf(ctx).ca()).toBe('PEM-NOVO')
+    expect(nfeDepsOf(ctxOf({ serverCa: { pem: 'X', source: 's', certificates: [] } as never })).ca()).toBe('X')
+  })
+
+  it('`onAuthorized` dispara a via automática do e-mail com o contexto e o evento, sem esperar e sem lançar', async () => {
+    const auto = jest.fn(async () => 'sent')
+    jest.resetModules()
+    jest.doMock('../mail/invoice-mail', () => ({ autoSendAfterAuthorization: auto }))
+    const { nfeDepsOf: fresh } = require('../modules/nfe-deps') as typeof import('../modules/nfe-deps')
+    const ctx = ctxOf()
+    const e = { actor: { institutionId: 7, schemaName: 's', userId: 1 }, ref: { institutionId: 7, invoiceId: 5001, terminal: 0 }, attempt: 1, accessKey: 'K' }
+    await expect(fresh(ctx).onAuthorized!(e as never)).resolves.toBeUndefined()
+    await new Promise(r => setImmediate(r))
+    expect(auto).toHaveBeenCalledWith(ctx, e)
+    auto.mockRejectedValueOnce(new Error('caiu'))
+    await expect(fresh(ctx).onAuthorized!(e as never)).resolves.toBeUndefined()
+    jest.dontMock('../mail/invoice-mail')
+  })
+})

@@ -1,6 +1,6 @@
 import { HttpError, logger, type InstitutionPayload, type InvoiceRef } from 'fiscal-api'
 import type { AuthorizedEvent } from '../nfe/authorized-hook'
-import { DEFAULT_MAIL_SUBJECT, readMailConfig } from '../facts/nfe-lists'
+import { DEFAULT_MAIL_SUBJECT, readMailConfig, type MailConfig } from '../facts/nfe-lists'
 import type { AppContext } from '../context'
 import { NfeErrors } from '../nfe/errors'
 import * as invoices from '../modules/invoices/invoices.service'
@@ -29,17 +29,17 @@ export const subjectOf = (template: string, number: number): string => (template
 export interface ComposedMail { readonly mail: Omit<OutgoingMail, 'to'>; readonly accessKey: string; readonly number: number; readonly serie: number; readonly autoSend: boolean }
 
 /** Monta o e-mail da nota autorizada (ou cancelada: o DANFE leva o carimbo). Nota sem autorização = 409 `FISCAL_NOT_AUTHORIZED` (dos leitores de arquivo); arquivo que falta = 409 `FISCAL_FILE_MISSING`. */
-export async function composeInvoiceMail(ctx: AppContext, inst: InstitutionPayload, ref: InvoiceRef): Promise<ComposedMail> {
+export async function composeInvoiceMail(ctx: AppContext, inst: InstitutionPayload, ref: InvoiceRef, config?: MailConfig): Promise<ComposedMail> {
   const x = await invoices.xml(ctx, inst, ref)
   const d = await invoices.danfe(ctx, inst, ref)
   const number = Number(x.accessKey.slice(25, 34)), serie = Number(x.accessKey.slice(22, 25))
-  const config = await readMailConfig(ctx.pool, inst.schemaName, inst.institutionId)
+  const cfg = config ?? await readMailConfig(ctx.pool, inst.schemaName, inst.institutionId)
   const attachments: Omit<OutgoingMail, 'to'>['attachments'][number][] = [
     { filename: `${x.accessKey}-procNFe.xml`, content: x.procNFe, contentType: 'application/xml' },
     { filename: `DANFE-${x.accessKey}.pdf`, content: Buffer.from(d.pdfBase64, 'base64'), contentType: 'application/pdf' },
   ]
   if (x.cancelEvent !== null) attachments.push({ filename: `${x.accessKey}-evt110111-proc.xml`, content: x.cancelEvent, contentType: 'application/xml' })
-  return { mail: { subject: subjectOf(config.subject, number), text: MAIL_BODY({ number, serie, accessKey: x.accessKey }), attachments }, accessKey: x.accessKey, number, serie, autoSend: config.autoSend }
+  return { mail: { subject: subjectOf(cfg.subject, number), text: MAIL_BODY({ number, serie, accessKey: x.accessKey }), attachments }, accessKey: x.accessKey, number, serie, autoSend: cfg.autoSend }
 }
 
 /** O teto de destinos do contrato. */
@@ -81,10 +81,12 @@ export type AutoMailResult = 'sent' | 'off' | 'no-recipient' | 'failed'
 export async function autoSendAfterAuthorization(ctx: AppContext, e: AuthorizedEvent, deps: Pick<ClientMailerDeps, 'createTransport'> & { recipients?: RecipientsReader } = {}): Promise<AutoMailResult> {
   try {
     const who = { institutionId: e.actor.institutionId, schemaName: e.actor.schemaName }
-    const composed = await composeInvoiceMail(ctx, who as InstitutionPayload, e.ref)
-    if (!composed.autoSend) return 'off'
+    // a ordem importa: opção e destino ANTES de compor — o DANFE (até 20 s numa nota longa) e a leitura dos arquivos só se gastam quando o e-mail vai de fato
+    const config = await readMailConfig(ctx.pool, who.schemaName, who.institutionId)
+    if (!config.autoSend) return 'off'
     const to = (await (deps.recipients ?? NO_CADASTRO_READER)(ctx, who, e.ref)).slice(0, MAX_RECIPIENTS)
     if (to.length === 0) { logger.info('E-mail automático da NF-e não enviado: sem destinatário no cadastro (a via manual segue valendo)', { accessKey: e.accessKey }); return 'no-recipient' }
+    const composed = await composeInvoiceMail(ctx, who as InstitutionPayload, e.ref, config)
     await sendThroughClientAccount({ pool: ctx.pool, keyring: ctx.keyring, createTransport: deps.createTransport }, e.actor.institutionId, { ...composed.mail, to })
     return 'sent'
   } catch (err) {

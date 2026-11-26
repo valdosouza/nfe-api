@@ -27,6 +27,8 @@ export const NfeErrors = Object.freeze({
   VOID_REJECTED:             'FISCAL_VOID_REJECTED',
   /** NFE.E6.P4: o arquivo fiscal que a tentativa diz ter (procNFe) não está no armazenamento — defeito de operação, nunca refeito (N10). */
   FILE_MISSING:              'FISCAL_FILE_MISSING',
+  /** NFE.E6.P4: o destinatário não tem e-mail no cadastro (grupo nfe ou principal) e o pedido não trouxe `to`. */
+  RECIPIENT_EMAIL_MISSING:   'FISCAL_RECIPIENT_EMAIL_MISSING',
 } as const)
 
 /** Motivo (dentro de `fields[].message`) do que o builder do 1º release não escreve — nunca XML incompleto. */

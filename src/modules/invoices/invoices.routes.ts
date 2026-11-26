@@ -2,7 +2,8 @@ import { Router } from 'express'
 import { route, sendOk, institutionOf, invoiceRef, WEB_TERMINAL, type InstitutionPayload, type InvoiceRef } from 'fiscal-api'
 import type { AppContext } from '../../context'
 import { parseWith } from '../validate'
-import { cancelDto, pendingQueryDto } from './invoices.dto'
+import { sendInvoiceEmail } from '../../mail/invoice-mail'
+import { cancelDto, emailDto, pendingQueryDto } from './invoices.dto'
 import { contractedBranches, parseInvoiceId, requireBranchInterface, requireBranchPrivilege } from '../guards'
 import * as service from './invoices.service'
 
@@ -68,6 +69,15 @@ export function invoicesRoutes(ctx: AppContext): Router {
     const ref = webRefOf(inst, req.params.invoiceId)
     await requireBranchInterface(ctx, inst, ref)                                // leitura do arquivo: o contrato não nomeia privilégio (S-14)
     sendOk(res, await service.danfe(ctx, inst, ref))
+  }))
+
+  // o botão de envio (D-NE261 via manual): ato explícito de quem TRANSMITE (envia o documento fiscal pela conta do estabelecimento — o contrato não nomeia o verbo, S-14); o corpo é opcional
+  router.post('/:invoiceId/email', route('POST /v1/nfe/invoices/:invoiceId/email', async (req, res) => {
+    const inst = institutionOf(req)
+    const ref = webRefOf(inst, req.params.invoiceId)
+    await requireBranchPrivilege(ctx, inst, ref, 'TRANSMITIR')
+    const body = parseWith(emailDto, req.body)
+    sendOk(res, await sendInvoiceEmail(ctx, inst, ref, body.to))
   }))
 
   router.post('/:invoiceId/cancel', route('POST /v1/nfe/invoices/:invoiceId/cancel', async (req, res) => {

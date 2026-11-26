@@ -4,6 +4,8 @@ import type { AppContext } from '../../context'
 import { requireAdmin } from '../guards'
 import { parseWith } from '../validate'
 import { issuerDto, certificateDto } from './emitter.dto'
+import { smtpCredentialDto } from './smtp-credential.dto'
+import * as smtp from './smtp-credential.service'
 import * as service from './emitter.service'
 
 /**
@@ -27,6 +29,22 @@ export function emitterRoutes(ctx: AppContext): Router {
   router.delete('/certificate', route('DELETE /v1/emitter/certificate', async (req, res) => {
     const inst = institutionOf(req); requireAdmin(inst)
     sendOk(res, await service.removeCertificate(ctx, inst))
+  }))
+
+  // a conta de envio de e-mail (D-NE236; S-2): a senha é write-only — o GET devolve só a situação, o PUT e o DELETE devolvem a situação; 422 `SMTP_CREDENTIAL_INVALID` vem do núcleo
+  router.get('/smtp-credential', route('GET /v1/emitter/smtp-credential', async (req, res) => {
+    const inst = institutionOf(req); requireAdmin(inst)
+    sendOk(res, await smtp.getSendingAccountStatus(ctx, inst))
+  }))
+
+  router.put('/smtp-credential', route('PUT /v1/emitter/smtp-credential', async (req, res) => {
+    const inst = institutionOf(req); requireAdmin(inst)
+    sendOk(res, await smtp.saveSendingAccount(ctx, inst, parseWith(smtpCredentialDto, req.body)))
+  }))
+
+  router.delete('/smtp-credential', route('DELETE /v1/emitter/smtp-credential', async (req, res) => {
+    const inst = institutionOf(req); requireAdmin(inst)
+    sendOk(res, await smtp.removeSendingAccount(ctx, inst))
   }))
 
   router.put('/issuers/:model', route('PUT /v1/emitter/issuers/:model', async (req, res) => {

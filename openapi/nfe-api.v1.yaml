@@ -140,6 +140,77 @@ paths:
         '409': { $ref: '#/components/responses/Conflict' }
         '503': { $ref: '#/components/responses/SessionUnavailable' }
 
+  /v1/emitter/smtp-credential:
+    get:
+      tags: [emitente]
+      summary: Situação da conta de envio de e-mail do estabelecimento — NUNCA a senha (D-NE236; núcleo 5.3.0)
+      description: 'Admin. Diz se há conta e os dados claros dela (servidor, porta, segurança, usuário, remetente); a situação nunca diz que a conta funciona — o teste de conexão é de quem envia.'
+      responses:
+        '200':
+          description: situação
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  ok: { type: boolean }
+                  data: { $ref: '#/components/schemas/SmtpCredentialStatus' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+    put:
+      tags: [emitente]
+      summary: Grava a conta de envio de e-mail (cria, troca ou revive) — a senha é write-only
+      description: >-
+        Admin. UMA conta por estabelecimento, a do CONTRIBUINTE (D-NE236): o e-mail da NF-e ao destinatário sai por ela. A senha é cifrada pelo cofre (chave-mestra, AAD da linha) e nunca volta — nem nesta
+        resposta, nem na situação, nem em log. Não existe segurança "sem cifra": `tls` (TLS implícito) ou `starttls` (exigido). A porta é dado da conta (nunca derivada da segurança).
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [host, port, security, username, senderAddress, password]
+              additionalProperties: false
+              properties:
+                host:          { type: string, maxLength: 255 }
+                port:          { type: integer, minimum: 1, maximum: 65535 }
+                security:      { type: string, enum: [tls, starttls] }
+                username:      { type: string, maxLength: 255 }
+                senderAddress: { type: string, maxLength: 254, description: 'o endereço que a conta usa como remetente' }
+                password:      { type: string, maxLength: 512, description: 'write-only' }
+      responses:
+        '200':
+          description: conta gravada (situação, sem a senha)
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  ok: { type: boolean }
+                  data: { $ref: '#/components/schemas/SmtpCredentialStatus' }
+        '400': { $ref: '#/components/responses/Invalid' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '415': { $ref: '#/components/responses/UnsupportedMediaType' }
+        '422': { $ref: '#/components/responses/Unprocessable' }   # SMTP_CREDENTIAL_INVALID, com os campos
+        '503': { $ref: '#/components/responses/MasterKeyUnavailable' }
+    delete:
+      tags: [emitente]
+      summary: Apaga a conta de envio de e-mail (a cifra vira NULL)
+      description: 'Admin. Devolve a situação depois (`configured` falso).'
+      responses:
+        '200':
+          description: situação depois de apagar
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  ok: { type: boolean }
+                  data: { $ref: '#/components/schemas/SmtpCredentialStatus' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+
   /v1/emitter/issuers/{model}:
     parameters:
       - name: model
@@ -483,10 +554,13 @@ paths:
   /v1/nfe/invoices/{invoiceId}/email:
     parameters: [ { $ref: '#/components/parameters/InvoiceId' } ]
     post:
-      x-onda: NE-5   # D-NE166: entra com a NE-5 — ciclo da NF-e (reserva, builder, consulta, cancelamento, inutilização, DANFE/e-mail, numeração); não servida na NE-2 (sem stub 501)
       tags: [nfe]
       summary: Envia ao destinatário o XML da VOZ (procNFe, e o procEventoNFe se cancelada) + o DANFE — ato explícito (D-E10/D-NE23/D-NE53)
-      description: Destinatário e cópias lidos do ERP (configs da interface billing); assunto/corpo = config com modelo padrão. Nunca automático (D-F5).
+      description: >-
+        O botão de envio — a VIA MANUAL da D-NE261 (a automática, depois da autorização, usa a mesma composição e o mesmo destinatário). Privilégio TRANSMITIR do ramo (o ato envia o documento fiscal pela conta do
+        estabelecimento). Anexa o XML da VOZ com protocolo (`procNFe`, e o `procEventoNFe` se cancelada) e o DANFE em PDF (D-NE53, RF-NFE-43). Sai pela conta de e-mail do ESTABELECIMENTO, guardada no núcleo
+        (D-NE236); assunto = configuração `nfe_email_subject` da empresa (com `{number}`) e corpo = texto padrão fixo (D-NE264). Destino: o `to` do pedido (até 5) ou, sem ele, os e-mails do destinatário
+        no cadastro (grupo nfe; sem nenhum, o principal). Falha do e-mail NUNCA desfaz a nota.
       requestBody:
         content:
           application/json:
@@ -495,12 +569,28 @@ paths:
               properties:
                 to: { type: array, maxItems: 5, items: { type: string, format: email }, description: 'opcional — sem ele, o e-mail do destinatário no cadastro' }
       responses:
-        '200': { description: enviado }
+        '200':
+          description: enviado
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  ok: { type: boolean }
+                  data:
+                    type: object
+                    properties:
+                      accessKey: { type: string }
+                      to: { type: array, items: { type: string, format: email } }
+                      messageId: { type: string, nullable: true }
         '400': { $ref: '#/components/responses/Invalid' }
         '403': { $ref: '#/components/responses/Forbidden' }
         '404': { $ref: '#/components/responses/NotFound' }
-        '409': { $ref: '#/components/responses/Conflict' }        # FISCAL_NOT_AUTHORIZED (não há procNFe)
+        '409': { $ref: '#/components/responses/Conflict' }        # FISCAL_NOT_AUTHORIZED (não há procNFe) · FISCAL_FILE_MISSING · SMTP_CREDENTIAL_MISSING (a conta de envio não foi cadastrada) · SMTP_CREDENTIAL_UNREADABLE
+        '415': { $ref: '#/components/responses/UnsupportedMediaType' }
         '422': { $ref: '#/components/responses/Unprocessable' }   # FISCAL_RECIPIENT_EMAIL_MISSING
+        '502': { $ref: '#/components/responses/AuthorityAmbiguous' }   # FISCAL_EMAIL_SEND_FAILED — o servidor de e-mail do estabelecimento recusou ou não respondeu (o corpo traz só o código técnico)
+        '503': { $ref: '#/components/responses/MasterKeyUnavailable' }
 
   /v1/nfe/refresh:
     post:
@@ -865,6 +955,17 @@ components:
         reason: { type: string, enum: [registrada-agora, ja-registrada, nao-e-217, recibo-em-aberto, voz-mudou-depois-da-pergunta, tentativa-fechada, peca-recusou] }
         detail: { type: string, description: 'com `peca-recusou`: a razão que a peça notRegisteredProven do núcleo devolveu (nada foi gravado)' }
         refresh: { allOf: [ { $ref: '#/components/schemas/RefreshResult' } ], nullable: true, description: 'a resposta do fisco quando NÃO foi o 217' }
+    SmtpCredentialStatus:
+      type: object
+      description: 'a conta de envio de e-mail do estabelecimento — NUNCA a senha'
+      properties:
+        configured:    { type: boolean }
+        host:          { type: string, nullable: true }
+        port:          { type: integer, nullable: true }
+        security:      { type: string, nullable: true, enum: [tls, starttls] }
+        username:      { type: string, nullable: true }
+        senderAddress: { type: string, nullable: true }
+        updatedAt:     { type: string, nullable: true, format: date-time }
     CancelResult:
       type: object
       properties:

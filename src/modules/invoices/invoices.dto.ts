@@ -13,3 +13,9 @@ export const pendingQueryDto = z.object({
   interfaceKey: z.enum(['orders', 'order-returns']).optional(),
 })
 export type PendingQueryDto = z.infer<typeof pendingQueryDto>
+
+/** `POST …/email`: o destino é opcional (sem ele, o e-mail do destinatário no cadastro); até 5 (contrato). `strict()`: campo a mais é 400. */
+export const emailDto = z.object({
+  to: z.array(z.string().email().max(254)).min(1).max(5).optional(),
+}).strict()
+export type EmailDto = z.infer<typeof emailDto>

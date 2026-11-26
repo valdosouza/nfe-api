@@ -138,7 +138,7 @@ describe('DEPLOY.E1.P13 — a partida confere a sonda da 009 (cerca do `server.t
   })
 })
 
-describe('DEPLOY.E1.P13 — a nfe-api ainda não lê nem grava a credencial SMTP (é da NFE.E6.P4)', () => {
+describe('DEPLOY.E1.P13 → NFE.E6.P4 — só DOIS arquivos nomeados usam a credencial SMTP, cada um só as peças dele', () => {
   // Gate adversarial (MEDIUM 2): a lista sai do PACOTE INSTALADO — todo export com "smtp" no nome (menos a sonda do boot) entra sozinho, mais o acesso
   // genérico ao cofre (`SEALED_STORES` e os donos, que abrem qualquer segredo) e a rotação (que é da nfse-api); mais a tabela da 009 e os métodos do
   // dono do cofre (`.readSealedForUpdate(`, `.rewrap(`). Limite aceito (como na P11): acesso por elemento montado (`core['SEALED' + '_STORES']`) não é visto por texto.
@@ -148,14 +148,47 @@ describe('DEPLOY.E1.P13 — a nfe-api ainda não lê nem grava a credencial SMTP
   const FORBIDDEN = new RegExp(`\\b(${[...NAMES, 'tb_establishment_smtp_credential'].join('|')})\\b|\\.(readSealedForUpdate|rewrap)\\s*\\(`)
   const TESTS_DIR = path.join(SRC, '__tests__')
 
-  it('nenhum arquivo de código ou SQL em `src/` (fora de `src/__tests__`) nem em `scripts/` usa a peça, o cofre ou cita a tabela', () => {
-    const users = (dir: string): string[] => !fs.existsSync(dir) ? [] : fs.readdirSync(dir, { withFileTypes: true }).flatMap(e => {
-      const full = path.join(dir, e.name)
-      if (e.isDirectory()) return full === TESTS_DIR || e.name === 'node_modules' ? [] : users(full)
-      if (!/\.(ts|tsx|mts|cts|js|mjs|cjs|sql)$/.test(e.name)) return []
-      return FORBIDDEN.test(fs.readFileSync(full, 'utf8')) ? [path.relative(ROOT, full)] : []
-    })
-    expect([...users(SRC), ...users(path.join(ROOT, 'scripts'))]).toEqual([])
+  // NFE.E6.P4 (mudança 6): o cadastro (rota do emitente) GRAVA, LÊ a situação e APAGA; o envio ABRE a senha para UM e-mail. Cada arquivo nomeado ganha SÓ as peças dele — o resto da lista
+  // (o cofre, a rotação, a cifra, a tabela, os métodos do dono do cofre) segue proibido em TODO arquivo, inclusive nesses dois.
+  const ALLOWED_USERS: Readonly<Record<string, readonly string[]>> = Object.freeze({
+    'src/modules/emitter/smtp-credential.service.ts': ['storeSmtpCredential', 'smtpCredentialStatus', 'clearSmtpCredential'],
+    'src/mail/client-mailer.ts': ['openSmtpCredential'],
+  })
+  const forbiddenFor = (rel: string): RegExp => {
+    const mine = new Set(ALLOWED_USERS[rel] ?? [])
+    return new RegExp(`\\b(${[...NAMES.filter(n => !mine.has(n)), 'tb_establishment_smtp_credential'].join('|')})\\b|\\.(readSealedForUpdate|rewrap)\\s*\\(`)
+  }
+  const usersOf = (dir: string): string[] => !fs.existsSync(dir) ? [] : fs.readdirSync(dir, { withFileTypes: true }).flatMap(e => {
+    const full = path.join(dir, e.name)
+    if (e.isDirectory()) return full === TESTS_DIR || e.name === 'node_modules' ? [] : usersOf(full)
+    if (!/\.(ts|tsx|mts|cts|js|mjs|cjs|sql)$/.test(e.name)) return []
+    const rel = path.relative(ROOT, full).split(path.sep).join('/')
+    return forbiddenFor(rel).test(fs.readFileSync(full, 'utf8')) ? [rel] : []
+  })
+
+  it('nenhum arquivo de código ou SQL em `src/` (fora de `src/__tests__`) nem em `scripts/` usa a peça, o cofre ou cita a tabela — salvo os dois nomeados, cada um só nas peças dele', () => {
+    expect([...usersOf(SRC), ...usersOf(path.join(ROOT, 'scripts'))]).toEqual([])
+  })
+
+  it('os dois arquivos nomeados existem (a exceção não é letra morta) e cada um usa a peça dele', () => {
+    for (const [rel, names] of Object.entries(ALLOWED_USERS)) {
+      const full = path.join(ROOT, rel)
+      expect([rel, fs.existsSync(full)]).toEqual([rel, true])
+      const text = fs.readFileSync(full, 'utf8')
+      for (const n of names) expect([rel, n, new RegExp(`\\b${n}\\b`).test(text)]).toEqual([rel, n, true])
+    }
+  })
+
+  it('a exceção é estreita: o arquivo nomeado NÃO pode abrir a senha de outra forma (o mutante cai), e o outro nomeado não usa a peça do vizinho', () => {
+    const mailer = forbiddenFor('src/mail/client-mailer.ts')
+    expect(mailer.test('x openSmtpCredential(')).toBe(false)                                  // a peça dele
+    for (const text of ['storeSmtpCredential(', 'clearSmtpCredential(', 'SEALED_STORES.find(', 'store.readSealedForUpdate(conn, 1)', 'FROM tb_establishment_smtp_credential', 'rotateStoredKeys(', 'smtpCredentialAad(1)']) {
+      expect([text, mailer.test(text)]).toEqual([text, true])
+    }
+    const cadastro = forbiddenFor('src/modules/emitter/smtp-credential.service.ts')
+    expect(cadastro.test('storeSmtpCredential(')).toBe(false)
+    expect(cadastro.test('openSmtpCredential(')).toBe(true)                                   // o cadastro nunca abre a senha
+    expect(forbiddenFor('src/modules/outro.ts').test('storeSmtpCredential(')).toBe(true)      // qualquer outro arquivo: tudo proibido
   })
 
   it('a lista não é vazia: os nomes do 5.3.0 estão nela e o padrão reconhece cada forma', () => {

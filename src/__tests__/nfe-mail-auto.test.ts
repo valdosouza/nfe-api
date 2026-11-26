@@ -143,7 +143,7 @@ describe('o alerta de pendência crítica ao suporte (D-NE237, S-10)', () => {
   it('os pontos de pendência crítica das rotas avisam o suporte: transmit, refresh, reconfirm e a passada do rodízio', () => {
     const read = (p: string): string => fs.readFileSync(path.join(__dirname, '..', p), 'utf8')
     const inv = read('modules/invoices/invoices.service.ts')
-    for (const route of ['transmit', 'refresh', 'reconfirm']) expect(inv).toContain(`reportIncident(ctx, { route: '${route}'`)
+    for (const route of ['invoice-transmit', 'invoice-refresh', 'invoice-reconfirm']) expect(inv).toContain(`reportIncident(ctx, { route: '${route}'`)
     expect(read('modules/operations/operations.service.ts')).toContain("reportIncident(ctx, { route: 'refresh-all'")
   })
 

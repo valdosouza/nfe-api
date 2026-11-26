@@ -183,7 +183,6 @@ paths:
 
   /v1/nfe/invoices/pending:
     get:
-      x-onda: NE-5   # D-NE166: entra com a NE-5 — ciclo da NF-e (reserva, builder, consulta, cancelamento, inutilização, DANFE/e-mail, numeração); não servida na NE-2 (sem stub 501)
       tags: [nfe]
       summary: Notas de mercadoria faturadas sem NF-e viva, autorizada ou denegada — PAGINADO (o lote é do APP)
       description: >-
@@ -505,7 +504,6 @@ paths:
 
   /v1/nfe/refresh:
     post:
-      x-onda: NE-5   # D-NE166: entra com a NE-5 — ciclo da NF-e (reserva, builder, consulta, cancelamento, inutilização, DANFE/e-mail, numeração); não servida na NE-2 (sem stub 501)
       tags: [nfe]
       summary: Uma passada da consulta ativa do estabelecimento — SÓ as vivas/ambíguas (autorizadas só sob demanda — D-NE26)
       description: >-
@@ -537,7 +535,6 @@ paths:
 
   /v1/nfe/numbering:
     get:
-      x-onda: NE-5   # D-NE166: entra com a NE-5 — ciclo da NF-e (reserva, builder, consulta, cancelamento, inutilização, DANFE/e-mail, numeração); não servida na NE-2 (sem stub 501)
       tags: [numeração]
       summary: Numeração do 55 por série — números usados pelo ERP, BURACOS derivados e faixas inutilizadas (D-NE8)
       description: >-
@@ -562,7 +559,6 @@ paths:
 
   /v1/nfe/voids:
     get:
-      x-onda: NE-5   # D-NE166: entra com a NE-5 — ciclo da NF-e (reserva, builder, consulta, cancelamento, inutilização, DANFE/e-mail, numeração); não servida na NE-2 (sem stub 501)
       tags: [numeração]
       summary: Pedidos de inutilização do estabelecimento — PAGINADO
       parameters:
@@ -584,7 +580,6 @@ paths:
         '400': { $ref: '#/components/responses/Invalid' }
         '403': { $ref: '#/components/responses/Forbidden' }
     post:
-      x-onda: NE-5   # D-NE166: entra com a NE-5 — ciclo da NF-e (reserva, builder, consulta, cancelamento, inutilização, DANFE/e-mail, numeração); não servida na NE-2 (sem stub 501)
       tags: [numeração]
       summary: Inutiliza uma faixa de números do 55 (ato sobre a NUMERAÇÃO, nunca sobre uma nota — D-E/§3.6, D-NE8/D-NE40)
       description: >-
@@ -931,3 +926,4 @@ components:
         authorityCode: { type: string, nullable: true, pattern: '^[0-9]{3,4}$', description: '102 homologada · 563 confirmada (prova do pedido anterior) · 256/201/203… rejeitada' }
         protocol: { type: string, nullable: true }
         dh: { type: string, nullable: true }
+        incident: { type: string, enum: [file-conflict], description: 'só no 201 do pedido: o ProcInutNFe em conflito de gravação única — pendência crítica (a faixa foi homologada)' }

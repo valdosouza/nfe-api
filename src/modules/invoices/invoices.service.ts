@@ -1,4 +1,4 @@
-import { ErrorCodes, HttpError, InstitutionPayload, InvoiceRef, MERCHANDISE_VOICE_READING, erp, fiscalStateOf, localCancelPendingIn, toZoneWall } from 'fiscal-api'
+import { ErrorCodes, HttpError, InstitutionPayload, InvoiceRef, MERCHANDISE_VOICE_READING, WEB_TERMINAL, erp, fiscalStateOf, localCancelPendingIn, toZoneWall } from 'fiscal-api'
 import type { AppContext } from '../../context'
 import { cancelDeadlineHours } from '../../authority/cancel-deadlines'
 import { ufOfCode } from '../../authority/messages'
@@ -6,6 +6,7 @@ import { cancelInvoice, type CancelResult } from '../../nfe/cancellation'
 import { renderDanfe } from '../../nfe/danfe/danfe'
 import { NfeErrors } from '../../nfe/errors'
 import { readCancelProc, readProcNfe } from '../../nfe/invoice-files'
+import { listPending } from '../../nfe/pending'
 import { attemptsOfLife, latestAttempt, voicesOfLife, type AttemptRow } from '../../nfe/attempt'
 import { merchandiseFileKey } from '../../nfe/fiscal-file'
 import { reconfirmNotRegistered, refreshInvoice, type ReconfirmResult, type RefreshResult } from '../../nfe/reconcile'
@@ -112,6 +113,11 @@ export async function danfe(ctx: AppContext, inst: InstitutionPayload, ref: Invo
   if (procNfeXml === null) throw new HttpError(409, `O procNFe de ${latest.accessKey} não está no arquivo fiscal — avise o suporte (o DANFE sai do arquivo autorizado)`, [{ field: 'file', message: `${latest.accessKey}-procNFe.xml` }], NfeErrors.FILE_MISSING)
   const pdf = await renderDanfe({ procNfeXml, voice: latest.lastKind as never })
   return { accessKey: latest.accessKey, pdfBase64: pdf.toString('base64') }
+}
+
+/** A lista `pending` (leitura por lote em `src/nfe/pending.ts`); o terminal da web só existe na borda. */
+export async function pending(ctx: AppContext, inst: InstitutionPayload, page: { page: number; pageSize: number }, allowed: readonly ('orders' | 'order-returns')[]) {
+  return listPending(ctx.pool, inst.schemaName, { institutionId: inst.institutionId, terminal: WEB_TERMINAL }, { ...page, allowed })
 }
 
 const STATE_OF_NONE = 'none' as const

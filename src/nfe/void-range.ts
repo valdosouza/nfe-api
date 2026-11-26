@@ -290,6 +290,12 @@ export interface VoidListItem {
   readonly state: 'in_flight' | 'homologated' | 'rejected'; readonly authorityCode: string | null; readonly protocol: string | null; readonly dh: string | null
 }
 
+const voidItemOf = (r: any): VoidListItem => ({
+  id: Number(r.id), environment: r.environment as Environment, serie: Number(r.serie), year: Number(r.year), from: Number(r.nFrom), to: Number(r.nTo), reason: String(r.reason), voidId: String(r.voidId),
+  state: r.authorityCode == null ? 'in_flight' : r.withdrawn === 'S' ? 'homologated' : 'rejected',
+  authorityCode: r.authorityCode == null ? null : String(r.authorityCode), protocol: r.protocol == null ? null : String(r.protocol), dh: r.dh == null ? null : String(r.dh),
+})
+
 /** Do mais novo ao mais antigo (id decrescente). `total` ao lado da página; só o estabelecimento e o modelo 55 (a numeração do 55 é a desta API). */
 export async function listVoids(q: Queryable, institutionId: number, page: number, pageSize: number): Promise<{ total: number; items: VoidListItem[] }> {
   const [count] = await q.query(`SELECT COUNT(*) AS n FROM ${NUMBER_VOID_TABLE} WHERE tb_institution_id = ? AND model = '55' AND deleted = 'N'`, [institutionId])
@@ -298,10 +304,16 @@ export async function listVoids(q: Queryable, institutionId: number, page: numbe
             protocol, withdrawn, DATE_FORMAT(dh_recbto, '%Y-%m-%d %H:%i:%s') AS dh
        FROM ${NUMBER_VOID_TABLE} WHERE tb_institution_id = ? AND model = '55' AND deleted = 'N' ORDER BY id DESC LIMIT ? OFFSET ?`,
     [institutionId, pageSize, (page - 1) * pageSize])
-  const items = (Array.isArray(rows) ? rows : []).map((r: any): VoidListItem => ({
-    id: Number(r.id), environment: r.environment as Environment, serie: Number(r.serie), year: Number(r.year), from: Number(r.nFrom), to: Number(r.nTo), reason: String(r.reason), voidId: String(r.voidId),
-    state: r.authorityCode == null ? 'in_flight' : r.withdrawn === 'S' ? 'homologated' : 'rejected',
-    authorityCode: r.authorityCode == null ? null : String(r.authorityCode), protocol: r.protocol == null ? null : String(r.protocol), dh: r.dh == null ? null : String(r.dh),
-  }))
+  const items = (Array.isArray(rows) ? rows : []).map(voidItemOf)
   return { total: Number((count as any[])[0]?.n ?? 0), items }
+}
+
+/** Um pedido pelo id (a resposta do `POST /v1/nfe/voids` devolve o pedido inteiro, como a listagem). */
+export async function findVoidItem(q: Queryable, institutionId: number, id: number): Promise<VoidListItem | null> {
+  const [rows] = await q.query(
+    `SELECT id, environment, serie, 2000 + CAST(SUBSTRING(void_id, 5, 2) AS UNSIGNED) AS year, number_from AS nFrom, number_to AS nTo, reason, void_id AS voidId, authority_code AS authorityCode,
+            protocol, withdrawn, DATE_FORMAT(dh_recbto, '%Y-%m-%d %H:%i:%s') AS dh
+       FROM ${NUMBER_VOID_TABLE} WHERE tb_institution_id = ? AND model = '55' AND deleted = 'N' AND id = ?`, [institutionId, id])
+  const r = Array.isArray(rows) ? (rows as any[])[0] : null
+  return r ? voidItemOf(r) : null
 }

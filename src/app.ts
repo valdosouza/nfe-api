@@ -9,6 +9,7 @@ import { healthHandler } from './health'
 import { KeyProof } from './key-proof'
 import { emitterRoutes } from './modules/emitter/emitter.routes'
 import { invoicesRoutes } from './modules/invoices/invoices.routes'
+import { operationsRoutes } from './modules/operations/operations.routes'
 
 /**
  * Contrato DESIGN-FIRST (D-F8): o YAML é a fonte; servido em /docs e /v1/openapi.yaml. D-NE166 (NE-2): a nfe-api serve só `GET /v1/health`
@@ -47,7 +48,8 @@ export function createApp(ctx: AppContext, keyProof: KeyProof = new KeyProof(ctx
     ? (p, iat) => access.liveIdentity(ctx.pool, p, iat)
     : undefined)
   app.use('/v1/emitter', auth, emitterRoutes(ctx))
-  app.use('/v1/nfe/invoices', auth, invoicesRoutes(ctx))                // NFE.E6.P1: situação, transmitir, consultar e reconfirmar (o resto do ciclo é da NE-5 que segue)
+  app.use('/v1/nfe/invoices', auth, invoicesRoutes(ctx))
+  app.use('/v1/nfe', auth, operationsRoutes(ctx))                       // NFE.E6.P4: a passada do rodízio, a numeração e a inutilização do estabelecimento                // NFE.E6.P1: situação, transmitir, consultar e reconfirmar (o resto do ciclo é da NE-5 que segue)
 
   app.use((_req, res) => { res.status(404).json({ error: 'Rota não encontrada', code: 'NOT_FOUND' }) })
   app.use(errorMiddleware)

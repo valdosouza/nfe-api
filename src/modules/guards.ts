@@ -48,3 +48,22 @@ export function parseInvoiceId(raw: string): number {
   }
   return id
 }
+
+/** Os ramos da NF-e 55 (a nota de serviço é da nfse-api): pedido (`orders`) e devolução (`order-returns`) — D-F14/D-F37. */
+export const NFE_BRANCH_KEYS = ['orders', 'order-returns'] as const
+export type NfeBranchKey = typeof NFE_BRANCH_KEYS[number]
+
+/** Das duas interfaces de ramo, as CONTRATADAS (licença; o super vê todas) — a lista `pending` só mostra notas desses ramos (nenhum = vazia). */
+export async function contractedBranches(ctx: AppContext, inst: InstitutionPayload): Promise<NfeBranchKey[]> {
+  return (await access.reachableKeys(ctx.pool, inst, [...NFE_BRANCH_KEYS])) as NfeBranchKey[]
+}
+
+/**
+ * Ato do ESTABELECIMENTO sem nota na mão (a passada do rodízio — contrato `POST /v1/nfe/refresh`): o verbo pelo NOME em QUALQUER dos ramos da NF-e (Q-G16: a ação vale pelo verbo em qualquer interface da
+ * lista). Mesma ordem do diagnóstico de `requireBranchPrivilege`: ramo não contratado × sem privilégio.
+ */
+export async function requireAnyBranchPrivilege(ctx: AppContext, inst: InstitutionPayload, privilege: access.PrivilegeName): Promise<void> {
+  const verdict = await access.accessVerdict(ctx.pool, inst, [...NFE_BRANCH_KEYS], privilege)
+  if (verdict === 'not-contracted') throw new HttpError(403, 'Nenhum ramo da NF-e contratado para este estabelecimento', undefined, ErrorCodes.INTERFACE_NOT_ALLOWED)
+  if (verdict === 'no-privilege') throw new HttpError(403, 'Privilégio necessário para esta ação em algum ramo da NF-e', undefined, ErrorCodes.PRIVILEGE_REQUIRED)
+}

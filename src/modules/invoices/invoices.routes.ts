@@ -2,8 +2,8 @@ import { Router } from 'express'
 import { route, sendOk, institutionOf, invoiceRef, WEB_TERMINAL, type InstitutionPayload, type InvoiceRef } from 'fiscal-api'
 import type { AppContext } from '../../context'
 import { parseWith } from '../validate'
-import { cancelDto } from './invoices.dto'
-import { parseInvoiceId, requireBranchInterface, requireBranchPrivilege } from '../guards'
+import { cancelDto, pendingQueryDto } from './invoices.dto'
+import { contractedBranches, parseInvoiceId, requireBranchInterface, requireBranchPrivilege } from '../guards'
 import * as service from './invoices.service'
 
 /**
@@ -15,6 +15,17 @@ const webRefOf = (inst: InstitutionPayload, raw: string): InvoiceRef => invoiceR
 
 export function invoicesRoutes(ctx: AppContext): Router {
   const router = Router()
+
+  // a lista ANTES da rota `/:invoiceId` (senão `pending` seria lido como id): as notas faturadas sem NF-e viva, só dos ramos CONTRATADOS (nenhum = vazia — D-F14/D-F37); o filtro do ramo pedido
+  // vale dentro do que está contratado
+  router.get('/pending', route('GET /v1/nfe/invoices/pending', async (req, res) => {
+    const inst = institutionOf(req)
+    const { interfaceKey, ...page } = parseWith(pendingQueryDto, req.query)
+    const contracted = await contractedBranches(ctx, inst)
+    const allowed = interfaceKey ? contracted.filter(k => k === interfaceKey) : contracted
+    const r = await service.pending(ctx, inst, page, allowed)
+    res.status(200).json({ ok: true, page: page.page, pageSize: page.pageSize, total: r.total, data: r.items })      // envelope paginado da casa
+  }))
 
   router.get('/:invoiceId', route('GET /v1/nfe/invoices/:invoiceId', async (req, res) => {
     const inst = institutionOf(req)

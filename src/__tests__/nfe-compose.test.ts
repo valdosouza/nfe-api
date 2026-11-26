@@ -51,7 +51,7 @@ const links = [
 ]
 
 function setup(opts: { isReturn?: boolean; items?: ReturnType<typeof item>[]; authorized?: boolean; lastKind?: string; withProc?: boolean;
-  dtEmission?: string; originKey?: string; originProc?: string; totalValue?: string; itemSimples?: ComposeReaders['readItemSimples'] } = {}) {
+  dtEmission?: string; originKey?: string; originProc?: string; totalValue?: string; itemSimples?: ComposeReaders['readItemSimples']; crt?: string } = {}) {
   const originKey = opts.originKey ?? ORIGIN_KEY
   const y2027 = (opts.dtEmission ?? '') >= '2027-01-01'
   const db = new MemDb()
@@ -70,14 +70,14 @@ function setup(opts: { isReturn?: boolean; items?: ReturnType<typeof item>[]; au
       ...(opts.dtEmission ? { dtEmission: opts.dtEmission } : {}) }),
     listItems: async (_q, _s, ref) => [...(ref.invoiceId === 4000 ? originItems : opts.items ?? (isReturn ? [returned(1, 910, '1.0000', '1500.000000'), returned(2, 930, '3.0000', '333.333333')] : sources().items))],
     readNature: async () => ({ cfopId: isReturn ? '1201' : '5101', operationNature: isReturn ? 'Devolução de venda de produção do estabelecimento' : 'Venda de produção do estabelecimento' }),
-    readEmitter: async () => emitter, readRecipient: async () => recipient,
+    readEmitter: async () => (opts.crt ? { ...emitter, tax: { ...(emitter.tax as NonNullable<typeof emitter.tax>), crt: opts.crt } } : emitter), readRecipient: async () => recipient,
     readPayments: async () => (y2027 ? PAYMENTS_2027 : sources().payments), readShipping: async () => sources().shipping,
     readReturnOrigins: async () => (isReturn ? links : []),
     invoiceLife: async () => ({ lifeEvent: 1 }), institutionZone: async () => 'America/Sao_Paulo',
     readItemSimples: opts.itemSimples ?? (async () => SIMPLES_FACTS),
   }
   const compose = () => readComposedFacts(db as never, { storage: storage as never, techResponsible: TECH, readers }, ACTOR, REF, 'H')
-  return { db, storage, compose }
+  return { db, storage, compose, readers }
 }
 const refused = async (p: Promise<unknown>) => p.then(() => ({ status: 0, code: '', fields: [] as string[] }), (e: any) => ({ status: e.statusCode as number, code: e.code as string, fields: (e.fields ?? []).map((f: any) => `${f.field}: ${f.message}`) }))
 
@@ -159,11 +159,41 @@ describe('NFE.E5.P7 — o Simples de 2027 na composição (D-NE286, D-NE288, D-N
     expect(spy).not.toHaveBeenCalled()
   })
 
+  it('a fronteira: 31/12/2026 não lê; 01/01/2027 lê e o XML leva o grupo (gate adversarial, M1)', async () => {
+    const before = jest.fn(async () => SIMPLES_FACTS)
+    await setup({ dtEmission: '2026-12-31', itemSimples: before }).compose()
+    expect(before).not.toHaveBeenCalled()
+    const at = jest.fn(async () => SIMPLES_FACTS.map(f => ({ ...f, competence: '2027-01' })))
+    const f = await setup({ dtEmission: '2027-01-01', itemSimples: at }).compose()
+    expect(at).toHaveBeenCalledTimes(1)
+    expect(buildNfeXml(f.buildInput({ dhEmi: '2027-01-01T10:15:30-03:00', csrt: null }), saleKey({ emissionDate: '2027-01-01' })).xml).toMatch(/<gTribSN>/)
+  })
+
+  it('emitente fora do Simples (CRT 3) em 2027: nenhuma leitura do IBS/CBS do Simples (gate adversarial, LOW)', async () => {
+    const spy = jest.fn(async () => SIMPLES_FACTS)
+    await setup({ dtEmission: '2027-01-15', crt: '3', itemSimples: spy }).compose().catch(() => undefined)
+    expect(spy).not.toHaveBeenCalled()
+  })
+
+  it('data de emissão fora da forma: nenhuma leitura nova (o texto "null" não passa como 2027)', async () => {
+    const spy = jest.fn(async () => SIMPLES_FACTS)
+    await setup({ dtEmission: 'null', itemSimples: spy }).compose().catch(() => undefined)
+    expect(spy).not.toHaveBeenCalled()
+  })
+
   it('devolução de 2027 de uma origem de 2027: o grupo e a chave saem do MESMO procNFe arquivado (uma leitura do arquivo)', async () => {
     const t = setup({ isReturn: true, dtEmission: '2027-01-20', originKey: KEY_2027, originProc: PROC_2027, totalValue: '4000.00',
       items: [returned(1, 910, '2.0000', '1500.000000'), returned(2, 930, '3.0000', '333.333333')] })
     const read = jest.spyOn(t.storage, 'read')
-    const f = await t.compose()
+    const sim = jest.spyOn(rr, 'readOriginSimples')
+    const key = jest.spyOn(rr, 'originKeyOf')
+    const itemSimples = jest.fn(async () => SIMPLES_FACTS)
+    let f: Awaited<ReturnType<typeof t.compose>>
+    try {
+      f = await readComposedFacts(t.db as never, { storage: t.storage as never, techResponsible: TECH, readers: { ...t.readers, readItemSimples: itemSimples } }, ACTOR, REF, 'H')
+      expect([sim.mock.calls.length, key.mock.calls.length]).toEqual([1, 1])                 // o controle positivo dos espiões de 2026
+      expect(itemSimples).not.toHaveBeenCalled()                                              // a devolução não lê o faturamento
+    } finally { sim.mockRestore(); key.mockRestore() }
     expect(read).toHaveBeenCalledTimes(1)
     const input = f.buildInput({ dhEmi: '2027-01-20T09:00:00-03:00', csrt: null })
     // o grupo copiado da origem: as alíquotas voltam do XML com 2 casas (0.10), o mesmo número que o faturamento congelou (0.1000)
@@ -180,6 +210,20 @@ describe('NFE.E5.P7 — o Simples de 2027 na composição (D-NE286, D-NE288, D-N
       items: [returned(1, 910, '2.0000', '1500.000000'), returned(2, 930, '3.0000', '333.333333')] }).compose())
     expect([r.status, r.code]).toEqual([422, 'FISCAL_RETURN_REFERENCE_MISMATCH'])
     expect(r.fields.join(' ')).toMatch(/a chave do procNFe arquivado não é a da tentativa autorizada da origem/)
+  })
+
+  it('devolução de 2027: a conferência contra a origem continua rodando (código do produto trocado → 422, gate socrático M1)', async () => {
+    const r = await refused(setup({ isReturn: true, dtEmission: '2027-01-20', originKey: KEY_2027, originProc: PROC_2027, totalValue: '4000.00',
+      items: [returned(1, 999, '2.0000', '1500.000000'), returned(2, 930, '3.0000', '333.333333')] }).compose())
+    expect([r.status, r.code]).toEqual([422, 'FISCAL_RETURN_REFERENCE_MISMATCH'])
+  })
+
+  it('devolução de 2026 com o procNFe de OUTRA nota arquivado sob a chave da tentativa: a recusa de hoje, pela conferência (gate adversarial, M2)', async () => {
+    const other = saleKey({ number: 99 })
+    const wrong = procOf(signNfe(buildNfeXml(saleInput(), other)), other)
+    const r = await refused(setup({ isReturn: true, originProc: wrong }).compose())
+    expect([r.status, r.code]).toEqual([422, 'FISCAL_RETURN_REFERENCE_MISMATCH'])
+    expect(r.fields.join(' ')).toMatch(/O item referencia outra nota de origem/)
   })
 
   it('devolução de 2027 de uma origem de 2026 (sem o grupo): a nota sai sem o grupo (D-NE289); devolução parcial permitida', async () => {

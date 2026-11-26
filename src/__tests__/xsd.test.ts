@@ -174,7 +174,7 @@ describe('os retornos do evento e da inutilização (NFE.E6.P2 mudança 1)', () 
 })
 
 describe('NFe — o conjunto é o PL_010h (NFE.E5.P6, D-NE285): o total do Simples exige vBCIBSCBS', () => {
-  // O grupo do Simples só passa a ser escrito pelo builder na mudança 3; aqui o XSD é provado com o `IBSCBSTot` escrito à mão.
+  // Aqui o XSD é provado com o `IBSCBSTot` escrito à mão; o builder que escreve o grupo é provado em nfe-ibscbs-2027.test.ts e no lote abaixo.
   const sale = () => buildNfeXml(saleInput({ dhEmi: '2026-11-24T10:15:30-03:00', installments: [{ dueDate: '2026-12-22', cents: 400000 }] }), saleKey({ emissionDate: '2026-11-24' }))
   const withTotal = (inner: string) => { const b = sale(); return signNfe({ ...b, xml: b.xml.replace('</ICMSTot>', `</ICMSTot><IBSCBSTot>${inner}</IBSCBSTot>`) }) }
   const GROUP = '<gTribSN><vIBSSN>4.00</vIBSSN><vCBSSN>36.00</vCBSSN></gTribSN>'

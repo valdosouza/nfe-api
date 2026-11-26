@@ -67,8 +67,10 @@ export async function readComposedFacts(q: Queryable, env: ComposeEnv, actor: Nf
     payments: await r.readPayments(q, schema, ref), shipping: await r.readShipping(q, schema, ref), returnOrigins, techResponsible: env.techResponsible,
   }
   // Simples de 2027 (S1): a condição da ponte, pela data do faturamento e o CRT do emitente
-  const simples2027 = header.dtEmission >= IBSCBS_SIMPLES_FROM && emitter.tax?.crt === '1'
-  if (simples2027) base.simples = await r.readItemSimples(q, schema, ref)
+  // a data na forma AAAA-MM-DD antes da comparação (um `dt_emission` nulo vira o texto 'null', que passaria no >=) — como a ponte e o `dhEmiOf`
+  const simples2027 = /^\d{4}-\d{2}-\d{2}$/.test(header.dtEmission) && header.dtEmission >= IBSCBS_SIMPLES_FROM && emitter.tax?.crt === '1'
+  // só a VENDA lê o que o faturamento congelou; a devolução tira o grupo do XML da origem (D-NE288)
+  if (simples2027 && returnOrigins.length === 0) base.simples = await r.readItemSimples(q, schema, ref)
 
   // devolução: as notas de origem, cada uma com a chave AUTORIZADA, a numeração dos itens dela e o procNFe arquivado conferido contra os itens devolvidos
   let origins: Map<string, { accessKey: string; numbering: ItemNumbering; simples?: ReadonlyMap<number, OriginItemSimples> }> | undefined

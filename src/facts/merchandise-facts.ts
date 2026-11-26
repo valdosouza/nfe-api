@@ -50,7 +50,11 @@ export interface MerchandiseInvoiceHeader {
   serie:      string | null
   model:      string | null
   dtEmission: string
-  /** O instante em que o faturamento criou a nota, em UTC ('AAAA-MM-DD HH:MM:SS' — PADROES_BANCO §10.1); a HORA do `dhEmi` (D-NE284). */
+  /**
+   * O instante do faturamento da VIDA ATUAL da nota, em UTC ('AAAA-MM-DD HH:MM:SS' — PADROES_BANCO §10.1): o `created_at` do evento E da vida
+   * (`vw_invoice_life.life_event` — D-F32), não o da `tb_invoice`, que fica com a hora do 1º faturamento quando a nota REVIVE na mesma linha
+   * (D-NE296, que ajusta a D-NE284). A HORA do `dhEmi`. Nulo = a nota não tem evento E (carga ou sincronização) — o `dhEmiOf` recusa (S-A).
+   */
   createdAt:  string | null
   entityId:   number
   status:     string
@@ -62,17 +66,23 @@ export interface MerchandiseInvoiceHeader {
 
 /**
  * Nota emitida POR ESTE estabelecimento, viva, com o ramo de mercadoria. Não achou → 404 `INVOICE_NOT_FOUND`; sem ramo → 422
- * `INVOICE_MERCHANDISE_BRANCH_MISSING`. Leitura fora de transação (a reserva confere de novo sob a trava — NE-5).
+ * `INVOICE_MERCHANDISE_BRANCH_MISSING`. Na transmissão roda DENTRO da reserva, depois da trava da habilitação (`transmission.ts`); o `GET` da
+ * situação a lê fora de transação. A vida da nota vem da view publicada `vw_invoice_life` (D-F32: uma verdade só), pelo mesmo `life_event` que a
+ * tentativa grava.
  */
 export async function readMerchandiseInvoice(q: Queryable, schemaName: string, ref: InvoiceRef): Promise<MerchandiseInvoiceHeader> {
   const s = assertSchema(schemaName)
   const [rows] = await q.query(
     `SELECT i.id, i.number, i.serie, i.model, DATE_FORMAT(i.dt_emission, '%Y-%m-%d') AS dtEmission,
-            DATE_FORMAT(i.created_at, '%Y-%m-%d %H:%i:%s') AS createdAt, i.tb_entity_id AS entityId, i.status,
+            DATE_FORMAT(le.created_at, '%Y-%m-%d %H:%i:%s') AS createdAt, i.tb_entity_id AS entityId, i.status,
             CONVERT(i.note USING utf8mb4) AS note, mb.id AS branchId, CAST(mb.total_value AS CHAR) AS totalValue, mb.indPres AS indPres
        FROM \`${s}\`.tb_invoice i
        LEFT JOIN \`${s}\`.tb_invoice_merchandise mb
          ON mb.id = i.id AND mb.tb_institution_id = i.tb_institution_id AND mb.terminal = i.terminal AND mb.deleted = 'N'
+       LEFT JOIN \`${s}\`.vw_invoice_life l
+         ON l.tb_invoice_id = i.id AND l.tb_institution_id = i.tb_institution_id AND l.terminal = i.terminal
+       LEFT JOIN \`${s}\`.tb_invoice_event le
+         ON le.tb_invoice_id = i.id AND le.tb_institution_id = i.tb_institution_id AND le.terminal = i.terminal AND le.event = l.life_event AND le.kind = 'E'
       WHERE i.id = ? AND i.tb_institution_id = ? AND i.terminal = ? AND i.deleted = 'N' AND i.issuer = i.tb_institution_id`,
     [ref.invoiceId, ref.institutionId, ref.terminal])
   const r = rows[0]

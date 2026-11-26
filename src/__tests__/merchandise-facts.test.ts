@@ -8,6 +8,7 @@ import {
   listMerchandiseItems, MerchandiseFactsErrors, readEmitter, readMerchandiseInvoice, readOperationNature, readPayments, readRecipient,
   readReturnOrigins, readShipping,
 } from '../facts/merchandise-facts'
+import { dhEmiOf } from '../nfe/dh-emi'
 
 type Row = Record<string, unknown>
 type Call = { sql: string; params: unknown[] }
@@ -65,8 +66,31 @@ describe('NFE.E5.P2.T1 — nota e ramo de mercadoria', () => {
     expect(db.calls[0].params).toEqual([5001, INST, TERMINAL])
     expect(db.calls[0].sql).toContain('`setes_cliente_x`.tb_invoice i')
     expect(db.calls[0].sql).toContain('i.issuer = i.tb_institution_id')
-    expect(db.calls[0].sql).toContain("DATE_FORMAT(i.created_at, '%Y-%m-%d %H:%i:%s') AS createdAt")   // a hora do dhEmi (D-NE284), em UTC e como texto exato
+    // a hora do dhEmi é a do evento E da VIDA ATUAL (D-NE296, ajusta a D-NE284), em UTC e como texto exato — nunca o `created_at` da linha da nota
+    const sql = db.calls[0].sql.replace(/\s+/g, ' ')
+    expect(sql).toContain("DATE_FORMAT(le.created_at, '%Y-%m-%d %H:%i:%s') AS createdAt")
+    expect(sql).not.toMatch(/\bi\.created_at\b/)
+    expect(sql).toContain('LEFT JOIN `setes_cliente_x`.vw_invoice_life l ON l.tb_invoice_id = i.id AND l.tb_institution_id = i.tb_institution_id AND l.terminal = i.terminal')
+    expect(sql).toContain("LEFT JOIN `setes_cliente_x`.tb_invoice_event le ON le.tb_invoice_id = i.id AND le.tb_institution_id = i.tb_institution_id AND le.terminal = i.terminal AND le.event = l.life_event AND le.kind = 'E'")
     expect(db.calls[0].sql).not.toMatch(/base_icms_value|icms_value|freight_value|ipi_value/)   // os outros totais do ramo NÃO são lidos (D-NE27)
+  })
+
+  it('D-NE296 — a nota que REVIVEU (faturada de novo depois do cancelamento) entrega a hora do evento E da vida nova', async () => {
+    // o caso do dev de 2026-11-26 (nota 8014): a linha da nota guarda 17/11 19:14:23 (1ª vida); o evento E da vida nova é 26/11 18:05:55
+    const db = fakeDb([['tb_invoice', [{ ...invoiceRow, dtEmission: '2026-11-26', createdAt: '2026-11-26 18:05:55' }]]])
+    const h = await readMerchandiseInvoice(db, SCHEMA, REF)
+    expect([h.dtEmission, h.createdAt]).toEqual(['2026-11-26', '2026-11-26 18:05:55'])
+    expect(db.calls[0].params).toEqual([5001, INST, TERMINAL])           // nenhum `?` novo: a vida vem por junção, não por parâmetro
+  })
+
+  it('S-A — nota sem evento E da vida (carga ou sincronização): `createdAt` nulo, e o dhEmi é recusado com a causa certa', async () => {
+    const db = fakeDb([['tb_invoice', [{ ...invoiceRow, createdAt: null }]]])
+    const h = await readMerchandiseInvoice(db, SCHEMA, REF)
+    expect(h.createdAt).toBeNull()
+    let err: any
+    try { dhEmiOf(h.dtEmission, h.createdAt, 'America/Sao_Paulo') } catch (e) { err = e }
+    expect(err?.statusCode).toBe(422)
+    expect(JSON.stringify(err?.fields)).toMatch(/evento de faturamento da vida da nota/)
   })
 
   it('nota inexistente ou de outro estabelecimento → 404 INVOICE_NOT_FOUND; sem ramo → 422 INVOICE_MERCHANDISE_BRANCH_MISSING', async () => {
@@ -431,7 +455,7 @@ describe('G3 [FIXED] — escopo e vida no texto do SQL das outras leituras (muta
     await readOperationNature(db, [{ itemId: 1, icms: { cfopId: '5101' } }] as any)
     const all = db.calls.map(c => norm(c.sql))
     const has = (frag: string) => expect(all.filter(sql => sql.includes(frag))).toHaveLength(1)
-    has("LEFT JOIN `setes_cliente_x`.tb_invoice_merchandise mb ON mb.id = i.id AND mb.tb_institution_id = i.tb_institution_id AND mb.terminal = i.terminal AND mb.deleted = 'N' WHERE i.id = ? AND i.tb_institution_id = ? AND i.terminal = ? AND i.deleted = 'N' AND i.issuer = i.tb_institution_id")
+    has("LEFT JOIN `setes_cliente_x`.tb_invoice_merchandise mb ON mb.id = i.id AND mb.tb_institution_id = i.tb_institution_id AND mb.terminal = i.terminal AND mb.deleted = 'N' LEFT JOIN `setes_cliente_x`.vw_invoice_life l ON l.tb_invoice_id = i.id AND l.tb_institution_id = i.tb_institution_id AND l.terminal = i.terminal LEFT JOIN `setes_cliente_x`.tb_invoice_event le ON le.tb_invoice_id = i.id AND le.tb_institution_id = i.tb_institution_id AND le.terminal = i.terminal AND le.event = l.life_event AND le.kind = 'E' WHERE i.id = ? AND i.tb_institution_id = ? AND i.terminal = ? AND i.deleted = 'N' AND i.issuer = i.tb_institution_id")
     has('CAST(mb.total_value AS CHAR) AS totalValue, mb.indPres AS indPres')
     has("LEFT JOIN setes_central.tb_payment_types pt ON pt.id = b.tb_payment_types_id WHERE b.id = ? AND b.tb_institution_id = ? AND b.terminal = ? AND b.deleted = 'N'")
     has("CAST(f.tag_value AS CHAR) AS value, f.tb_payment_types_id AS paymentTypeId, pt.id_nfce AS nfePaymentCode FROM `setes_cliente_x`.tb_financial f LEFT JOIN setes_central.tb_payment_types pt ON pt.id = f.tb_payment_types_id")

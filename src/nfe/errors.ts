@@ -25,6 +25,8 @@ export const NfeErrors = Object.freeze({
   VOID_IN_FLIGHT:            'FISCAL_VOID_IN_FLIGHT',
   /** NFE.E6.P2: o fisco rejeitou a inutilização (256, 241, 201…): história, a faixa não é retirada (D-NE207). */
   VOID_REJECTED:             'FISCAL_VOID_REJECTED',
+  /** NFE.E6.P4: o arquivo fiscal que a tentativa diz ter (procNFe) não está no armazenamento — defeito de operação, nunca refeito (N10). */
+  FILE_MISSING:              'FISCAL_FILE_MISSING',
 } as const)
 
 /** Motivo (dentro de `fields[].message`) do que o builder do 1º release não escreve — nunca XML incompleto. */

@@ -426,7 +426,6 @@ paths:
   /v1/nfe/invoices/{invoiceId}/xml:
     parameters: [ { $ref: '#/components/parameters/InvoiceId' } ]
     get:
-      x-onda: NE-5   # D-NE166: entra com a NE-5 — ciclo da NF-e (reserva, builder, consulta, cancelamento, inutilização, DANFE/e-mail, numeração); não servida na NE-2 (sem stub 501)
       tags: [nfe]
       summary: XML com protocolo (procNFe) da NF-e autorizada ou DENEGADA (D-NE35) — e o procEventoNFe do cancelamento, se houver
       responses:
@@ -447,11 +446,15 @@ paths:
         '400': { $ref: '#/components/responses/Invalid' }
         '403': { $ref: '#/components/responses/Forbidden' }
         '404': { $ref: '#/components/responses/NotFound' }
+        '409':
+          description: 'FISCAL_NOT_AUTHORIZED (não há NF-e registrada no fisco — sem protocolo, rejeitada ou nunca transmitida) · FISCAL_FILE_MISSING (o procNFe que a tentativa diz ter não está no arquivo fiscal; nunca refeito — N10)'
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
 
   /v1/nfe/invoices/{invoiceId}/danfe:
     parameters: [ { $ref: '#/components/parameters/InvoiceId' } ]
     get:
-      x-onda: NE-5   # D-NE166: entra com a NE-5 — ciclo da NF-e (reserva, builder, consulta, cancelamento, inutilização, DANFE/e-mail, numeração); não servida na NE-2 (sem stub 501)
       tags: [nfe]
       summary: DANFE A4 (PDF nosso, leiaute da NT 2026.010 — D-NE100); carimbo CANCELADA pela voz C (D-NE52); "SEM VALOR FISCAL" em H
       responses:
@@ -471,7 +474,12 @@ paths:
         '400': { $ref: '#/components/responses/Invalid' }
         '403': { $ref: '#/components/responses/Forbidden' }
         '404': { $ref: '#/components/responses/NotFound' }
-        '422': { $ref: '#/components/responses/Unprocessable' }   # FISCAL_DANFE_XML_UNREADABLE (molde D-NE89) — o XML segue pela rota dele
+        '409':
+          description: 'FISCAL_NOT_AUTHORIZED (sem autorização não há DANFE: rejeitada, em voo, denegada ou nunca transmitida — S-8 da ficha da P4) · FISCAL_FILE_MISSING (o procNFe não está no arquivo fiscal)'
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+        '422': { $ref: '#/components/responses/Unprocessable' }   # FISCAL_DOCUMENT_INVALID, campo procNfeXml (XML ilegível, sem protocolo ou fora do leiaute) — o XML segue pela rota dele
 
   /v1/nfe/invoices/{invoiceId}/email:
     parameters: [ { $ref: '#/components/parameters/InvoiceId' } ]

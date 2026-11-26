@@ -19,7 +19,7 @@ import type { TransmitResult } from '../nfe/transmission'
 import { FAKE_TECH } from './technical-responsible-fake'
 import { MemDb } from './nfe-memdb'
 
-jest.mock('../modules/invoices/invoices.service', () => ({ ...jest.requireActual('../modules/invoices/invoices.service'), transmit: jest.fn(), refresh: jest.fn(), reconfirm: jest.fn(), fiscalView: jest.fn(), cancel: jest.fn() }))
+jest.mock('../modules/invoices/invoices.service', () => ({ ...jest.requireActual('../modules/invoices/invoices.service'), transmit: jest.fn(), refresh: jest.fn(), reconfirm: jest.fn(), fiscalView: jest.fn(), cancel: jest.fn(), xml: jest.fn(), danfe: jest.fn() }))
 jest.mock('fiscal-api', () => {
   const actual = jest.requireActual('fiscal-api')
   return {
@@ -252,5 +252,75 @@ describe('fiscalView — localCancelPending e cancelDeadline (S2 da P2, NFE.E6.P
     expect((await view('C', 'E')).localCancelPending).toBe(true)
     expect((await view('C', 'C')).localCancelPending).toBe(false)
     expect((await view('A', 'E')).localCancelPending).toBe(false)
+  })
+})
+
+describe('GET …/xml e …/danfe (NFE.E6.P4 mudança 4) — código real, banco em memória e arquivo fiscal em mapa', () => {
+  const real = jest.requireActual('../modules/invoices/invoices.service') as typeof import('../modules/invoices/invoices.service')
+  const { authorizedProc } = jest.requireActual('./danfe-fixtures') as typeof import('./danfe-fixtures')
+  const inst = { institutionId: 98, userId: 7, schemaName: 'setes_x' } as any
+  const proc = authorizedProc()
+  const KEY = proc.key
+  /** O arquivo fiscal em mapa: o `find` acha pelo NOME (a chave de pasta e as dicas são do núcleo, provadas lá). */
+  const fakeStorage = (files: Record<string, string>) => ({ find: (_k: unknown, name: string) => (name in files ? name : null), read: (ref: string) => files[ref], probe: () => true, save: jest.fn() }) as never
+  function db(kind: string | null, protocol: string | null = '141260000012345') {
+    const m = new MemDb()
+    m.attempts.push({ attempt: 1, lifeEvent: 1, environment: 'H', authorizer: 'PR', accessKey: KEY, dhEmission: '2026-11-24 13:15:30', digestValue: 'A'.repeat(27) + '=', receipt: null, protocol, dhRecbto: protocol ? '2026-11-24 13:20:00' : null, lastQueriedAt: null, nfeNotRegisteredAt: null, createdAt: '2026-11-24 13:15:31' })
+    if (kind) m.events.push({ attempt: 1, event: 1, kind, authority_code: '100', message: 'ok', dh: '2026-11-24 13:20:00', source: 'P', createdAt: '2026-11-24 13:20:00' })
+    return m
+  }
+  const c = (m: MemDb, files: Record<string, string>) => ctx({ pool: m.connection() as never, storage: fakeStorage(files) })
+  beforeEach(() => { erpM.invoiceLife.mockResolvedValue({ invoiceId: 5001, lifeEvent: 1, lastKind: 'E' }); erpM.institutionZone.mockResolvedValue('America/Sao_Paulo') })
+
+  it('xml: autorizada devolve o procNFe guardado, sem cancelEvent; denegada também tem procNFe (D-NE35)', async () => {
+    const a = await real.xml(c(db('A'), { [`${KEY}-procNFe.xml`]: proc.xml }), inst, invoiceRef(98, 5001, 0))
+    expect(a).toEqual({ accessKey: KEY, procNFe: proc.xml, cancelEvent: null })
+    expect((await real.xml(c(db('D'), { [`${KEY}-procNFe.xml`]: proc.xml }), inst, invoiceRef(98, 5001, 0))).procNFe).toBe(proc.xml)
+  })
+
+  it('xml: cancelada devolve também o procEventoNFe — o registrado pode estar sob -r<k> (depois de N)', async () => {
+    const files = { [`${KEY}-procNFe.xml`]: proc.xml, [`${KEY}-evt110111-1-r2-proc.xml`]: '<procEventoNFe/>' }
+    expect((await real.xml(c(db('C'), files), inst, invoiceRef(98, 5001, 0))).cancelEvent).toBe('<procEventoNFe/>')
+  })
+
+  it('xml: sem tentativa, sem protocolo ou rejeitada = 409 FISCAL_NOT_AUTHORIZED; nota inexistente = 404; arquivo que falta = 409 FISCAL_FILE_MISSING (nunca refeito)', async () => {
+    for (const m of [new MemDb(), db(null, null), db('R', null)]) {
+      await expect(real.xml(c(m, {}), inst, invoiceRef(98, 5001, 0))).rejects.toMatchObject({ statusCode: 409, code: 'FISCAL_NOT_AUTHORIZED' })
+    }
+    await expect(real.xml(c(db('A'), {}), inst, invoiceRef(98, 5001, 0))).rejects.toMatchObject({ statusCode: 409, code: 'FISCAL_FILE_MISSING' })
+    erpM.invoiceLife.mockResolvedValue(null)
+    await expect(real.xml(c(db('A'), {}), inst, invoiceRef(98, 5001, 0))).rejects.toMatchObject({ statusCode: 404 })
+  })
+
+  it('danfe: autorizada devolve o PDF em base64 (começa por %PDF); cancelada também (com o carimbo, provado no danfe.test)', async () => {
+    const a = await real.danfe(c(db('A'), { [`${KEY}-procNFe.xml`]: proc.xml }), inst, invoiceRef(98, 5001, 0))
+    expect(a.accessKey).toBe(KEY)
+    expect(Buffer.from(a.pdfBase64, 'base64').subarray(0, 4).toString()).toBe('%PDF')
+    expect(Buffer.from((await real.danfe(c(db('C'), { [`${KEY}-procNFe.xml`]: proc.xml }), inst, invoiceRef(98, 5001, 0))).pdfBase64, 'base64').subarray(0, 4).toString()).toBe('%PDF')
+  })
+
+  it('danfe: nota rejeitada, em voo ou denegada = 409 FISCAL_NOT_AUTHORIZED (S-8); XML ilegível = 422 do renderDanfe', async () => {
+    for (const m of [db('R', null), db(null, null), db('D')]) {
+      await expect(real.danfe(c(m, { [`${KEY}-procNFe.xml`]: proc.xml }), inst, invoiceRef(98, 5001, 0))).rejects.toMatchObject({ statusCode: 409, code: 'FISCAL_NOT_AUTHORIZED' })
+    }
+    await expect(real.danfe(c(db('A'), { [`${KEY}-procNFe.xml`]: '<nfeProc/>' }), inst, invoiceRef(98, 5001, 0))).rejects.toMatchObject({ statusCode: 422, code: 'FISCAL_DOCUMENT_INVALID' })
+  })
+
+  it('a visão da nota diz danfeAvailable só com a voz que dá DANFE', async () => {
+    expect((await real.fiscalView(c(db('A'), {}), inst, invoiceRef(98, 5001, 0)) as any).danfeAvailable).toBe(true)
+    expect((await real.fiscalView(c(db('D'), {}), inst, invoiceRef(98, 5001, 0)) as any).danfeAvailable).toBe(false)
+    expect((await real.fiscalView(c(db(null, null), {}), inst, invoiceRef(98, 5001, 0)) as any).danfeAvailable).toBe(false)
+  })
+
+  it('as rotas: leitura exige só a interface do ramo ao alcance; o service recebe a referência inteira', async () => {
+    svc.xml.mockResolvedValue({ accessKey: KEY, procNFe: '<x/>', cancelEvent: null })
+    svc.danfe.mockResolvedValue({ accessKey: KEY, pdfBase64: 'JVBERg==' })
+    const a = await request(createApp(ctx())).get('/v1/nfe/invoices/5001/xml').set(A)
+    const b = await request(createApp(ctx())).get('/v1/nfe/invoices/5001/danfe').set(A)
+    expect([a.status, a.body.data.procNFe, b.status, b.body.data.pdfBase64]).toEqual([200, '<x/>', 200, 'JVBERg=='])
+    expect(accessM.reachableKeys).toHaveBeenCalledTimes(2)
+    expect(accessM.accessVerdict).not.toHaveBeenCalled()                                 // nenhum privilégio de ação: é leitura do arquivo (S-14)
+    accessM.reachableKeys.mockResolvedValueOnce([])
+    expect((await request(createApp(ctx())).get('/v1/nfe/invoices/5001/danfe').set(A)).body.code).toBe('INTERFACE_NOT_ALLOWED')
   })
 })

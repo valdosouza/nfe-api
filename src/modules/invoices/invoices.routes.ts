@@ -45,6 +45,20 @@ export function invoicesRoutes(ctx: AppContext): Router {
     sendOk(res, await service.reconfirm(ctx, inst, ref))
   }))
 
+  router.get('/:invoiceId/xml', route('GET /v1/nfe/invoices/:invoiceId/xml', async (req, res) => {
+    const inst = institutionOf(req)
+    const ref = webRefOf(inst, req.params.invoiceId)
+    await requireBranchInterface(ctx, inst, ref)
+    sendOk(res, await service.xml(ctx, inst, ref))
+  }))
+
+  router.get('/:invoiceId/danfe', route('GET /v1/nfe/invoices/:invoiceId/danfe', async (req, res) => {
+    const inst = institutionOf(req)
+    const ref = webRefOf(inst, req.params.invoiceId)
+    await requireBranchInterface(ctx, inst, ref)                                // leitura do arquivo: o contrato não nomeia privilégio (S-14)
+    sendOk(res, await service.danfe(ctx, inst, ref))
+  }))
+
   router.post('/:invoiceId/cancel', route('POST /v1/nfe/invoices/:invoiceId/cancel', async (req, res) => {
     const inst = institutionOf(req)
     const ref = webRefOf(inst, req.params.invoiceId)

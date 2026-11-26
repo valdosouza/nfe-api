@@ -254,8 +254,8 @@ describe('CERCA: contrato OpenAPI × rotas reais com as marcas `x-onda` (design-
     const routes = appRoutes(app)
     expect(routes).toEqual(expect.arrayContaining(['GET /v1/health', 'GET /v1/openapi.yaml', 'GET /v1/emitter', 'PUT /v1/emitter/certificate', 'DELETE /v1/emitter/certificate',
       'PUT /v1/emitter/issuers/{model}', 'DELETE /v1/emitter/issuers/{model}',
-      'GET /v1/nfe/invoices/{invoiceId}', 'POST /v1/nfe/invoices/{invoiceId}/transmit', 'POST /v1/nfe/invoices/{invoiceId}/refresh', 'POST /v1/nfe/invoices/{invoiceId}/reconfirm', 'POST /v1/nfe/invoices/{invoiceId}/cancel']))
-    expect(routes).toHaveLength(12)
+      'GET /v1/nfe/invoices/{invoiceId}', 'POST /v1/nfe/invoices/{invoiceId}/transmit', 'POST /v1/nfe/invoices/{invoiceId}/refresh', 'POST /v1/nfe/invoices/{invoiceId}/reconfirm', 'POST /v1/nfe/invoices/{invoiceId}/cancel', 'GET /v1/nfe/invoices/{invoiceId}/xml', 'GET /v1/nfe/invoices/{invoiceId}/danfe']))
+    expect(routes).toHaveLength(14)
     expect(mountedPrefixes(app)).toEqual(['/docs'])
     // a mesma enumeração que `fromRouter` fazia à mão, agora derivada do app
     const byHand = emitterRoutes(ctx()).stack.filter((l: any) => l.route).flatMap((l: any) => Object.keys(l.route.methods).map(m => `${m.toUpperCase()} /v1/emitter${l.route.path === '/' ? '' : l.route.path}`)).map(r => r.replace(/:(\w+)/g, '{$1}'))
@@ -281,8 +281,8 @@ describe('CERCA: contrato OpenAPI × rotas reais com as marcas `x-onda` (design-
     expect(expectedServed.filter(r => !implemented.has(r))).toEqual([])                   // nada do contrato sem marca fica sem rota
     expect([...marked.keys()].filter(r => implemented.has(r))).toEqual([])                // nada marcado está servido
     expect([...marked.values()].filter(v => !['NE-3', 'NE-5'].includes(v))).toEqual([])
-    expect(implemented.size).toBe(11)
-    expect(marked.size).toBe(8)
+    expect(implemented.size).toBe(13)
+    expect(marked.size).toBe(6)
     expect([...marked.keys()].every(r => r.includes('/v1/nfe/'))).toBe(true)
     // a meta-rota tolerada EXISTE no app (allowlist morta sai) e não está no contrato (se entrar, sai da allowlist)
     expect(appRoutes(createApp(ctx())).filter(r => META_ROUTES.has(r))).toEqual([...META_ROUTES])

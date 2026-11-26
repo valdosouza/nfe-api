@@ -3,6 +3,9 @@ import type { AppContext } from '../../context'
 import { cancelDeadlineHours } from '../../authority/cancel-deadlines'
 import { ufOfCode } from '../../authority/messages'
 import { cancelInvoice, type CancelResult } from '../../nfe/cancellation'
+import { renderDanfe } from '../../nfe/danfe/danfe'
+import { NfeErrors } from '../../nfe/errors'
+import { readCancelProc, readProcNfe } from '../../nfe/invoice-files'
 import { attemptsOfLife, latestAttempt, voicesOfLife, type AttemptRow } from '../../nfe/attempt'
 import { merchandiseFileKey } from '../../nfe/fiscal-file'
 import { reconfirmNotRegistered, refreshInvoice, type ReconfirmResult, type RefreshResult } from '../../nfe/reconcile'
@@ -74,6 +77,43 @@ export async function cancel(ctx: AppContext, inst: InstitutionPayload, ref: Inv
   return responseOfCancel(await cancelInvoice(nfeDepsOf(ctx), actorOf(inst), ref, reason))
 }
 
+/** As vozes de uma NF-e que o fisco REGISTROU como autorizada (a A, e o K/N/C do cancelamento dela) — o procNFe existe e o DANFE sai; denegada (D) tem procNFe mas não DANFE (S-8). */
+const AUTHORIZED_VOICES: ReadonlySet<string> = new Set(['A', 'K', 'N', 'C'])
+const WITH_PROC_VOICES: ReadonlySet<string> = new Set(['A', 'K', 'N', 'C', 'D'])
+
+const notAuthorized = (ref: InvoiceRef, why: string): HttpError => new HttpError(409, `Nota ${ref.invoiceId}: ${why}`, undefined, ErrorCodes.FISCAL_NOT_AUTHORIZED)
+
+/** A última tentativa da vida vigente com a voz que dá direito ao arquivo: sem tentativa, sem voz ou fora de [allowed] = 409 `FISCAL_NOT_AUTHORIZED`. A zona do estabelecimento vem junto (a chave do arquivo). */
+async function fileScope(ctx: AppContext, inst: InstitutionPayload, ref: InvoiceRef, allowed: ReadonlySet<string>, what: string): Promise<{ latest: AttemptRow; zone: string }> {
+  const life = await erp.invoiceLife(ctx.pool, inst.schemaName, ref)
+  if (!life) throw new HttpError(404, `Nota ${ref.invoiceId} não encontrada`, undefined, ErrorCodes.INVOICE_NOT_FOUND)
+  const latest = life.lifeEvent === null ? null : await latestAttempt(ctx.pool, ref, life.lifeEvent)
+  if (!latest || latest.protocol === null || latest.lastKind === null || !allowed.has(latest.lastKind)) throw notAuthorized(ref, `não há NF-e registrada no fisco — ${what}`)
+  return { latest, zone: await erp.institutionZone(ctx.pool, inst.schemaName, inst.institutionId) }
+}
+
+export interface XmlResponse { accessKey: string; procNFe: string; cancelEvent: string | null }
+
+/** O XML com protocolo (`procNFe`) da NF-e autorizada ou denegada e, se cancelada, o `procEventoNFe`; arquivo que a tentativa diz ter e não está lá = 409 `FISCAL_FILE_MISSING` (nunca refeito — N10). */
+export async function xml(ctx: AppContext, inst: InstitutionPayload, ref: InvoiceRef): Promise<XmlResponse> {
+  const { latest, zone } = await fileScope(ctx, inst, ref, WITH_PROC_VOICES, 'não há procNFe')
+  const now = new Date()
+  const procNFe = readProcNfe(ctx.storage, zone, latest, now)
+  if (procNFe === null) throw new HttpError(409, `O procNFe de ${latest.accessKey} não está no arquivo fiscal — avise o suporte (o arquivo autorizado nunca é refeito)`, [{ field: 'file', message: `${latest.accessKey}-procNFe.xml` }], NfeErrors.FILE_MISSING)
+  return { accessKey: latest.accessKey, procNFe, cancelEvent: latest.lastKind === 'C' ? readCancelProc(ctx.storage, zone, latest, now) : null }
+}
+
+export interface DanfeResponse { accessKey: string; pdfBase64: string }
+
+/** O DANFE A4 (PDF nosso — NT 2026.010) da NF-e autorizada, com o carimbo CANCELADA pela voz C; nota sem autorização = 409 `FISCAL_NOT_AUTHORIZED` (S-8); XML ilegível = 422 do `renderDanfe`. */
+export async function danfe(ctx: AppContext, inst: InstitutionPayload, ref: InvoiceRef): Promise<DanfeResponse> {
+  const { latest, zone } = await fileScope(ctx, inst, ref, AUTHORIZED_VOICES, 'sem autorização não há DANFE')
+  const procNfeXml = readProcNfe(ctx.storage, zone, latest, new Date())
+  if (procNfeXml === null) throw new HttpError(409, `O procNFe de ${latest.accessKey} não está no arquivo fiscal — avise o suporte (o DANFE sai do arquivo autorizado)`, [{ field: 'file', message: `${latest.accessKey}-procNFe.xml` }], NfeErrors.FILE_MISSING)
+  const pdf = await renderDanfe({ procNfeXml, voice: latest.lastKind as never })
+  return { accessKey: latest.accessKey, pdfBase64: pdf.toString('base64') }
+}
+
 const STATE_OF_NONE = 'none' as const
 
 /**
@@ -115,6 +155,6 @@ export async function fiscalView(ctx: AppContext, inst: InstitutionPayload, ref:
     localCancelPending: localCancelPendingIn(MERCHANDISE_VOICE_READING, latest ? { lastKind: latest.lastKind, lastCode: latest.lastCode } : null, life.lastKind),
     cancelDeadline: latest ? deadlineOf(latest, zone) : null,
     xmlAvailable: !!(latest && key && ctx.storage.find(key, `${latest.accessKey}-nfe.xml`, [latest.dhEmission]) !== null),
-    danfeAvailable: false,
+    danfeAvailable: !!(latest && latest.protocol !== null && latest.lastKind !== null && AUTHORIZED_VOICES.has(latest.lastKind)),
   }
 }

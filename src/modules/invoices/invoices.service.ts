@@ -1,5 +1,8 @@
-import { ErrorCodes, HttpError, InstitutionPayload, InvoiceRef, erp, fiscalStateOf, toZoneWall } from 'fiscal-api'
+import { ErrorCodes, HttpError, InstitutionPayload, InvoiceRef, MERCHANDISE_VOICE_READING, erp, fiscalStateOf, localCancelPendingIn, toZoneWall } from 'fiscal-api'
 import type { AppContext } from '../../context'
+import { cancelDeadlineHours } from '../../authority/cancel-deadlines'
+import { ufOfCode } from '../../authority/messages'
+import { cancelInvoice, type CancelResult } from '../../nfe/cancellation'
 import { attemptsOfLife, latestAttempt, voicesOfLife, type AttemptRow } from '../../nfe/attempt'
 import { merchandiseFileKey } from '../../nfe/fiscal-file'
 import { reconfirmNotRegistered, refreshInvoice, type ReconfirmResult, type RefreshResult } from '../../nfe/reconcile'
@@ -57,7 +60,34 @@ export async function reconfirm(ctx: AppContext, inst: InstitutionPayload, ref: 
   return { invoiceId: r.invoiceId, attempt: r.attempt, accessKey: r.accessKey, recorded: r.recorded, reason: r.reason, ...(r.detail ? { detail: r.detail } : {}), refresh: r.refresh ? responseOfRefresh(r.refresh) : null }
 }
 
+/** O pedido de cancelamento ao fisco (NFE.E6.P4 mudança 3): 200 com o resultado; o ambíguo (o K fica) é 502 com a saída "consultar a chave"; o que o SERVIÇO recusou (656…) é 503. */
+export interface CancelResponse { invoiceId: number; attempt: number; atAuthority: boolean; state: CancelResult['state']; eventSequence: number | null; protocol: string | null; warnings: readonly string[]; nextStep: CancelResult['nextStep']; incident: CancelResult['incident'] }
+
+export function responseOfCancel(r: CancelResult): CancelResponse {
+  const fields = [{ field: 'attempt', message: String(r.attempt) }, { field: 'next', message: r.nextStep }, ...(r.incident ? [{ field: 'incident', message: r.incident }] : [])]
+  if (r.state === 'in-flight' && r.refusedCStat) throw new HttpError(503, `O serviço do fisco recusou o pedido (${r.refusedCStat}) — o cancelamento ficou em voo: consulte a chave antes de tentar de novo`, [...fields, { field: 'authorityCode', message: r.refusedCStat }], ErrorCodes.FISCAL_AUTHORITY_UNAVAILABLE)
+  if (r.state === 'in-flight') throw new HttpError(502, 'O fisco não concluiu o cancelamento: o pedido ficou em voo — consulte a situação pela nossa chave', fields, ErrorCodes.FISCAL_AUTHORITY_UNKNOWN_RESPONSE)
+  return { invoiceId: r.invoiceId, attempt: r.attempt, atAuthority: r.atAuthority, state: r.state, eventSequence: r.eventSequence, protocol: r.protocol, warnings: r.warnings, nextStep: r.nextStep, incident: r.incident }
+}
+
+export async function cancel(ctx: AppContext, inst: InstitutionPayload, ref: InvoiceRef, reason: string): Promise<CancelResponse> {
+  return responseOfCancel(await cancelInvoice(nfeDepsOf(ctx), actorOf(inst), ref, reason))
+}
+
 const STATE_OF_NONE = 'none' as const
+
+/**
+ * O fim do prazo de cancelamento da UF (AVISO — a recusa é da SEFAZ; a única trava é a das 480 h, `cancellation.ts`): a hora da autorização (`dh_recbto`, UTC) + o prazo DADO da UF do emitente (`cancel-deadlines.ts`, nunca um
+ * `if (uf === …)`), na zona do estabelecimento. Só da tentativa AUTORIZADA (voz A com protocolo e hora gravados); outra coisa = null.
+ */
+function cancelDeadlineWall(a: AttemptRow, zone: string): string | null {
+  if (a.lastKind !== 'A' || a.protocol === null || a.dhRecbto === null) return null
+  const uf = ufOfCode(a.accessKey.slice(0, 2))
+  const at = Date.parse(`${a.dhRecbto.replace(' ', 'T')}Z`)
+  if (uf === null || Number.isNaN(at)) return null
+  const end = new Date(at + cancelDeadlineHours(uf, new Date(at)) * 3_600_000).toISOString().slice(0, 19).replace('T', ' ')
+  return toZoneWall(end, zone)
+}
 
 /** A situação fiscal da nota na VIDA vigente: as tentativas, as vozes e o estado derivado da última voz. Instantes na zona do estabelecimento (Q-TZ1). */
 export async function fiscalView(ctx: AppContext, inst: InstitutionPayload, ref: InvoiceRef): Promise<Record<string, unknown>> {
@@ -68,6 +98,7 @@ export async function fiscalView(ctx: AppContext, inst: InstitutionPayload, ref:
   const voices = lifeEvent === null ? [] : await voicesOfLife(ctx.pool, ref, lifeEvent)
   const zone = await erp.institutionZone(ctx.pool, inst.schemaName, inst.institutionId)
   const wall = (v: string | null): string | null => (v ? toZoneWall(v, zone) : null)
+  const deadlineOf = (a: AttemptRow, z: string): string | null => cancelDeadlineWall(a, z)
   const latest = attempts[attempts.length - 1] ?? (lifeEvent === null ? null : await latestAttempt(ctx.pool, ref, lifeEvent))
   const key = latest ? merchandiseFileKey({ cnpj: latest.accessKey.slice(6, 20), model: '55', serie: latest.serie, environment: latest.environment, zone }) : null
   return {
@@ -80,7 +111,9 @@ export async function fiscalView(ctx: AppContext, inst: InstitutionPayload, ref:
     })),
     voices: voices.map(v => ({ ...v, dh: wall(v.dh) })),
     documentEvents: [],
-    localCancelPending: false, cancelDeadline: null,
+    // D-F28 (a pendência é DERIVADA, nada é gravado): a vigente tem voz C — ou D, nota denegada, cujo cancelamento é local (D-NE280) — e a nota no ERP ainda não tem o evento C
+    localCancelPending: localCancelPendingIn(MERCHANDISE_VOICE_READING, latest ? { lastKind: latest.lastKind, lastCode: latest.lastCode } : null, life.lastKind),
+    cancelDeadline: latest ? deadlineOf(latest, zone) : null,
     xmlAvailable: !!(latest && key && ctx.storage.find(key, `${latest.accessKey}-nfe.xml`, [latest.dhEmission]) !== null),
     danfeAvailable: false,
   }

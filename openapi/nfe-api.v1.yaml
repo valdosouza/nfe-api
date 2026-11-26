@@ -374,7 +374,6 @@ paths:
   /v1/nfe/invoices/{invoiceId}/cancel:
     parameters: [ { $ref: '#/components/parameters/InvoiceId' } ]
     post:
-      x-onda: NE-5   # D-NE166: entra com a NE-5 — ciclo da NF-e (reserva, builder, consulta, cancelamento, inutilização, DANFE/e-mail, numeração); não servida na NE-2 (sem stub 501)
       tags: [nfe]
       summary: Pede ao fisco o cancelamento da NF-e autorizada (evento 110111, 1 evento por envio — D-NE39)
       description: >-
@@ -871,8 +870,10 @@ components:
         atAuthority: { type: boolean, description: 'false = a voz C já existia (idempotente)' }
         eventSequence: { type: integer }
         protocol: { type: string, nullable: true }
+        state: { type: string, enum: [cancelled, already-cancelled], description: 'o pedido em voo (ambíguo ou recusado pelo serviço) não chega aqui: é 502/503 com `next: consult-key` e a tentativa fica com o K até a consulta' }
         warnings: { type: array, items: { type: string } }
-        nextStep: { type: string, enum: [apply-local-cancel] }
+        nextStep: { type: string, enum: [apply-local-cancel], description: 'o ERP aplica o C local (D-F28)' }
+        incident: { type: string, nullable: true, enum: [file-conflict], description: 'pendência crítica: o evento guardado ou o procEvento em conflito de gravação única' }
     RefreshRunReport:
       type: object
       properties:

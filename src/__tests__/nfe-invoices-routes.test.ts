@@ -19,7 +19,7 @@ import type { TransmitResult } from '../nfe/transmission'
 import { FAKE_TECH } from './technical-responsible-fake'
 import { MemDb } from './nfe-memdb'
 
-jest.mock('../modules/invoices/invoices.service', () => ({ ...jest.requireActual('../modules/invoices/invoices.service'), transmit: jest.fn(), refresh: jest.fn(), reconfirm: jest.fn(), fiscalView: jest.fn() }))
+jest.mock('../modules/invoices/invoices.service', () => ({ ...jest.requireActual('../modules/invoices/invoices.service'), transmit: jest.fn(), refresh: jest.fn(), reconfirm: jest.fn(), fiscalView: jest.fn(), cancel: jest.fn() }))
 jest.mock('fiscal-api', () => {
   const actual = jest.requireActual('fiscal-api')
   return {
@@ -184,5 +184,73 @@ describe('a leitura da situação (código real, banco em memória)', () => {
     expect([v.state, v.transmissions, v.currentAttempt]).toEqual(['none', [], null])
     erpM.invoiceLife.mockResolvedValue(null)
     await expect(real.fiscalView(ctx({ pool: seeded().connection() as never }), inst, invoiceRef(98, 5001, 0))).rejects.toMatchObject({ statusCode: 404 })
+  })
+})
+
+describe('POST /v1/nfe/invoices/{id}/cancel (NFE.E6.P4 mudança 3)', () => {
+  const real = jest.requireActual('../modules/invoices/invoices.service') as typeof import('../modules/invoices/invoices.service')
+  const thrown = (fn: () => unknown): any => { try { fn() } catch (e) { return e } return null }
+  const reason = 'Cancelamento por erro de digitação'
+  const result: any = { invoiceId: 5001, attempt: 1, atAuthority: true, state: 'cancelled', eventSequence: 1, protocol: '141260000000009', warnings: [], nextStep: 'apply-local-cancel', incident: null, refusedCStat: null }
+
+  it('200 no envelope {ok,data}, com o privilégio CANCELAR na interface do ramo e o motivo repassado', async () => {
+    svc.cancel.mockResolvedValueOnce(real.responseOfCancel(result))
+    const r = await request(createApp(ctx())).post('/v1/nfe/invoices/5001/cancel').set(A).send({ reason })
+    expect([r.status, r.body.ok, r.body.data.state, r.body.data.protocol]).toEqual([200, true, 'cancelled', '141260000000009'])
+    expect(accessM.accessVerdict.mock.calls[0].slice(2)).toEqual([['orders'], 'CANCELAR'])
+    expect(svc.cancel.mock.calls[0][3]).toBe(reason)
+    expect(r.body.data).not.toHaveProperty('refusedCStat')                              // detalhe de disjuntor não vai ao cliente
+  })
+
+  it('sem o privilégio = 403 e o service nem é chamado; motivo curto, ausente ou campo a mais = 400 VALIDATION_FAILED', async () => {
+    accessM.accessVerdict.mockResolvedValueOnce('no-privilege')
+    const a = await request(createApp(ctx())).post('/v1/nfe/invoices/5001/cancel').set(A).send({ reason })
+    expect([a.status, a.body.code]).toEqual([403, 'PRIVILEGE_REQUIRED'])
+    for (const body of [{ reason: 'curto' }, {}, { reason, extra: 1 }, { reason: 'x'.repeat(256) }]) {
+      const b = await request(createApp(ctx())).post('/v1/nfe/invoices/5001/cancel').set(A).send(body)
+      expect([b.status, b.body.code]).toEqual([400, 'VALIDATION_FAILED'])
+    }
+    expect(svc.cancel).not.toHaveBeenCalled()
+  })
+
+  it('o mapa: já cancelada é 200 (idempotente); o pedido em voo é 502 com a saída "consult-key"; o 656 do serviço é 503', () => {
+    expect(real.responseOfCancel({ ...result, atAuthority: false, state: 'already-cancelled' }).atAuthority).toBe(false)
+    const e = thrown(() => real.responseOfCancel({ ...result, atAuthority: false, state: 'in-flight', nextStep: 'consult-key', protocol: null, eventSequence: null }))
+    expect([e.statusCode, e.code, e.fields.find((f: any) => f.field === 'next').message]).toEqual([502, 'FISCAL_AUTHORITY_UNKNOWN_RESPONSE', 'consult-key'])
+    const u = thrown(() => real.responseOfCancel({ ...result, atAuthority: false, state: 'in-flight', nextStep: 'consult-key', refusedCStat: '656' }))
+    expect([u.statusCode, u.code, u.fields.find((f: any) => f.field === 'authorityCode').message]).toEqual([503, 'FISCAL_AUTHORITY_UNAVAILABLE', '656'])
+  })
+})
+
+describe('fiscalView — localCancelPending e cancelDeadline (S2 da P2, NFE.E6.P4 mudança 3)', () => {
+  const real = jest.requireActual('../modules/invoices/invoices.service') as typeof import('../modules/invoices/invoices.service')
+  const KEY = '41261107742094000113550010000000151514710954'
+  const inst = { institutionId: 98, userId: 7, schemaName: 'setes_x' } as any
+  function seeded(kind: string | null, withAuthority = true) {
+    const db = new MemDb()
+    db.attempts.push({ attempt: 1, lifeEvent: 1, environment: 'H', authorizer: 'PR', accessKey: KEY, dhEmission: '2026-11-24 13:15:30', digestValue: 'A'.repeat(27) + '=', receipt: null, protocol: withAuthority ? '141260000000001' : null, dhRecbto: withAuthority ? '2026-11-24 13:20:00' : null, lastQueriedAt: null, nfeNotRegisteredAt: null, createdAt: '2026-11-24 13:15:31' } as never)
+    if (kind) db.events.push({ attempt: 1, event: 1, kind, authority_code: '100', message: 'ok', dh: '2026-11-24 13:20:00', source: 'P', createdAt: '2026-11-24 13:20:00' } as never)
+    return db
+  }
+  const view = async (kind: string | null, lastKind: string | null, withAuthority = true): Promise<any> => {
+    erpM.invoiceLife.mockResolvedValue({ invoiceId: 5001, lifeEvent: 1, lastKind }); erpM.institutionZone.mockResolvedValue('America/Sao_Paulo')
+    return real.fiscalView(ctx({ pool: seeded(kind, withAuthority).connection() as never }), inst, invoiceRef(98, 5001, 0))
+  }
+
+  it('autorizada no PR: o prazo é a autorização + 168 h do PR (dado por UF), na zona do estabelecimento', async () => {
+    const v = await view('A', 'E')
+    expect(v.cancelDeadline).toBe('2026-12-01 10:20:00')                                 // 2026-11-24 13:20 UTC + 168 h = 2026-12-01 13:20 UTC = 10:20 em Brasília
+    expect(v.localCancelPending).toBe(false)
+  })
+
+  it('sem autorização (em voo, rejeitada) não há prazo', async () => {
+    expect((await view(null, 'E', false)).cancelDeadline).toBeNull()
+    expect((await view('R', 'E', false)).cancelDeadline).toBeNull()
+  })
+
+  it('voz C com a nota ainda emitida no ERP = pendência local; com o C já aplicado no ERP, não', async () => {
+    expect((await view('C', 'E')).localCancelPending).toBe(true)
+    expect((await view('C', 'C')).localCancelPending).toBe(false)
+    expect((await view('A', 'E')).localCancelPending).toBe(false)
   })
 })

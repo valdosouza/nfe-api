@@ -1,6 +1,8 @@
 import { Router } from 'express'
 import { route, sendOk, institutionOf, invoiceRef, WEB_TERMINAL, type InstitutionPayload, type InvoiceRef } from 'fiscal-api'
 import type { AppContext } from '../../context'
+import { parseWith } from '../validate'
+import { cancelDto } from './invoices.dto'
 import { parseInvoiceId, requireBranchInterface, requireBranchPrivilege } from '../guards'
 import * as service from './invoices.service'
 
@@ -41,6 +43,14 @@ export function invoicesRoutes(ctx: AppContext): Router {
     const ref = webRefOf(inst, req.params.invoiceId)
     await requireBranchPrivilege(ctx, inst, ref, 'TRANSMITIR')                  // o fato "o fisco não registrou" abre caminho para reenviar: é ato de quem transmite (D-NE235)
     sendOk(res, await service.reconfirm(ctx, inst, ref))
+  }))
+
+  router.post('/:invoiceId/cancel', route('POST /v1/nfe/invoices/:invoiceId/cancel', async (req, res) => {
+    const inst = institutionOf(req)
+    const ref = webRefOf(inst, req.params.invoiceId)
+    await requireBranchPrivilege(ctx, inst, ref, 'CANCELAR')
+    const body = parseWith(cancelDto, req.body)
+    sendOk(res, await service.cancel(ctx, inst, ref, body.reason))
   }))
 
   return router

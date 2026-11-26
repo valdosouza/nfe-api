@@ -101,7 +101,9 @@ describe('emitente (D-NE9 — o emitter do núcleo montado para o ramo de mercad
     }
     expect(core.emitterView).not.toHaveBeenCalled()
     const r = await request(app).get('/v1/emitter').set('Authorization', `Bearer ${token()}`)
-    expect([r.status, r.body.ok, r.body.data]).toEqual([200, true, EMITTER])
+    expect([r.status, r.body.ok]).toEqual([200, true])
+    expect(r.body.data).toMatchObject(EMITTER)
+    expect(r.body.data.stateRegistration).toEqual({ present: expect.any(Boolean), authorizer55: null })     // D-NE96 (NFE.E6.P4): o ERP deste teste não tem o emitente — sem IE e sem autorizador, nunca 500
     expect(core.emitterView).toHaveBeenCalledWith(expect.anything(), 1, 'merchandise')
   })
   it('PUT /issuers/55 { environment } → 200; o núcleo recebe a SÉRIE NULA (D-F21/D-NE11); corpo com `serie` → 400 e nada gravado; ambiente torto → 400', async () => {
@@ -187,7 +189,7 @@ describe('entrada — corpo, envelope, CORS e health', () => {
     const app = createApp(ctx(), keyProof)
     for (let i = 0; i < 3; i++) {
       const r = await request(app).get('/v1/health')
-      expect([r.status, r.body]).toEqual([200, { status: 'ok', db: true, masterKey: true, storage: true, serverChain: SERVER_CHAIN }])   // `authorities` é da NE-5 (§16.3-4)
+      expect([r.status, r.body]).toEqual([200, { status: 'ok', db: true, masterKey: true, storage: true, serverChain: SERVER_CHAIN, authorities: [] }])   // `authorities`: o último consStatServ da passada do rodízio (NFE.E6.P4); sem consulta, vazio
     }
     expect(verify.mock.calls.length).toBe(before)
   })
@@ -196,17 +198,17 @@ describe('entrada — corpo, envelope, CORS e health', () => {
     const bad = proof({ ok: false, degraded: false, versions: [{ version: 1, ok: false, code: 'FISCAL_CERT_INVALID', unreadable: 3 }] })
     await bad.keyProof.run()
     const r = await request(createApp(ctx(), bad.keyProof)).get('/v1/health')
-    expect([r.status, r.body]).toEqual([503, { status: 'degraded', db: true, masterKey: false, storage: true, serverChain: SERVER_CHAIN }])
+    expect([r.status, r.body]).toEqual([503, { status: 'degraded', db: true, masterKey: false, storage: true, serverChain: SERVER_CHAIN, authorities: [] }])
     const notRun = proof(new Error('ECONNREFUSED'))
     await notRun.keyProof.run()
     const n = await request(createApp(ctx(), notRun.keyProof)).get('/v1/health')
-    expect([n.status, n.body]).toEqual([503, { status: 'degraded', db: true, masterKey: false, storage: true, serverChain: SERVER_CHAIN }])
+    expect([n.status, n.body]).toEqual([503, { status: 'degraded', db: true, masterKey: false, storage: true, serverChain: SERVER_CHAIN, authorities: [] }])
     const never = await request(createApp(ctx())).get('/v1/health')            // sem prova passada (nunca rodou) → masterKey false
     expect([never.status, never.body.masterKey]).toEqual([503, false])
     const deg = proof({ ok: true, degraded: true, versions: [{ version: 1, ok: true, unreadable: 2 }] })
     await deg.keyProof.run()
     const d = await request(createApp(ctx(), deg.keyProof)).get('/v1/health')   // degraded com a chave certa → 200 e o corpo NÃO diz
-    expect([d.status, d.body]).toEqual([200, { status: 'ok', db: true, masterKey: true, storage: true, serverChain: SERVER_CHAIN }])
+    expect([d.status, d.body]).toEqual([200, { status: 'ok', db: true, masterKey: true, storage: true, serverChain: SERVER_CHAIN, authorities: [] }])
     const down = { query: jest.fn(async () => { throw new Error('down') }), getConnection: jest.fn() } as any
     const noDb = await request(createApp(ctx({ pool: down }), deg.keyProof)).get('/v1/health')
     expect([noDb.status, noDb.body.db, noDb.body.masterKey]).toEqual([503, false, true])

@@ -3,6 +3,9 @@ import {
   emitterView, writeIssuer, deleteIssuer, uploadCertificate, deleteCertificate, modelsOf,
 } from 'fiscal-api'
 import type { AppContext } from '../../context'
+import { resolveAuthorizer } from '../../authority/authorizers'
+import { readEmitter } from '../../facts/merchandise-facts'
+import { emitterFromParty } from '../../nfe/void-range'
 import type { IssuerDto, CertificateDto } from './emitter.dto'
 
 /**
@@ -23,8 +26,27 @@ export const SERVED_MODELS = Object.freeze(['55'] as const satisfies readonly Is
 
 const actorOf = (inst: InstitutionPayload): EmitterActor => ({ institutionId: inst.institutionId, userId: inst.userId, schemaName: inst.schemaName })
 
-export async function fetchEmitter(ctx: AppContext, inst: InstitutionPayload): Promise<EmitterView> {
-  return emitterView(ctx, inst.institutionId, BRANCH)
+/** D-NE96 (o `stateRegistration` do contrato): o emitente tem IE no ERP? sem IE = contribuinte exclusivo do IBS/CBS → SVRS; e o autorizador que o 55 usaria neste ambiente. Cadastro do emitente ilegível ou sem habilitação do 55 = `authorizer55` nulo. */
+export interface StateRegistrationView { present: boolean; authorizer55: string | null }
+export type EmitterStatusView = EmitterView & { stateRegistration: StateRegistrationView }
+
+export async function fetchEmitter(ctx: AppContext, inst: InstitutionPayload): Promise<EmitterStatusView> {
+  const view = await emitterView(ctx, inst.institutionId, BRANCH)
+  return { ...view, stateRegistration: await stateRegistrationOf(ctx, inst, view) }
+}
+
+async function stateRegistrationOf(ctx: AppContext, inst: InstitutionPayload, view: EmitterView): Promise<StateRegistrationView> {
+  try {
+    const party = await readEmitter(ctx.pool, inst.schemaName, inst.institutionId)
+    const present = !!party.stateRegistration
+    const issuer = (view.issuers as readonly IssuerItemView[]).find(i => i.model === '55' && i.enabled)
+    if (!issuer) return { present, authorizer55: null }
+    const uf = emitterFromParty(party).uf
+    const r = resolveAuthorizer({ uf, model: '55', environment: issuer.environment as 'H' | 'P', emissionType: 1, hasStateRegistration: present, at: new Date() })
+    return { present, authorizer55: r.ok ? r.authorizer : null }
+  } catch {
+    return { present: false, authorizer55: null }                                  // o status do emitente não cai por dado do ERP: o cadastro incompleto aparece como "sem IE" e sem autorizador
+  }
 }
 
 /** O que do parâmetro volta na mensagem: CORTADO e sem caractere de controle (gate adversarial da NE-2 — o eco de 3.000 posições/`%0A` não é diagnóstico). */

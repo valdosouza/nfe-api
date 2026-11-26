@@ -1,10 +1,13 @@
-import { ErrorCodes, HttpError, WEB_TERMINAL, acquireRefreshLease, erp, getIssuer, releaseRefreshLease, toZoneWall, type InstitutionPayload } from 'fiscal-api'
+import { ErrorCodes, HttpError, WEB_TERMINAL, acquireRefreshLease, erp, getIssuer, logger, openIssuer, releaseRefreshLease, toZoneWall, type InstitutionPayload } from 'fiscal-api'
 import type { Environment } from '../../authority/authorizers'
 import type { AppContext } from '../../context'
 import { readNumbering, type NumberingView } from '../../nfe/numbering'
 import { refreshAll } from '../../nfe/refresh-all'
 import { findVoidItem, listVoids, voidRange, type VoidListItem, type VoidResult } from '../../nfe/void-range'
 import { reportIncident } from '../../mail/ops-alert'
+import { probeAuthorityStatus } from '../../authority/status-probe'
+import { readEmitter } from '../../facts/merchandise-facts'
+import { emitterFromParty } from '../../nfe/void-range'
 import { actorOf, nfeDepsOf, voidDepsOf } from '../nfe-deps'
 import type { NumberingQueryDto, RefreshRunDto, VoidDto, VoidsQueryDto } from './operations.dto'
 
@@ -27,6 +30,7 @@ export async function refreshRun(ctx: AppContext, inst: InstitutionPayload, body
   const token = await acquireRefreshLease(ctx.pool as never, inst.institutionId, MODEL, REFRESH_LEASE_SECONDS)
   if (token === null) return IDLE                                                    // outra passada deste estabelecimento está rodando
   try {
+    await probeStatus(ctx, inst)                                                  // D-NE54 c: alimenta o quadro do health (no máximo a cada 3 min por autorizador)
     const r = await refreshAll(nfeDepsOf(ctx), actorOf(inst), { limit: body.limit })
     for (const i of r.incidents) reportIncident(ctx, { route: 'refresh-all', institutionId: inst.institutionId, invoiceId: i.invoiceId, accessKey: null, incident: i.incident })    // D-NE237
     return {
@@ -35,6 +39,24 @@ export async function refreshRun(ctx: AppContext, inst: InstitutionPayload, body
     }
   } finally {
     await releaseRefreshLease(ctx.pool as never, inst.institutionId, MODEL, token)
+  }
+}
+
+/**
+ * A sondagem do status do serviço (D-NE54 c): com o A1 do estabelecimento que roda a passada, UM `consStatServ` do autorizador dele (teto de 3 min no quadro). Nunca derruba a passada: qualquer
+ * falha (sem habilitação, A1, cadastro do emitente, fisco) vira log e a passada segue.
+ */
+export async function probeStatus(ctx: AppContext, inst: InstitutionPayload, request?: Parameters<typeof probeAuthorityStatus>[2]): Promise<void> {
+  if (!ctx.statusBoard) return
+  try {
+    const issuer = await getIssuer(ctx.pool as never, inst.institutionId, MODEL)
+    if (!issuer) return
+    const emitter = emitterFromParty(await readEmitter(ctx.pool, inst.schemaName, inst.institutionId))
+    const opened = await openIssuer({ pool: ctx.pool, keyring: ctx.keyring }, inst.institutionId, MODEL, { schemaName: inst.schemaName })
+    ctx.checkServerCa?.()
+    await probeAuthorityStatus(ctx.statusBoard, { uf: emitter.uf, hasStateRegistration: emitter.hasStateRegistration, environment: issuer.environment as Environment, cert: opened.cert, key: opened.key, ca: ctx.serverCa.pem as never, now: new Date() }, request)
+  } catch (e) {
+    logger.warn('Sondagem do status do autorizador não feita', { error: e instanceof Error ? e.name : 'erro' })
   }
 }
 

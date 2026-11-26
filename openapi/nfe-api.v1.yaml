@@ -53,12 +53,13 @@ paths:
   /v1/health:
     get:
       tags: [operação]
-      summary: Saúde do serviço (sem autenticação) + estado por autorizador (D-NE54 c — o bloco `authorities` entra na NE-5, com o rodízio que o lê, §16.3-4; hoje responde banco, chave-mestra e storage)
+      summary: Saúde do serviço (sem autenticação) + estado por autorizador (D-NE54 c — o bloco `authorities` traz o último consStatServ que a passada do rodízio consultou)
       security: []
       responses:
         '200':
           description: >-
-            banco, chave-mestra, storage e a CADEIA do servidor carregada (D-NE54 a — dado recarregável) respondem; `authorities` traz o
+            banco, chave-mestra, storage e a CADEIA do servidor carregada respondem. A cadeia é DADO RECARREGÁVEL (D-NE54 a): se o PEM ou a ficha mudam, a nfe-api relê sem reiniciar (arquivo novo que não passa na
+            conferência mantém a cadeia anterior) e avisa o suporte a 60 dias da primeira raiz vencer; `authorities` traz o
             último `consStatServ` de cada autorizador consultado, com teto de frequência (≥ 3 min por autorizador — MOC; nunca mais que
             isso — 656). "SEFAZ-PR fora" × "defeito nosso" se lê aqui. A chave-mestra é provada abrindo UM segredo guardado (A1 ou senha SMTP) por versão em
             uso (D-F243, adotada pela D-NE189) — chave errada ou rotação mal feita aparece aqui, não na 1ª emissão; a prova roda na
@@ -814,8 +815,7 @@ components:
             source:   { type: string, description: 'a fonte declarada na ficha JSON das raízes — ex.: ITI ACcompactado.zip' }
         authorities:
           type: array
-          x-onda: NE-5
-          description: 'D-NE54 c — último consStatServ por autorizador consultado (teto de frequência ≥ 3 min); entra na NE-5, com o rodízio e o disjuntor que o leem (prompt_onda_nfe_sefaz.md §16.3-4)'
+          description: 'D-NE54 c — o ÚLTIMO consStatServ de cada autorizador × ambiente que a passada do rodízio consultou (teto de frequência: uma pergunta a cada 3 min por autorizador × ambiente). Em memória do processo: vazio até a 1ª passada. O health só LÊ — não tem certificado e nunca fala com o fisco; a sondagem usa o A1 do estabelecimento que roda a passada, só em homologação por ora. Autorizador paralisado (108/109) NÃO derruba o health.'
           items:
             type: object
             properties:
@@ -855,7 +855,6 @@ components:
               authority: { type: string, enum: [ADN, SEFAZ] }
         stateRegistration:
           type: object
-          x-onda: NE-5
           description: 'D-NE96 — o emitente tem IE no ERP? sem IE = contribuinte exclusivo do IBS/CBS → SVRS (NT 2026.007, H 26/10 · P 16/11/2026); o autorizador sai do authorizers.ts (D-NE162, NE-3) a IE é lida pela fonte de fatos (NE-4) e o campo é servido com as rotas da NE-5 (D-NE252; prompt_onda_nfe_sefaz.md §16.3-4 e §24.10); hoje o GET devolve só issuers + certificate'
           properties:
             present: { type: boolean }

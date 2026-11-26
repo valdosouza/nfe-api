@@ -1,8 +1,9 @@
 import {
-  Pool, createFiscalPool, dbConfigFromEnv, FiscalDbConfig, FiscalStorage, MasterKeyRing, ProductTokenVerifier, FsFiscalStorage,
+  logger, Pool, createFiscalPool, dbConfigFromEnv, FiscalDbConfig, FiscalStorage, MasterKeyRing, ProductTokenVerifier, FsFiscalStorage,
   fiscalStorageRootFromEnv, technicalResponsibleFromEnv, type TechnicalResponsible,
 } from 'fiscal-api'
-import { loadServerCa, type ServerCa } from './authority/server-ca'
+import { loadServerCa, watchServerCa, type ServerCa } from './authority/server-ca'
+import { StatusBoard } from './authority/status-board'
 import { Breaker } from './nfe/breaker'
 import { createOpsAlert, type OpsAlert } from './mail/ops-alert'
 
@@ -49,6 +50,13 @@ export interface AppContext {
    * recusa subir sem as variáveis (`assertOpsAlertConfigured`).
    */
   opsAlert?: OpsAlert
+  /** O quadro do estado por autorizador (D-NE54 c; NFE.E6.P4 mudança 8): o health lê, a passada do rodízio escreve. Opcional: os testes não o montam (o health diz `authorities: []`). */
+  statusBoard?: StatusBoard
+  /**
+   * Relê as raízes ICP quando o PEM ou a ficha mudam (D-NE54 a — dado recarregável) e dá o alarme dos 60 dias; chamada barata e síncrona, feita pelo health e por toda chamada ao fisco. Ausente nos
+   * testes que injetam `serverCa`. Recarga recusada mantém `serverCa` como está.
+   */
+  checkServerCa?: () => void
 }
 
 export function contextFromEnv(env: NodeJS.ProcessEnv = process.env, overrides: Partial<AppContext> = {}): AppContext {
@@ -57,7 +65,7 @@ export function contextFromEnv(env: NodeJS.ProcessEnv = process.env, overrides: 
   const technicalResponsible = overrides.technicalResponsible ?? technicalResponsibleFromEnv(env)
   const db = dbConfigFromEnv(env)
   const pool: Pool = overrides.pool ?? createFiscalPool(db)
-  return {
+  const ctx: AppContext = {
     db,
     pool,
     keyring:  overrides.keyring ?? MasterKeyRing.fromEnv(env),
@@ -72,5 +80,19 @@ export function contextFromEnv(env: NodeJS.ProcessEnv = process.env, overrides: 
     technicalResponsible,
     breaker: overrides.breaker ?? new Breaker(() => new Date()),
     opsAlert: overrides.opsAlert ?? createOpsAlert(env),
+    statusBoard: overrides.statusBoard ?? new StatusBoard(() => new Date()),
   }
+  if (!overrides.serverCa) {
+    const when = new Date()
+    ctx.checkServerCa = watchServerCa(ctx, String(env.SEFAZ_SERVER_CA_PATH), {
+      onReload: ca => logger.info('Raízes ICP do servidor da SEFAZ recarregadas (D-NE54 a)', { certificates: ca.certificates.length, source: ca.source }),
+      onRefused: reason => logger.warn(`Raízes ICP novas recusadas (${reason}): fica a cadeia anterior — o serviço segue (D-NE187)`),
+      onExpiring: days => {
+        const text = `A primeira raiz ICP-Brasil do servidor da SEFAZ vence em ${days} dia(s) (D-NE187): troque o PEM e a ficha em ${when.toISOString().slice(0, 10)} ou antes — a nfe-api relê o arquivo sem reiniciar.`
+        logger.warn(text)
+        if (ctx.opsAlert) void ctx.opsAlert('[nfe-api] raízes ICP do servidor da SEFAZ perto de vencer', text).catch(() => undefined)
+      },
+    }).check
+  }
+  return ctx
 }

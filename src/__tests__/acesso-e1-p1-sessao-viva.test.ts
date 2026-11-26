@@ -143,8 +143,10 @@ describe('ACESSO.E1.P1.T1 — toda rota protegida lê a sessão viva; o admin é
     const t = setesToken()
     const iat = (jwt.decode(t) as { iat: number }).iat
     await get(createApp(ctx()), t)
-    expect(pool.query).toHaveBeenCalledTimes(1)
-    const [sql, params] = pool.query.mock.calls[0]
+    // a sessão é lida UMA vez (o `GET /v1/emitter` da NFE.E6.P4 lê também o cadastro do emitente para o `stateRegistration`: outras leituras do pool não contam)
+    const sessionReads = pool.query.mock.calls.filter((c: unknown[]) => /vw_user_link/.test(String(c[0])))
+    expect(sessionReads).toHaveLength(1)
+    const [sql, params] = sessionReads[0]
     expect(sql).toMatch(/tb_user_id = \? AND tb_institution_id = \? AND schema_name = \?/)
     expect(sql).toMatch(/password_set_at IS NULL OR password_set_at <= \?/)
     expect(params).toEqual([7, 1, 'setes_setes', new Date(iat * 1000).toISOString().slice(0, 19).replace('T', ' ')])

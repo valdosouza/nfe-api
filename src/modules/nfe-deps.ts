@@ -30,7 +30,7 @@ export function nfeDepsOf(ctx: AppContext, now: () => Date = () => new Date()): 
       if (required.length > 1) throw documentInvalid('A UF exige mais de um código fiscal — fora do 1º release', [{ field: 'infRespTec', message: 'Mais de uma credencial exigida' }])
       return { codeId: required[0].codeId, codeValue: required[0].codeValue }
     },
-    ca: () => ctx.serverCa.pem as never,
+    ca: () => { ctx.checkServerCa?.(); return ctx.serverCa.pem as never },                   // dado recarregável (D-NE54 a): a chamada ao fisco usa a cadeia VIGENTE
     // D-NE261 (via automática): o e-mail depois da autorização, DESACOPLADO — a resposta da transmissão não espera o servidor de e-mail do cliente, e o `import()` é de propósito (a peça do e-mail
     // lê os arquivos pelas rotas da nota, que montam estas dependências: sem ciclo na carga). Nunca lança (`autoSendAfterAuthorization`).
     onAuthorized: async e => { void import('../mail/invoice-mail').then(m => m.autoSendAfterAuthorization(ctx, e)).catch(() => undefined) },

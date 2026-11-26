@@ -69,3 +69,52 @@ export function loadServerCa(pemPath: string | undefined, now: Date): ServerCa {
   })
   return { pem, source: String(ficha.source ?? ''), certificates: listed }
 }
+
+// ---------------------------------------------------------------------------------------------------------------------------------------
+// NFE.E6.P4 mudança 8 — dado RECARREGÁVEL (D-NE54 a) e o alarme dos 60 dias
+// ---------------------------------------------------------------------------------------------------------------------------------------
+
+/** O aviso de vencimento: a 60 dias da raiz que vence primeiro (D-NE187; roteiro de troca = recarregar o PEM e a ficha, sem reiniciar). */
+export const CA_EXPIRY_WARN_DAYS = 60
+const DAY_MS = 86_400_000
+
+/** Dias inteiros até a raiz que vence PRIMEIRO (negativo = vencida); a ficha é conferida no carregamento, aqui só se lê o `notAfter`. */
+export function serverCaDaysLeft(ca: ServerCa, now: Date): number {
+  const ends = ca.certificates.map(c => Date.parse(c.notAfter)).filter(t => !Number.isNaN(t))
+  if (ends.length === 0) return Number.POSITIVE_INFINITY
+  return Math.floor((Math.min(...ends) - now.getTime()) / DAY_MS)
+}
+
+export interface ServerCaWatchHooks {
+  readonly now?: () => Date
+  /** Recarregou um PEM novo (o conjunto de raízes mudou na ficha). */
+  readonly onReload?: (ca: ServerCa) => void
+  /** O PEM mudou mas NÃO passou na conferência (ou sumiu): ficou a cadeia anterior; só o motivo, nunca o conteúdo. */
+  readonly onRefused?: (reason: string) => void
+  /** Falta `days` dias (≤ 60) para a primeira raiz vencer — no máximo uma vez por dia. */
+  readonly onExpiring?: (days: number) => void
+}
+
+/**
+ * Relê as raízes quando o arquivo muda: compara tamanho e data do PEM e da ficha a cada chamada (barato, síncrono) e só recarrega se mudou. Recarga recusada MANTÉM a cadeia anterior (o serviço
+ * nunca fica sem raízes por causa de um arquivo ruim) e avisa uma vez por mudança. `check()` não lança.
+ */
+export function watchServerCa(target: { serverCa: ServerCa }, pemPath: string, hooks: ServerCaWatchHooks = {}): { check(): void } {
+  const now = hooks.now ?? (() => new Date())
+  const abs = path.resolve(pemPath)
+  const stampOf = (): string => [abs, fichaPathOf(abs)].map(p => { try { const s = fs.statSync(p); return `${s.size}:${s.mtimeMs}` } catch { return 'ausente' } }).join('|')
+  let seen = stampOf()
+  let lastWarned = 0
+  return {
+    check(): void {
+      const stamp = stampOf()
+      if (stamp !== seen) {
+        seen = stamp                                                                  // a mesma mudança recusada não avisa de novo a cada chamada
+        try { target.serverCa = loadServerCa(abs, now()); hooks.onReload?.(target.serverCa) }
+        catch (e) { hooks.onRefused?.(e instanceof ServerCaRefusedError ? e.reason : 'erro') }
+      }
+      const days = serverCaDaysLeft(target.serverCa, now())
+      if (days <= CA_EXPIRY_WARN_DAYS && now().getTime() - lastWarned >= DAY_MS) { lastWarned = now().getTime(); hooks.onExpiring?.(days) }
+    },
+  }
+}

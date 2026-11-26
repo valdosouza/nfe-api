@@ -18,19 +18,23 @@ import * as invoicesService from '../modules/invoices/invoices.service'
 import * as opsService from '../modules/operations/operations.service'
 import * as refreshAllModule from '../nfe/refresh-all'
 import * as voidModule from '../nfe/void-range'
+import { StatusBoard } from '../authority/status-board'
+import * as probeModule from '../authority/status-probe'
 import { FAKE_TECH } from './technical-responsible-fake'
 
 jest.mock('../modules/invoices/invoices.service', () => ({ ...jest.requireActual('../modules/invoices/invoices.service'), pending: jest.fn() }))
 jest.mock('../nfe/refresh-all', () => ({ ...jest.requireActual('../nfe/refresh-all'), refreshAll: jest.fn() }))
 jest.mock('../nfe/void-range', () => ({ ...jest.requireActual('../nfe/void-range'), voidRange: jest.fn(), listVoids: jest.fn(), findVoidItem: jest.fn() }))
 jest.mock('../nfe/numbering', () => ({ readNumbering: jest.fn() }))
+jest.mock('../authority/status-probe', () => ({ probeAuthorityStatus: jest.fn() }))
+jest.mock('../facts/merchandise-facts', () => ({ ...jest.requireActual('../facts/merchandise-facts'), readEmitter: jest.fn() }))
 jest.mock('fiscal-api', () => {
   const actual = jest.requireActual('fiscal-api')
   return {
     __esModule: true, ...actual,
     logger: { info: jest.fn(), warn: jest.fn(), error: jest.fn() },
     erp: { ...actual.erp, institutionZone: jest.fn() },
-    acquireRefreshLease: jest.fn(), releaseRefreshLease: jest.fn(), getIssuer: jest.fn(),
+    acquireRefreshLease: jest.fn(), releaseRefreshLease: jest.fn(), getIssuer: jest.fn(), openIssuer: jest.fn(),
     access: { ...actual.access, liveIdentity: jest.fn(), accessVerdict: jest.fn(), reachableKeys: jest.fn() },
   }
 })
@@ -203,5 +207,48 @@ describe('GET /v1/nfe/numbering e GET/POST /v1/nfe/voids', () => {
     await opsService.requestVoid(c, inst, { serie: '1', from: 10, to: 12, reason: 'faixa pulada por erro de numeração' })
     expect(voidRangeM.mock.calls[0][0].breaker).toBe(c.breaker)
     expect(typeof voidRangeM.mock.calls[0][0].emitterOf).toBe('function')
+  })
+})
+
+describe('a sondagem do status do autorizador na passada do rodízio (NFE.E6.P4 mudança 8; D-NE54 c)', () => {
+  const probeM = probeModule.probeAuthorityStatus as unknown as jest.Mock
+  // eslint-disable-next-line @typescript-eslint/no-var-requires
+  const readEmitterM = require('../facts/merchandise-facts').readEmitter as jest.Mock
+  const idle = { scanned: 0, consulted: 0, throttled: 0, tooOld: 0, skipped: 0, circuitOpen: false, changed: 0, incidents: [], results: [] }
+  beforeEach(() => {
+    f.acquireRefreshLease.mockResolvedValue('tok'); f.releaseRefreshLease.mockResolvedValue(true); refreshAllM.mockResolvedValue(idle)
+    f.getIssuer.mockResolvedValue({ environment: 'H' })
+    readEmitterM.mockResolvedValue({ cnpj: '07742094000113', stateRegistration: '9012345678', addresses: [{ main: 'S', stateCode: 'PR' }] })
+    f.openIssuer.mockResolvedValue({ cert: Buffer.from('c'), key: Buffer.from('k') })
+  })
+
+  it('consulta o autorizador do estabelecimento com o A1 dele ANTES do rodízio, sem travar a habilitação', async () => {
+    const board = new StatusBoard(() => new Date())
+    await request(createApp(ctx({ statusBoard: board }))).post('/v1/nfe/refresh').set(A).send({})
+    expect(probeM).toHaveBeenCalledTimes(1)
+    const [b, input] = probeM.mock.calls[0]
+    expect(b).toBe(board)
+    expect([input.uf, input.hasStateRegistration, input.environment, input.cert.toString(), input.key.toString()]).toEqual(['PR', true, 'H', 'c', 'k'])
+    expect(f.openIssuer.mock.calls[0].slice(1, 3)).toEqual([1, '55'])
+    expect(f.openIssuer.mock.calls[0][3]).toEqual({ schemaName: 'setes_setes' })            // sem `forUpdate`: a sondagem não trava a habilitação
+    expect(probeM.mock.invocationCallOrder[0]).toBeLessThan(refreshAllM.mock.invocationCallOrder[0])
+  })
+
+  it('NUNCA derruba a passada: sem habilitação, sem A1, emitente incompleto ou falha na sondagem — o rodízio roda e devolve 200', async () => {
+    const board = new StatusBoard(() => new Date())
+    f.getIssuer.mockResolvedValueOnce(null)
+    expect((await request(createApp(ctx({ statusBoard: board }))).post('/v1/nfe/refresh').set(A).send({})).status).toBe(200)
+    f.openIssuer.mockRejectedValueOnce(new Error('A1 vencido'))
+    expect((await request(createApp(ctx({ statusBoard: board }))).post('/v1/nfe/refresh').set(A).send({})).status).toBe(200)
+    readEmitterM.mockResolvedValueOnce({ cnpj: null, stateRegistration: null, addresses: [] })
+    expect((await request(createApp(ctx({ statusBoard: board }))).post('/v1/nfe/refresh').set(A).send({})).status).toBe(200)
+    probeM.mockRejectedValueOnce(new Error('fisco fora'))
+    expect((await request(createApp(ctx({ statusBoard: board }))).post('/v1/nfe/refresh').set(A).send({})).status).toBe(200)
+    expect(refreshAllM).toHaveBeenCalledTimes(4)
+  })
+
+  it('sem quadro no contexto (testes, ou o processo ainda sem ele) não há sondagem nem leitura do A1', async () => {
+    await request(createApp(ctx())).post('/v1/nfe/refresh').set(A).send({})
+    expect([probeM.mock.calls.length, f.openIssuer.mock.calls.length]).toEqual([0, 0])
   })
 })

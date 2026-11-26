@@ -47,6 +47,8 @@ export interface ComposedFacts {
   readonly hasStateRegistration: boolean
   readonly dtEmission: string
   readonly createdAt: string | null
+  /** A vida da nota de onde veio a hora do `dhEmi` (D-NE296); tem de ser a vida travada pela reserva. */
+  readonly lifeEvent: number | null
   /** O candidato com o `dhEmi` e a prova do CSRT dados (ou nenhuma). */
   readonly buildInput: (p: { dhEmi: string; csrt: CsrtProof | null }) => NfeInput
 }
@@ -140,6 +142,11 @@ export async function transmitInvoice(deps: NfeDeps, actor: NfeActor, ref: Invoi
     const policy = numberPolicy(latest)
     const environment = opened.issuer.environment as Environment
     const facts = await readFactsGuarded(deps, conn, actor, ref, environment)
+    // D-NE296: a hora do dhEmi é da vida que esta reserva travou — vida diferente (corrida com um refaturamento) é 409, nunca a hora de outra vida.
+    // Sem evento da vida (`lifeEvent` nulo) segue: o `dhEmiOf` recusa com 422 pela causa (S-A).
+    if (facts.lifeEvent !== null && facts.lifeEvent !== life) {
+      throw new HttpError(409, 'A nota mudou de vida durante a transmissão (faturada de novo) — tente de novo', [{ field: 'lifeEvent', message: `lida ${facts.lifeEvent}, travada ${life}` }], ErrorCodes.RESOURCE_BUSY)
+    }
     const now = deps.now()
 
     // o número: novo (peça do núcleo) ou o da tentativa fechada por R/F (D-NE282)

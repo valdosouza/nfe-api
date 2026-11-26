@@ -19,7 +19,7 @@ export function dhEmiOf(dtEmission: string, createdAtUtc: string | null | undefi
   if (fields.length) throw documentInvalid('O dhEmi da NF-e não pôde ser composto a partir dos dados da nota', fields)
   const instant = new Date(`${(created as RegExpExecArray)[1]}T${(created as RegExpExecArray)[2]}Z`)
   const wall = toZoneWall(instant, zone as string)
-  if (!wall) throw documentInvalid('O dhEmi da NF-e não pôde ser composto a partir dos dados da nota', [{ field: 'ide.dhEmi', message: 'Instante de criação da nota inválido para a zona do estabelecimento' }])
+  if (!wall) throw documentInvalid('O dhEmi da NF-e não pôde ser composto a partir dos dados da nota', [{ field: 'ide.dhEmi', message: 'Instante do evento de faturamento da vida da nota inválido para a zona do estabelecimento' }])
   const offset = nowIsoIn(zone as string, instant).slice(19)
   return `${dtEmission}T${wall.slice(11, 19)}${offset}`
 }

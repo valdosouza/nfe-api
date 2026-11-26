@@ -53,9 +53,12 @@ export interface MerchandiseInvoiceHeader {
   /**
    * O instante do faturamento da VIDA ATUAL da nota, em UTC ('AAAA-MM-DD HH:MM:SS' — PADROES_BANCO §10.1): o `created_at` do evento E da vida
    * (`vw_invoice_life.life_event` — D-F32), não o da `tb_invoice`, que fica com a hora do 1º faturamento quando a nota REVIVE na mesma linha
-   * (D-NE296, que ajusta a D-NE284). A HORA do `dhEmi`. Nulo = a nota não tem evento E (carga ou sincronização) — o `dhEmiOf` recusa (S-A).
+   * (D-NE296, que ajusta a D-NE284). A HORA do `dhEmi`. Nulo = a nota não tem evento E da vida com a MESMA data da nota (carga, sincronização ou
+   * linha regravada) — o `dhEmiOf` recusa (S-A).
    */
   createdAt:  string | null
+  /** O evento E da vida de onde veio a hora (`vw_invoice_life.life_event`); a transmissão confere que é a vida que ela travou. */
+  lifeEvent:  number | null
   entityId:   number
   status:     string
   note:       string | null
@@ -66,33 +69,51 @@ export interface MerchandiseInvoiceHeader {
 
 /**
  * Nota emitida POR ESTE estabelecimento, viva, com o ramo de mercadoria. Não achou → 404 `INVOICE_NOT_FOUND`; sem ramo → 422
- * `INVOICE_MERCHANDISE_BRANCH_MISSING`. Na transmissão roda DENTRO da reserva, depois da trava da habilitação (`transmission.ts`); o `GET` da
- * situação a lê fora de transação. A vida da nota vem da view publicada `vw_invoice_life` (D-F32: uma verdade só), pelo mesmo `life_event` que a
- * tentativa grava.
+ * `INVOICE_MERCHANDISE_BRANCH_MISSING`. Na transmissão roda DENTRO da reserva, depois da trava da nota e da habilitação (`transmission.ts`).
+ *
+ * A hora do `dhEmi` (D-NE296) sai em DUAS leituras simples, nunca por junção com a view: (1) a vida pela view publicada `vw_invoice_life`
+ * (D-F32: uma verdade só) com WHERE pela chave da nota — a forma do núcleo, que o MariaDB funde (a view como lado de dentro de um LEFT JOIN
+ * materializou o schema inteiro no dev: mais de 2 min no banco de um cliente, contra 19 ms assim); (2) o evento E dessa vida pela chave
+ * primária de `tb_invoice_event`, só se a data dele (`dt_record`) é a da nota (`dt_emission`) — o faturamento grava as duas iguais na mesma
+ * transação (setes-api `issueInvoice`). Mais de uma linha em qualquer leitura = 409 `RESOURCE_BUSY`, nunca a primeira (PADROES_BANCO §11 regra 13).
  */
 export async function readMerchandiseInvoice(q: Queryable, schemaName: string, ref: InvoiceRef): Promise<MerchandiseInvoiceHeader> {
   const s = assertSchema(schemaName)
+  const busy = (what: string) => new HttpError(409, `Nota ${ref.invoiceId}: ${what} devolveu mais de uma linha — tente de novo`, undefined, ErrorCodes.RESOURCE_BUSY)
   const [rows] = await q.query(
-    `SELECT i.id, i.number, i.serie, i.model, DATE_FORMAT(i.dt_emission, '%Y-%m-%d') AS dtEmission,
-            DATE_FORMAT(le.created_at, '%Y-%m-%d %H:%i:%s') AS createdAt, i.tb_entity_id AS entityId, i.status,
+    `SELECT i.id, i.number, i.serie, i.model, DATE_FORMAT(i.dt_emission, '%Y-%m-%d') AS dtEmission, i.tb_entity_id AS entityId, i.status,
             CONVERT(i.note USING utf8mb4) AS note, mb.id AS branchId, CAST(mb.total_value AS CHAR) AS totalValue, mb.indPres AS indPres
        FROM \`${s}\`.tb_invoice i
        LEFT JOIN \`${s}\`.tb_invoice_merchandise mb
          ON mb.id = i.id AND mb.tb_institution_id = i.tb_institution_id AND mb.terminal = i.terminal AND mb.deleted = 'N'
-       LEFT JOIN \`${s}\`.vw_invoice_life l
-         ON l.tb_invoice_id = i.id AND l.tb_institution_id = i.tb_institution_id AND l.terminal = i.terminal
-       LEFT JOIN \`${s}\`.tb_invoice_event le
-         ON le.tb_invoice_id = i.id AND le.tb_institution_id = i.tb_institution_id AND le.terminal = i.terminal AND le.event = l.life_event AND le.kind = 'E'
       WHERE i.id = ? AND i.tb_institution_id = ? AND i.terminal = ? AND i.deleted = 'N' AND i.issuer = i.tb_institution_id`,
     [ref.invoiceId, ref.institutionId, ref.terminal])
+  if (rows.length > 1) throw busy('a leitura da nota')
   const r = rows[0]
   if (!r) throw new HttpError(404, `Nota ${ref.invoiceId} emitida por este estabelecimento não encontrada`, undefined, ErrorCodes.INVOICE_NOT_FOUND)
   if (r.branchId == null) {
     throw new HttpError(422, `Nota ${ref.invoiceId} não tem ramo de mercadoria — só nota com mercadoria gera NF-e`,
       [{ field: 'merchandise', message: 'Ramo de mercadoria ausente' }], MerchandiseFactsErrors.BRANCH_MISSING)
   }
+  const dtEmission = String(r.dtEmission)
+  // (1) a vida — a view com WHERE pela chave da nota
+  const [lives] = await q.query(
+    `SELECT life_event AS lifeEvent FROM \`${s}\`.vw_invoice_life WHERE tb_invoice_id = ? AND tb_institution_id = ? AND terminal = ?`,
+    [ref.invoiceId, ref.institutionId, ref.terminal])
+  if (lives.length > 1) throw busy('a leitura da vida')
+  const lifeEvent = int(lives[0]?.lifeEvent)
+  // (2) o evento E da vida, pela chave primária, com a data da nota
+  let createdAt: string | null = null
+  if (lifeEvent !== null) {
+    const [events] = await q.query(
+      `SELECT DATE_FORMAT(created_at, '%Y-%m-%d %H:%i:%s') AS createdAt FROM \`${s}\`.tb_invoice_event
+        WHERE tb_invoice_id = ? AND tb_institution_id = ? AND terminal = ? AND event = ? AND kind = 'E' AND dt_record = ?`,
+      [ref.invoiceId, ref.institutionId, ref.terminal, lifeEvent, dtEmission])
+    if (events.length > 1) throw busy('a leitura do evento da vida')
+    createdAt = txt(events[0]?.createdAt)
+  }
   return {
-    invoiceId: Number(r.id), number: txt(r.number), serie: txt(r.serie), model: txt(r.model), dtEmission: String(r.dtEmission), createdAt: txt(r.createdAt),
+    invoiceId: Number(r.id), number: txt(r.number), serie: txt(r.serie), model: txt(r.model), dtEmission, createdAt, lifeEvent: createdAt === null ? null : lifeEvent,
     entityId: Number(r.entityId), status: String(r.status ?? ''), note: txt(r.note), totalValue: txt(r.totalValue), indPres: int(r.indPres),
   }
 }

@@ -33,7 +33,7 @@ export const recipient: PartyFact = {
 
 export const sources = (over: Partial<NfeInputSources> = {}): NfeInputSources => ({
   environment: '2', dhEmi: '2026-11-24T10:15:30-03:00',
-  header: { invoiceId: 5001, number: null, serie: '1', model: '55', dtEmission: '2026-11-24', createdAt: '2026-11-24 13:15:30', entityId: 321, status: '0', note: 'Pedido 5001', totalValue: '4000.00', indPres: 3 },
+  header: { invoiceId: 5001, number: null, serie: '1', model: '55', dtEmission: '2026-11-24', createdAt: '2026-11-24 13:15:30', lifeEvent: 1, entityId: 321, status: '0', note: 'Pedido 5001', totalValue: '4000.00', indPres: 3 },
   items: [item(30, { quantity: '3', unitValue: '333.333333', icms: { ...item(30).icms, credExplValue: '28.600000', approximateTax: '134.50' } }), item(10)],
   operationNature: 'Venda de produção do estabelecimento', emitter, recipient,
   payments: {

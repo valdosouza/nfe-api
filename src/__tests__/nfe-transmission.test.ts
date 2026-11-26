@@ -44,7 +44,7 @@ function setup(over: Partial<NfeDeps> = {}, facts: Partial<ComposedFacts> = {}) 
   const base = db.connection()
   const conn = { ...base, rollback: jest.fn(base.rollback) }
   const composed: ComposedFacts = {
-    serie: 1, cnpj: '07742094000113', uf: 'PR', hasStateRegistration: true, dtEmission: '2026-11-24', createdAt: '2026-11-24 13:15:30',
+    serie: 1, cnpj: '07742094000113', uf: 'PR', hasStateRegistration: true, dtEmission: '2026-11-24', createdAt: '2026-11-24 13:15:30', lifeEvent: 1,
     buildInput: ({ dhEmi, csrt }) => saleInput({ dhEmi, csrt }), ...facts,
   }
   const base0 = conn.query
@@ -322,6 +322,14 @@ describe('o que recusa ANTES de abrir tentativa e de enviar', () => {
     const b = setup({}, { createdAt: null })
     await expect(run(b)).rejects.toMatchObject({ statusCode: 422 })
     expect([a.db.inserted, b.db.inserted, a.calls.length, b.calls.length]).toEqual([0, 0, 0, 0])
+  })
+
+  it('D-NE296: a hora lida de OUTRA vida que não a travada (corrida com um refaturamento) → 409 RESOURCE_BUSY, nada aberto nem enviado', async () => {
+    const c = setup({}, { lifeEvent: 2 })                                // a reserva travou a vida 1 (nfe-memdb)
+    await expect(run(c)).rejects.toMatchObject({ statusCode: 409, code: 'RESOURCE_BUSY' })
+    expect([c.db.inserted, c.calls.length]).toEqual([0, 0])
+    const d = setup({}, { lifeEvent: null, createdAt: null })            // sem evento da vida: a causa é a S-A (422), não a corrida
+    await expect(run(d)).rejects.toMatchObject({ statusCode: 422 })
   })
 })
 

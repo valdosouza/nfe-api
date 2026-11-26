@@ -10,6 +10,9 @@ import { assertFamilyInCatalog, transmitInvoice, type ComposedFacts, type NfeAct
 import { MemDb, memStorage, ok, type Reply } from './nfe-memdb'
 import { NS } from './xsd-fixtures'
 import { saleInput } from './nfe-fixtures'
+import { readComposedFacts, type ComposeReaders } from '../nfe/compose'
+import type { ItemSimplesFact } from '../facts/merchandise-facts'
+import { emitter, recipient, sources } from './nfe-source-fixtures'
 import { testA1 } from './test-a1'
 
 jest.mock('fiscal-api', () => ({ ...jest.requireActual('fiscal-api'), nextInvoiceNumber: jest.fn() }))
@@ -480,5 +483,36 @@ describe('a transmissão nunca fala com a rede por conta própria', () => {
     // eslint-disable-next-line @typescript-eslint/no-var-requires
     const src = (require('fs').readFileSync(require('path').resolve(__dirname, '..', 'nfe', 'transmission.ts'), 'utf8') as string).replace(/\/\*[\s\S]*?\*\/|(?<!:)\/\/[^\n]*/g, '')
     for (const banned of [/\bfetch\(/, /from 'https?'/, /from 'node:http/, /rejectUnauthorized/, /process\.env/, /Date\.now\(\)/]) expect([banned.source, banned.test(src)]).toEqual([banned.source, false])
+  })
+})
+
+describe('NFE.E5.P7 — a transmissão de 2027 do Simples de ponta a ponta, pela composição real (D-NE286; ficha mudança 3)', () => {
+  it('venda de 2027 do CRT 1: o XML assinado leva cAtivSN e gTribSN, passa no XSD da NFe e do lote, e a voz sai A', async () => {
+    const NOW_2027 = new Date('2027-01-15T10:20:00-03:00')
+    const fact = (itemId: number, over: Partial<ItemSimplesFact> = {}): ItemSimplesFact => ({
+      itemId, activityCode: '01', competence: '2027-01', ibsRate: '0.1000', cbsRate: '0.9000', baseValue: '3000.00', ibsValue: '3.00', cbsValue: '27.00', classificationCode: '000001', ...over,
+    })
+    const readers: ComposeReaders = {
+      readInvoice: async () => ({ ...sources().header, dtEmission: '2027-01-15', createdAt: '2027-01-15 13:15:30', lifeEvent: 1, lifeDate: '2027-01-15' }),
+      listItems: async () => [...sources().items],
+      readNature: async () => ({ cfopId: '5101', operationNature: 'Venda de produção do estabelecimento' }),
+      readEmitter: async () => emitter, readRecipient: async () => recipient,
+      readPayments: async () => ({ billing: sources().payments.billing, installments: [{ parcel: 1, dueDate: '2027-03-20', value: '4000.00', paymentTypeId: 4, nfePaymentCode: '15' }] }),
+      readShipping: async () => sources().shipping, readReturnOrigins: async () => [],
+      invoiceLife: async () => ({ lifeEvent: 1 }), institutionZone: async () => 'America/Sao_Paulo',
+      readItemSimples: async () => [fact(10), fact(30, { baseValue: '1000.00', ibsValue: '1.00', cbsValue: '9.00' })],
+    }
+    const t = setup()
+    t.deps = { ...t.deps, now: () => NOW_2027,
+      readFacts: (conn, actor, ref, env) => readComposedFacts(conn as never, { storage: t.storage as never, techResponsible: sources().techResponsible, readers }, actor, ref, env) }
+    t.say(c => ok(ret(prot(c, '100')).split(DH).join('2027-01-15T10:20:00-03:00')))
+    const r = await transmitInvoice(t.deps, ACTOR, REF)
+    expect(r.outcome.kind).toBe('A')
+    expect(t.calls).toHaveLength(1)
+    const body = String(t.calls[0].body)
+    expect(body).toMatch(/<cAtivSN>01<\/cAtivSN>/)
+    expect(body).toMatch(/<IBSCBS>[\s\S]*<gTribSN>/)
+    expect(body).toMatch(/<dhEmi>2027-01-15T10:15:30-03:00<\/dhEmi>/)
+    expect(t.db.events).toMatchObject([{ attempt: 1, event: 1, kind: 'A', authority_code: '100' }])
   })
 })

@@ -85,6 +85,17 @@ describe('a Signature do fisco no retorno (NFE.E6.P5, gate adversarial da rodada
     expect(proc).toContain('<SignatureValue>AAAA</SignatureValue>')
     expect(await validateMessage('procEventoNFe', proc)).toEqual({ ok: true })
   })
+  it('a Signature só entra sob protNFe/retEvento/retInutNFe; com prefixo ds: e com Id ela sai equivalente; sob outro pai (infProt) o retorno é recusado', () => {
+    const nfe = `<NFe xmlns="${NS}"><infNFe Id="NFe${KEY}"/></NFe>`
+    const ret = (inside: string, outside: string) => `<retEnviNFe xmlns="${NS}" versao="4.00"><protNFe versao="4.00"><infProt><chNFe>${KEY}</chNFe><cStat>100</cStat>${inside}</infProt>${outside}</protNFe></retEnviNFe>`
+    expect(procNfeXml(nfe, ret(SIG, ''), KEY)).toBeNull()                                  // Signature dentro do infProt: recusada
+    const prefixed = SIG.replace('<Signature xmlns="http://www.w3.org/2000/09/xmldsig#" ', '<ds:Signature xmlns:ds="http://www.w3.org/2000/09/xmldsig#" Id="S1" ').replace('<Signature xmlns="http://www.w3.org/2000/09/xmldsig#">', '<ds:Signature xmlns:ds="http://www.w3.org/2000/09/xmldsig#" Id="S1">')
+      .replace(/<(\/?)(SignedInfo|CanonicalizationMethod|SignatureMethod|Reference|Transforms|Transform|DigestMethod|DigestValue|SignatureValue|KeyInfo|X509Data|X509Certificate)/g, '<$1ds:$2').replace('</Signature>', '</ds:Signature>')
+    const ok = procNfeXml(nfe, ret('', prefixed), KEY) as string
+    expect(ok).not.toBeNull()
+    expect(ok).toContain('<Signature xmlns="http://www.w3.org/2000/09/xmldsig#" Id="S1">')
+    expect(ok).not.toContain('ds:')
+  })
   it('o protNFe com Signature entra no nfeProc; comentário ou nó de outro namespace DENTRO da Signature segue recusado', () => {
     const nfe = `<NFe xmlns="${NS}"><infNFe Id="NFe${KEY}"/></NFe>`
     const ret = (inner: string) => `<retEnviNFe xmlns="${NS}" versao="4.00"><protNFe versao="4.00"><infProt><chNFe>${KEY}</chNFe><cStat>100</cStat></infProt>${inner}</protNFe></retEnviNFe>`

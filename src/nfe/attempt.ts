@@ -320,6 +320,15 @@ export async function highestAttemptNumber(q: Q, institutionId: number, environm
   return v == null ? null : Number(v)
 }
 
+/** O MENOR número gerado por ESTA API na série e no ambiente (qualquer tentativa); null = nenhum. É o limite de baixo da inutilização e dos buracos: abaixo dele é numeração do legado (D-NE265). */
+export async function lowestAttemptNumber(q: Q, institutionId: number, environment: 'H' | 'P', serie: number): Promise<number | null> {
+  const [rows] = await q.query(
+    `SELECT MIN(CAST(SUBSTRING(access_key, 26, 9) AS UNSIGNED)) AS lowest FROM ${T} WHERE tb_institution_id = ? AND environment = ? AND CAST(SUBSTRING(access_key, 23, 3) AS UNSIGNED) = ? AND deleted = 'N'`,
+    [institutionId, environment, serie])
+  const v = Array.isArray(rows) && rows[0] ? rows[0].lowest : null
+  return v == null ? null : Number(v)
+}
+
 /** As tentativas da série (número, nota, terminal, vida, protocolo e o instante da emissão em UTC) para derivar os buracos. */
 export async function attemptsOfSerie(q: Q, institutionId: number, environment: 'H' | 'P', serie: number): Promise<{ number: number; invoiceId: number; terminal: number; lifeEvent: number; protocol: string | null; dhEmission: string }[]> {
   const [rows] = await q.query(

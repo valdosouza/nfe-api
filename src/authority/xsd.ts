@@ -223,6 +223,9 @@ const DSIG_NS = 'http://www.w3.org/2000/09/xmldsig#'
  * A `Signature` (xmldsig) que o fisco põe no `protNFe`/`retEvento`/`retInutNFe` (NFE.E6.P5, gate adversarial da rodada 1): copiada nó a nó, no namespace dsig declarado UMA vez no
  * topo, sem atributo qualificado, CDATA, comentário nem PI — o mesmo fecho do escritor da NF-e. Só entra quando o chamador pede (`allowDsig`): o `detEvento` que NÓS enviamos nunca a leva.
  */
+/** Os ÚNICOS pais da `Signature` que o fisco devolve (NFE.E6.P5, rodada 2): `protNFe`, `retEvento`, `retInutNFe` — em qualquer outro elemento a `Signature` é recusada. */
+const SIGNATURE_PARENTS: ReadonlySet<string> = new Set(['protNFe', 'retEvento', 'retInutNFe'])
+
 function writeDsigElement(el: XmlNode, top: boolean): string | null {
   if (el.namespaceURI !== DSIG_NS) return null
   const name = el.localName ?? el.nodeName
@@ -260,7 +263,7 @@ export function writeNfeElement(el: XmlNode, root: boolean, allowDsig = false): 
     const c = el.childNodes[i]
     if (c.nodeType === TEXT) out += escText(c.nodeValue ?? '')
     else if (c.nodeType === ELEMENT) {
-      const w = allowDsig && c.namespaceURI === DSIG_NS && (c.localName ?? c.nodeName) === 'Signature' ? writeDsigElement(c, true) : writeNfeElement(c, false, allowDsig)
+      const w = allowDsig && SIGNATURE_PARENTS.has(name) && c.namespaceURI === DSIG_NS && (c.localName ?? c.nodeName) === 'Signature' ? writeDsigElement(c, true) : writeNfeElement(c, false, allowDsig)
       if (w === null) return null
       out += w
     }

@@ -31,6 +31,7 @@ interface Row { institution: number; id: number; void_id: string; environment: s
 /** A tabela das faixas e das tentativas em memória: só o SQL que `void-range.ts` fala. */
 class VoidDb {
   rows: Row[] = []
+  first: number | null = 1
   attempts: { accessKey: string; environment: string; invoiceId?: number; terminal?: number; lifeEvent?: number; protocol?: string | null }[] = []
   statements: string[] = []
   openTx = 0
@@ -51,6 +52,7 @@ class VoidDb {
       const hit = this.rows.find(r => r.institution === params[0] && r.id === params[1])
       return [hit ? [this.view(hit)] : [], []]
     }
+    if (/SELECT MIN\(CAST\(SUBSTRING\(access_key/.test(s)) return [[{ lowest: this.first }], []]               // o 1º número gerado por esta API (NFE.E6.P5, rodada 2)
     if (/FROM tb_invoice_merchandise_transmission WHERE tb_institution_id/.test(s)) {
       const [, env, serie, from, to] = params
       const hit = this.attempts.map(a => ({ number: Number(a.accessKey.slice(25, 34)), serie: Number(a.accessKey.slice(22, 25)), env: a.environment, invoiceId: a.invoiceId ?? 7001, terminal: a.terminal ?? 0, lifeEvent: a.lifeEvent ?? 1, protocol: a.protocol ?? null }))
@@ -82,8 +84,9 @@ const retInut = (cStat: string, o: { from?: string; to?: string; nProt?: string 
     + `<CNPJ>${CNPJ}</CNPJ><mod>55</mod><serie>1</serie><nNFIni>${o.from ?? '10'}</nNFIni><nNFFin>${o.to ?? '12'}</nNFFin>${o.dh === null ? '' : `<dhRecbto>${o.dh ?? DH}</dhRecbto>`}`
     + `${o.nProt === null ? '' : `<nProt>${o.nProt ?? '141260000000003'}</nProt>`}</infInut></retInutNFe>`)
 
-function setup(over: { emitter?: Partial<EmitterIdentity>; last?: number | null } = {}) {
+function setup(over: { emitter?: Partial<EmitterIdentity>; last?: number | null; first?: number | null } = {}) {
   const db = new VoidDb()
+  db.first = over.first === undefined ? 1 : over.first
   const storage = memStorage()
   const calls: HttpsCall[] = []
   const txAtCall: number[] = []
@@ -210,6 +213,17 @@ describe('o que deixa a linha PENDENTE', () => {
 
 describe('a recusa local, sem ir ao fisco e sem linha (D-NE263 e o resto)', () => {
   const none = (t: Env) => expect([t.calls.length, t.db.rows.length]).toEqual([0, 0])
+
+  it('abaixo do 1º número gerado por esta API (numeração do legado) ou sem número nenhum gerado por ela: 422, nada ao fisco (NFE.E6.P5, gate da rodada 2)', async () => {
+    for (const first of [11, 13, null]) {
+      const t = setup({ first })
+      await expect(run(t)).rejects.toMatchObject({ statusCode: 422 })
+      none(t)
+    }
+    const edge = setup({ first: 10 })
+    edge.say(() => ok(retInut('102')))
+    expect((await run(edge)).state).toBe('homologated')                                           // o 1º gerado EXATO cabe
+  })
 
   it('número acima do último gerado (na faixa ou cruzando-o): 422; sequência sem número gerado: 422', async () => {
     for (const [last, over] of [[9, {}], [11, {}], [null, {}], [0, {}]] as [number | null, object][]) {

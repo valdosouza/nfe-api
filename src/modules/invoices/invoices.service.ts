@@ -81,7 +81,9 @@ export function responseOfCancel(r: CancelResult): CancelResponse {
 }
 
 export async function cancel(ctx: AppContext, inst: InstitutionPayload, ref: InvoiceRef, reason: string): Promise<CancelResponse> {
-  return responseOfCancel(await cancelInvoice(nfeDepsOf(ctx), actorOf(inst), ref, reason))
+  const r = await cancelInvoice(nfeDepsOf(ctx), actorOf(inst), ref, reason)
+  if (r.incident) reportIncident(ctx, { route: 'invoice-cancel', institutionId: inst.institutionId, invoiceId: r.invoiceId, accessKey: null, incident: r.incident })    // D-NE237 (gate da P5: o file-conflict do cancelamento também avisa)
+  return responseOfCancel(r)
 }
 
 /** As vozes de uma NF-e que o fisco REGISTROU como autorizada (a A, e o K/N/C do cancelamento dela) — o procNFe existe e o DANFE sai; denegada (D) tem procNFe mas não DANFE (S-8). */

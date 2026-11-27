@@ -14,6 +14,7 @@ import type { KeyProof } from './key-proof'
  */
 export function healthHandler(ctx: AppContext, keyProof: KeyProof): RequestHandler {
   return async (_req, res) => {
+   try {
     let db = false
     try { await ctx.pool.query('SELECT 1 FROM tb_establishment_issuer LIMIT 1'); db = true } catch { db = false }
     const masterKey = keyProof.masterKey
@@ -23,5 +24,6 @@ export function healthHandler(ctx: AppContext, keyProof: KeyProof): RequestHandl
     const serverChain = { loaded: ctx.serverCa.certificates.length > 0, source: ctx.serverCa.source }
     // D-NE54 c: o ÚLTIMO consStatServ de cada autorizador consultado pela passada do rodízio — o health só LÊ o quadro (nunca fala com o fisco); autorizador fora não derruba o health
     res.status(ok ? 200 : 503).json({ status: ok ? 'ok' : 'degraded', db, masterKey, storage, serverChain, authorities: ctx.statusBoard?.list() ?? [] })
+   } catch { res.status(503).json({ status: 'degraded', db: false, masterKey: false, storage: false, serverChain: { loaded: false, source: 'unknown' }, authorities: [] }) }   // NFE.E6.P5 (rodada 2): nada aqui derruba o processo
   }
 }

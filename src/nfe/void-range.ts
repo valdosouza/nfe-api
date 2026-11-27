@@ -10,7 +10,7 @@ import { isFileConflict, merchandiseFileKey } from './fiscal-file'
 import { NUMBER_VOID_TABLE } from './number-void'
 import { procInutXml, voidFileName } from './proc-evento'
 import { assertFamilyOf, type NfeActor, type NfeDeps } from './transmission'
-import { attemptsInNumberRange } from './attempt'
+import { attemptsInNumberRange, lowestAttemptNumber } from './attempt'
 
 /**
  * A INUTILIZAÇÃO de faixa (NFE.E6.P2.T2 — ficha-nfe-e6-p2-cancelar-inutilizar-rodizio.md §7-5; D-NE8, D-NE40, D-NE50, D-NE110, D-NE163, D-NE169, D-NE171, D-NE207, D-NE210, D-NE257, D-NE263,
@@ -120,6 +120,9 @@ export async function voidRange(deps: VoidDeps, actor: NfeActor, req: VoidReques
     const seq = await lockNumberSequence(conn as never, { institutionId: actor.institutionId, model: '55', serie: req.serie })
     if (seq.environment !== environment) throw new Error('o ambiente da sequência de números difere do da habilitação travada')
     if (seq.lastNumber === null || seq.lastNumber < 1) throw documentInvalid('Nada a inutilizar nesta série: nenhum número foi gerado', [{ field: 'from', message: 'Sequência sem número gerado' }])
+    // NFE.E6.P5 (gate adversarial da rodada 2): abaixo do 1º número gerado por esta API é numeração do legado — inutilizá-la queimaria nota do ERP Desktop (a mesma regra do `numbering`, agora também na escrita)
+    const lowest = await lowestAttemptNumber(conn as never, actor.institutionId, environment, req.serie)
+    if (lowest === null || req.from < lowest) throw documentInvalid('A faixa começa abaixo do 1º número gerado por esta API — a numeração anterior é do legado e não se inutiliza por aqui', [{ field: 'from', message: lowest === null ? 'Nenhum número foi gerado por esta API na série' : `1º número gerado por esta API: ${lowest}` }])
     if (req.to > seq.lastNumber) throw documentInvalid('A faixa passa do último número gerado — só se inutiliza número que existe (D-NE263)', [{ field: 'to', message: `Último número gerado: ${seq.lastNumber}` }])
 
     // o endereço do fisco e o pedido ANTES da linha: serviço desativado/sem IE/sem binding = recusa local, nada reservado

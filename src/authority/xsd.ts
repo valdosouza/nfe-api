@@ -217,7 +217,34 @@ const escAttr = (s: string) => s.replace(/[&<>"\r\t\n]/g, c => ESCAPES[c])
  * normaliza U+0085/U+2028 crus para `\n` (regra do XML 1.1 do @xmldom), o que só pode RECUSAR um xJust que o fisco aceitaria, nunca aceitar
  * um inválido (achado do gate adversarial da NFE.E4.P3.T4, para o núcleo).
  */
-export function writeNfeElement(el: XmlNode, root: boolean): string | null {
+const DSIG_NS = 'http://www.w3.org/2000/09/xmldsig#'
+
+/**
+ * A `Signature` (xmldsig) que o fisco põe no `protNFe`/`retEvento`/`retInutNFe` (NFE.E6.P5, gate adversarial da rodada 1): copiada nó a nó, no namespace dsig declarado UMA vez no
+ * topo, sem atributo qualificado, CDATA, comentário nem PI — o mesmo fecho do escritor da NF-e. Só entra quando o chamador pede (`allowDsig`): o `detEvento` que NÓS enviamos nunca a leva.
+ */
+function writeDsigElement(el: XmlNode, top: boolean): string | null {
+  if (el.namespaceURI !== DSIG_NS) return null
+  const name = el.localName ?? el.nodeName
+  let out = `<${name}${top ? ` xmlns="${DSIG_NS}"` : ''}`
+  const attrs = el.attributes
+  for (let i = 0; attrs && i < attrs.length; i++) {
+    const a = attrs[i] as { name: string; value: string; namespaceURI?: string | null }
+    if (a.namespaceURI === XMLNS_NS) continue
+    if (a.namespaceURI || a.name.includes(':')) return null
+    out += ` ${a.name}="${escAttr(a.value)}"`
+  }
+  out += '>'
+  for (let i = 0; i < el.childNodes.length; i++) {
+    const c = el.childNodes[i]
+    if (c.nodeType === TEXT) out += escText(c.nodeValue ?? '')
+    else if (c.nodeType === ELEMENT) { const w = writeDsigElement(c, false); if (w === null) return null; out += w }
+    else return null
+  }
+  return `${out}</${name}>`
+}
+
+export function writeNfeElement(el: XmlNode, root: boolean, allowDsig = false): string | null {
   if (el.namespaceURI !== NFE_NS) return null
   const name = el.localName ?? el.nodeName
   let out = `<${name}${root ? ` xmlns="${NFE_NS}"` : ''}`
@@ -232,7 +259,11 @@ export function writeNfeElement(el: XmlNode, root: boolean): string | null {
   for (let i = 0; i < el.childNodes.length; i++) {
     const c = el.childNodes[i]
     if (c.nodeType === TEXT) out += escText(c.nodeValue ?? '')
-    else if (c.nodeType === ELEMENT) { const w = writeNfeElement(c, false); if (w === null) return null; out += w }
+    else if (c.nodeType === ELEMENT) {
+      const w = allowDsig && c.namespaceURI === DSIG_NS && (c.localName ?? c.nodeName) === 'Signature' ? writeDsigElement(c, true) : writeNfeElement(c, false, allowDsig)
+      if (w === null) return null
+      out += w
+    }
     else return null
   }
   return `${out}</${name}>`

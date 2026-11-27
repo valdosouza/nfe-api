@@ -81,6 +81,19 @@ function setup(opts: { isReturn?: boolean; items?: ReturnType<typeof item>[]; au
 }
 const refused = async (p: Promise<unknown>) => p.then(() => ({ status: 0, code: '', fields: [] as string[] }), (e: any) => ({ status: e.statusCode as number, code: e.code as string, fields: (e.fields ?? []).map((f: any) => `${f.field}: ${f.message}`) }))
 
+describe('a série da nota (NFE.E6.P5, gate adversarial da rodada 1)', () => {
+  it('série nula, vazia ou não numérica recusa com 422 em vez de virar a série 0', async () => {
+    for (const serie of [null, '', '  ', 'x']) {
+      const t = setup()
+      const readers = t.readers as any
+      const original = readers.readInvoice
+      readers.readInvoice = async (...a: any[]) => ({ ...(await (original as any)(...a)), serie })
+      const r = await refused(t.compose())
+      expect([r.status, r.fields.join(',').includes('serie')]).toEqual([422, true])
+    }
+  })
+})
+
 describe('a venda', () => {
   it('compõe série, CNPJ, UF, IE, data e hora, e o construtor do candidato com o dhEmi e o CSRT dados', async () => {
     const f = await setup().compose()

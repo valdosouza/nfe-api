@@ -70,7 +70,7 @@ export function procEventoXml(signedEvento: string, responseXml: string, chNFe: 
     return textOf(child(inf, 'chNFe')) === chNFe && textOf(child(inf, 'tpEvento')) === tpEvento && textOf(child(inf, 'nSeqEvento')) === String(nSeq)
   })
   if (found.length !== 1) return null
-  const ret = writeNfeElement(found[0], false)
+  const ret = writeNfeElement(found[0], false, true)
   if (ret === null) return null
   return `<procEventoNFe xmlns="${NS}" versao="1.00">${bare(signedEvento)}${ret}</procEventoNFe>`
 }
@@ -86,7 +86,7 @@ export function procInutXml(signedInut: string, responseXml: string, parts: { cU
       && textOf(child(inf, 'serie')) === String(parts.serie) && textOf(child(inf, 'nNFIni')) === String(parts.from) && textOf(child(inf, 'nNFFin')) === String(parts.to)
   })
   if (found.length !== 1) return null
-  const ret = writeNfeElement(found[0], false)
+  const ret = writeNfeElement(found[0], false, true)
   if (ret === null) return null
   return `<ProcInutNFe xmlns="${NS}" versao="4.00">${bare(signedInut)}${ret}</ProcInutNFe>`
 }

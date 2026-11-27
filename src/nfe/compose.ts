@@ -122,7 +122,8 @@ export async function readComposedFacts(q: Queryable, env: ComposeEnv, actor: Nf
   }
 
   const uf = trial.emit.ender.UF
-  const serie = Number(header.serie)
+  const serie = header.serie === null || header.serie === undefined || String(header.serie).trim() === '' ? NaN : Number(header.serie)
+  if (!Number.isInteger(serie)) throw documentInvalid('A nota não tem série', [{ field: 'serie', message: 'Série ausente ou inválida — a série da nota vem do faturamento (D-NE243: série 1)' }])
   if (!trial.emit.CNPJ || !uf) throw documentInvalid('O emitente não pôde ser composto', [{ field: 'emit', message: 'CNPJ ou UF do emitente ausente' }])
   return {
     serie, cnpj: trial.emit.CNPJ, uf: uf as ComposedFacts['uf'], hasStateRegistration: !!trial.emit.IE, dtEmission: header.dtEmission, createdAt: header.createdAt, lifeEvent: header.lifeEvent, lifeDate: header.lifeDate,

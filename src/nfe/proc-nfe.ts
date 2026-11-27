@@ -20,7 +20,7 @@ export function procNfeXml(signedNfe: string, responseXml: string, chNFe: string
   try { doc = parseXml(responseXml) } catch { return null }
   const found = elementsOf(doc, false).filter(e => e.nodeType === ELEMENT && e.namespaceURI === NS && local(e) === 'protNFe' && textOf(child(child(e, 'infProt') ?? e, 'chNFe')) === chNFe)
   if (found.length !== 1) return null
-  const prot = writeNfeElement(found[0], false)
+  const prot = writeNfeElement(found[0], false, true)
   if (prot === null) return null
   const nfe = String(signedNfe).replace(/^\s*<\?xml[^?]*\?>\s*/, '').trim()
   return `<nfeProc xmlns="${NS}" versao="4.00">${nfe}${prot}</nfeProc>`

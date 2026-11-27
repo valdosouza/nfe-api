@@ -5,6 +5,7 @@
  */
 import { envEvento110111, eventoNFe110111, inutNFe, signEventoNFe, signInutNFe } from '../authority/messages'
 import { validateMessage } from '../authority/xsd'
+import { procNfeXml } from '../nfe/proc-nfe'
 import { eventFileName, procEventoXml, procInutXml, voidFileName } from '../nfe/proc-evento'
 import { saleKey } from './nfe-fixtures'
 import { testA1 } from './test-a1'
@@ -71,6 +72,28 @@ describe('o procEventoNFe (D-NE50: o evento assinado + o retEvento da nossa chav
     const withForeign = retEvento().replace('<xEvento>', '<o:x xmlns:o="urn:outro">1</o:x><xEvento>')
     expect(procEventoXml(ev, withComment, KEY)).toBeNull()
     expect(procEventoXml(ev, withForeign, KEY)).toBeNull()
+  })
+})
+
+describe('a Signature do fisco no retorno (NFE.E6.P5, gate adversarial da rodada 1)', () => {
+  const SIG = '<Signature xmlns="http://www.w3.org/2000/09/xmldsig#"><SignedInfo><CanonicalizationMethod Algorithm="http://www.w3.org/TR/2001/REC-xml-c14n-20010315"/><SignatureMethod Algorithm="http://www.w3.org/2000/09/xmldsig#rsa-sha1"/><Reference URI="#x"><Transforms><Transform Algorithm="http://www.w3.org/2000/09/xmldsig#enveloped-signature"/><Transform Algorithm="http://www.w3.org/TR/2001/REC-xml-c14n-20010315"/></Transforms><DigestMethod Algorithm="http://www.w3.org/2000/09/xmldsig#sha1"/><DigestValue>AAAAAAAAAAAAAAAAAAAAAAAAAAA=</DigestValue></Reference></SignedInfo><SignatureValue>AAAA</SignatureValue><KeyInfo><X509Data><X509Certificate>AAAA</X509Certificate></X509Data></KeyInfo></Signature>'
+  it('o retEvento com Signature vira procEventoNFe que passa no XSD, com a Signature copiada e o dsig declarado uma vez', async () => {
+    const proc = procEventoXml(signed(), retEvento().replace('</retEvento>', `${SIG}</retEvento>`), KEY) as string
+    expect(proc).not.toBeNull()
+    expect(proc).toContain('<retEvento versao="1.00">')
+    expect(proc.split('xmlns="http://www.w3.org/2000/09/xmldsig#"').length - 1).toBeGreaterThanOrEqual(2)  // a do evento assinado e a do retorno
+    expect(proc).toContain('<SignatureValue>AAAA</SignatureValue>')
+    expect(await validateMessage('procEventoNFe', proc)).toEqual({ ok: true })
+  })
+  it('o protNFe com Signature entra no nfeProc; comentário ou nó de outro namespace DENTRO da Signature segue recusado', () => {
+    const nfe = `<NFe xmlns="${NS}"><infNFe Id="NFe${KEY}"/></NFe>`
+    const ret = (inner: string) => `<retEnviNFe xmlns="${NS}" versao="4.00"><protNFe versao="4.00"><infProt><chNFe>${KEY}</chNFe><cStat>100</cStat></infProt>${inner}</protNFe></retEnviNFe>`
+    const ok = procNfeXml(nfe, ret(SIG), KEY) as string
+    expect(ok).not.toBeNull()
+    expect(ok.startsWith(`<nfeProc xmlns="${NS}" versao="4.00"><NFe`)).toBe(true)
+    expect(ok.endsWith('</KeyInfo></Signature></protNFe></nfeProc>')).toBe(true)
+    expect(procNfeXml(nfe, ret(SIG.replace('<SignatureValue>', '<!-- x --><SignatureValue>')), KEY)).toBeNull()
+    expect(procNfeXml(nfe, ret(SIG.replace('<SignatureValue>', '<o:x xmlns:o="urn:outro">1</o:x><SignatureValue>')), KEY)).toBeNull()
   })
 })
 

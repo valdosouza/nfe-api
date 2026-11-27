@@ -2,12 +2,12 @@
  * NFE.E5.P3 (mudança 8 da ficha, S7) — a ponte PURA fatos do ERP web → entrada do builder: finNFe/tpNF/idDest (S10), valores do item pela
  * fórmula do faturamento (S11), unidade tributável (S8), pagamento e cobrança (S4), PIS/COFINS registrados (S2) e a lista inteira de violações.
  */
+import type { ItemSimplesFact, MerchandiseItemFact, PartyFact } from '../facts/merchandise-facts'
 import { validateMessage } from '../authority/xsd'
 import { numberItems } from '../nfe/item-numbering'
 import { buildNfeXml } from '../nfe/nfe-builder'
 import { nfeInputFromFacts, originRef, type NfeInputSources } from '../nfe/nfe-input'
-import type { MerchandiseItemFact, PartyFact } from '../facts/merchandise-facts'
-import { CLIENT_CNPJ, saleKey, signNfe, SETES_CNPJ } from './nfe-fixtures'
+import { CLIENT_CNPJ, saleKey, signNfe, simplesFor, SETES_CNPJ } from './nfe-fixtures'
 import { address, emitter, item, recipient, sources, unit } from './nfe-source-fixtures'
 
 jest.setTimeout(60_000)
@@ -170,5 +170,109 @@ describe('ponte fatos → entrada: a devolução', () => {
     expect(violations(src({ origins: new Map() }))).toEqual([
       'det[1].origin: A nota de origem do item não tem NF-e autorizada conhecida', 'det[2].origin: A nota de origem do item não tem NF-e autorizada conhecida'])
     expect(violations(src({ returnOrigins: [src().returnOrigins[0], { ...src().returnOrigins[1], originItemId: 99 }] }))).toEqual(['det[2].origin: O item de origem não está na nota de origem'])
+  })
+})
+
+describe('NFE.E5.P6 — ponte: o IBS/CBS do Simples de 2027 (D-NE286, D-NE288 a D-NE290)', () => {
+  const fact = (itemId: number, over: Partial<ItemSimplesFact> = {}): ItemSimplesFact => ({
+    itemId, activityCode: itemId === 10 ? '01' : '02', competence: '2027-01', ibsRate: '0.1000', cbsRate: '0.9000',
+    baseValue: itemId === 10 ? '3000.00' : '1000.00', ibsValue: itemId === 10 ? '3.00' : '1.00', cbsValue: itemId === 10 ? '27.00' : '9.00', classificationCode: '000001', ...over,
+  })
+  const KEY27 = saleKey({ emissionDate: '2027-01-15' })
+  const sale27 = (over: Partial<NfeInputSources> = {}) => sources({
+    dhEmi: '2027-01-15T10:15:30-03:00', header: { ...sources().header, dtEmission: '2027-01-15' },
+    payments: { billing: sources().payments.billing, installments: [{ parcel: 1, dueDate: '2027-02-20', value: '4000.00', paymentTypeId: 4, nfePaymentCode: '15' }] },
+    simples: [fact(10), fact(30)], ...over,
+  })
+  it('ponta a ponta: fatos congelados → entrada → XML assinado válido no 010h, com os totais do grupo', async () => {
+    const input = nfeInputFromFacts(sale27())
+    expect(input.items.map(i => i.simples)).toEqual([
+      { activity: '01', classification: '000001', ibsRate: '0.1000', cbsRate: '0.9000', ibsCents: 300, cbsCents: 2700, baseCents: 300000 },
+      { activity: '02', classification: '000001', ibsRate: '0.1000', cbsRate: '0.9000', ibsCents: 100, cbsCents: 900, baseCents: 100000 },
+    ])
+    const built = buildNfeXml(input, KEY27)
+    expect(built.xml).toContain('<IBSCBSTot><vBCIBSCBS>4000.00</vBCIBSCBS><gTribSN><vIBSSN>4.00</vIBSSN><vCBSSN>36.00</vCBSSN></gTribSN></IBSCBSTot>')
+    expect(await validateMessage('NFe', signNfe(built))).toEqual({ ok: true })
+  })
+  it('item sem linha congelada (ou regime regular) → violação citando o item; a lista vem inteira', () => {
+    expect(violations(sale27({ simples: [fact(10)] }))).toEqual(['det[30].simples: O faturamento não guardou o IBS/CBS do Simples do item (ou regime regular) — fora-do-primeiro-release'])
+    expect(violations(sale27({ simples: [] }))).toHaveLength(2)
+  })
+  it('valor ilegível na linha congelada → violação com o campo', () => {
+    expect(violations(sale27({ simples: [fact(10, { ibsValue: 'abc' }), fact(30)] }))).toEqual([expect.stringMatching(/^det\[10\]\.vIBSSN: IBS do Simples: valor inválido/)])
+  })
+  it('sem a leitura (campo opcional ausente) a ponte não inventa: o BUILDER recusa o item sem o grupo (D-NE290)', () => {
+    const input = nfeInputFromFacts(sale27({ simples: undefined }))
+    expect(input.items.every(i => i.simples === undefined)).toBe(true)
+    expect(() => buildNfeXml(input, KEY27)).toThrow(/não pode ser montada: 2 problema/)
+  })
+  it('nota de 2026 ignora a leitura (o grupo não vai antes de 01/01/2027) e CRT ≠ 1 também', () => {
+    expect(nfeInputFromFacts(sources({ simples: [fact(10), fact(30)] })).items.every(i => i.simples === undefined)).toBe(true)
+    const crt3 = { ...emitter, tax: { ...emitter.tax!, crt: '3' } }
+    expect(nfeInputFromFacts(sale27({ emitter: crt3 })).items.every(i => i.simples === undefined)).toBe(true)
+  })
+})
+
+describe('NFE.E5.P6 — ponte: o que os gates mostraram que faltava', () => {
+  const fact = (itemId: number, over: Partial<ItemSimplesFact> = {}): ItemSimplesFact => ({
+    itemId, activityCode: '01', competence: '2027-01', ibsRate: '0.1000', cbsRate: '0.9000', baseValue: '3000.00', ibsValue: '3.00', cbsValue: '27.00', classificationCode: '000001', ...over,
+  })
+  const at = (dhEmi: string, over: Partial<NfeInputSources> = {}) => sources({
+    dhEmi, header: { ...sources().header, dtEmission: dhEmi.slice(0, 10) },
+    payments: { billing: sources().payments.billing, installments: [{ parcel: 1, dueDate: '2027-03-20', value: '4000.00', paymentTypeId: 4, nfePaymentCode: '15' }] },
+    simples: [fact(10), fact(30, { baseValue: '1000.00', ibsValue: '1.00', cbsValue: '9.00' })], ...over,
+  })
+  it('a fronteira na PONTE: 01/01/2027T00:00:00 já leva o grupo; 31/12/2026T23:59:59 não (a mutação >= → > da ponte morre)', () => {
+    expect(nfeInputFromFacts(at('2027-01-01T00:00:00-03:00', { header: { ...sources().header, dtEmission: '2027-01-01' } })).items.every(i => i.simples !== undefined)).toBe(true)
+    expect(nfeInputFromFacts(sources({ dhEmi: '2026-12-31T23:59:59-03:00', simples: [fact(10), fact(30)] })).items.every(i => i.simples === undefined)).toBe(true)
+  })
+  it('competência diferente do mês da emissão, linha duplicada do item e valor ausente → violação (nada de silêncio)', () => {
+    const at15 = (s: ItemSimplesFact[]) => at('2027-01-15T10:15:30-03:00', { simples: s })
+    expect(violations(at15([fact(10, { competence: '2026-12' }), fact(30)]))).toEqual(['det[10].simples: A competência do percentual congelado é diferente do mês da emissão (A-IB138a)'])
+    expect(violations(at15([fact(10), fact(10), fact(30)]))).toEqual(['det[10].simples: Mais de uma linha do IBS/CBS do Simples para o item'])
+    expect(violations(at15([fact(10, { baseValue: null as unknown as string }), fact(30)]))).toEqual(['det[10].simples: Linha do IBS/CBS do Simples com valor ausente'])
+  })
+  it('a leitura que não é lista (ou traz null) não derruba a ponte: o builder recusa o item sem o grupo', () => {
+    expect(nfeInputFromFacts(at('2027-01-15T10:15:30-03:00', { simples: null as unknown as ItemSimplesFact[] })).items.every(i => i.simples === undefined)).toBe(true)
+  })
+})
+
+describe('NFE.E5.P6 — ponte: a devolução de 2027 copia o grupo do XML da origem (D-NE288, D-NE289, S6)', () => {
+  const ORIGIN_KEY = saleKey({ emissionDate: '2027-01-15' })
+  const RET_KEY = saleKey({ number: 16, cnf: '70531942', emissionDate: '2027-01-05' })
+  const entries = (g: boolean) => new Map([[1, { qCom: '2.0000', simples: g ? simplesFor(0) : null }], [2, { qCom: '3', simples: g ? simplesFor(1) : null }]])
+  const originsOf = (simples?: ReturnType<typeof entries>) => new Map([[originRef(4000, 0), { accessKey: ORIGIN_KEY, numbering: numberItems([10, 30]), ...(simples ? { simples } : {}) }]])
+  const returned = (itemId: number, q: string, u: string) => item(itemId, { kind: 'Adjust', quantity: q, unitValue: u, icms: { ...item(itemId).icms, cfopId: '1201', credCalcAliq: '0.00', credExplValue: '0.00', approximateTax: '0.00' } })
+  const src = (q1: string, simples?: ReturnType<typeof entries>): NfeInputSources => sources({
+    dhEmi: '2027-01-05T09:00:00-03:00', header: { ...sources().header, invoiceId: 5002, dtEmission: '2027-01-05', totalValue: q1 === '2' ? '4000.00' : '2500.00', note: null },
+    items: [returned(1, q1, '1500.000000'), returned(2, '3', '333.333333')], operationNature: 'Devolução de venda de produção do estabelecimento',
+    returnOrigins: [
+      { itemId: 1, kind: 'Adjust', originInvoiceId: 4000, originTerminal: 0, originItemId: 10, originKind: 'Sale' },
+      { itemId: 2, kind: 'Adjust', originInvoiceId: 4000, originTerminal: 0, originItemId: 30, originKind: 'Sale' },
+    ],
+    origins: originsOf(simples),
+  })
+  it('origem com o grupo, devolução da quantidade inteira → o grupo é copiado, o total soma o grupo e o XML passa no XSD', async () => {
+    const input = nfeInputFromFacts(src('2', entries(true)))
+    expect(input.items.map(i => i.simples)).toEqual([simplesFor(0), simplesFor(1)])
+    const built = buildNfeXml(input, RET_KEY)
+    expect(built.xml).toContain('<IBSCBSTot><vBCIBSCBS>4000.00</vBCIBSCBS><gTribSN><vIBSSN>4.00</vIBSSN><vCBSSN>36.00</vCBSSN></gTribSN></IBSCBSTot>')
+    expect(await validateMessage('NFe', signNfe(built))).toEqual({ ok: true })
+  })
+  it('origem de 2026 (sem grupo) → a devolução de 2027 sai SEM o grupo (D-NE289), válida no XSD', async () => {
+    const input = nfeInputFromFacts(src('2', entries(false)))
+    expect(input.items.map(i => i.simples)).toEqual([null, null])
+    const built = buildNfeXml(input, RET_KEY)
+    expect(built.xml).not.toMatch(/<(IBSCBS|IBSCBSTot|cAtivSN|gTribSN)[\s>/]/)
+    expect(await validateMessage('NFe', signNfe(built))).toEqual({ ok: true })
+  })
+  it('S6: devolução PARCIAL de item que leva o grupo é recusada; parcial de item sem grupo passa', () => {
+    expect(violations(src('1', entries(true)))).toEqual(['det[1].qCom: Devolução parcial de item com o grupo do Simples — fora-do-primeiro-release'])
+    expect(violations(src('1', entries(false)))).toEqual([])
+  })
+  it('origem sem a leitura do grupo, ou sem o item no XML → violação; a composição de 2026 não precisa dela', () => {
+    expect(violations(src('2'))).toEqual([
+      'det[1].origin: O grupo do Simples da nota de origem não foi lido do XML autorizado (D-NE288)', 'det[2].origin: O grupo do Simples da nota de origem não foi lido do XML autorizado (D-NE288)'])
+    expect(violations(src('2', new Map([[1, { qCom: '2.0000', simples: null }]])))).toEqual(['det[2].origin: O item de origem não está no XML autorizado da nota de origem'])
   })
 })

@@ -2,11 +2,12 @@ import { erp, invoiceRef, isAuthorized, type FiscalStorage, type InvoiceRef, typ
 import type { Environment } from '../authority/authorizers'
 import * as facts from '../facts/merchandise-facts'
 import { latestAttempt } from './attempt'
-import { documentInvalid } from './errors'
+import { documentInvalid, returnMismatch } from './errors'
 import { merchandiseFileKey } from './fiscal-file'
 import { numberItems, type ItemNumbering } from './item-numbering'
+import { IBSCBS_SIMPLES_FROM } from './nfe-builder'
 import { nfeInputFromFacts, originRef, type NfeInputSources } from './nfe-input'
-import { assertReturnMatchesOrigin, type ReturnItemCheck } from './return-reference'
+import { assertReturnMatchesOrigin, originKeyOf, readOriginSimples, type OriginItemSimples, type ReturnItemCheck } from './return-reference'
 import type { ComposedFacts, NfeActor } from './transmission'
 
 /**
@@ -15,6 +16,11 @@ import type { ComposedFacts, NfeActor } from './transmission'
  * origem; o `procNFe` precisa ser autorizado e da nossa chave — a SEFAZ não confere por item) ANTES de abrir tentativa. A origem tem de ter sido emitida por esta nfe-api e
  * estar autorizada (última voz A, protocolo gravado) e o arquivo existir; senão 422 com o item, nunca se chuta a chave.
  * As leituras entram por `ComposeReaders` (o padrão é a fonte de fatos), para o teste injetar fatos sem banco.
+ *
+ * SIMPLES DE 2027 (NFE.E5.P7, junção do NFE.E5.P6 — D-NE286, D-NE288, D-NE289; ficha-nfe-e5-p7 S1 e S2): só quando a nota é de 01/01/2027 em diante
+ * (`dt_emission` — D-NE278) e o emitente é do Simples (CRT 1), a mesma condição da ponte. Na venda, o IBS/CBS que o faturamento congelou
+ * (`readItemSimples`); na devolução, o grupo do item da origem lido do MESMO procNFe arquivado que a conferência usa (`readOriginSimples`), com a chave
+ * tirada dele (`originKeyOf`) e conferida contra a da tentativa autorizada. Em 2026, nenhuma leitura nem recusa nova: a chave segue a da tentativa.
  */
 
 export interface ComposeReaders {
@@ -26,6 +32,7 @@ export interface ComposeReaders {
   readonly readPayments: typeof facts.readPayments
   readonly readShipping: typeof facts.readShipping
   readonly readReturnOrigins: typeof facts.readReturnOrigins
+  readonly readItemSimples: typeof facts.readItemSimples
   readonly invoiceLife: (q: Queryable, schemaName: string, ref: InvoiceRef) => Promise<{ lifeEvent: number | null } | null>
   readonly institutionZone: (q: Queryable, schemaName: string, institutionId: number) => Promise<string>
 }
@@ -33,6 +40,7 @@ export interface ComposeReaders {
 export const DEFAULT_READERS: ComposeReaders = {
   readInvoice: facts.readMerchandiseInvoice, listItems: facts.listMerchandiseItems, readNature: facts.readOperationNature, readEmitter: facts.readEmitter,
   readRecipient: facts.readRecipient, readPayments: facts.readPayments, readShipping: facts.readShipping, readReturnOrigins: facts.readReturnOrigins,
+  readItemSimples: facts.readItemSimples,
   invoiceLife: (q, s, r) => erp.invoiceLife(q, s, r), institutionZone: (q, s, i) => erp.institutionZone(q, s, i),
 }
 
@@ -58,9 +66,14 @@ export async function readComposedFacts(q: Queryable, env: ComposeEnv, actor: Nf
     operationNature: (await r.readNature(q, items)).operationNature, emitter, recipient,
     payments: await r.readPayments(q, schema, ref), shipping: await r.readShipping(q, schema, ref), returnOrigins, techResponsible: env.techResponsible,
   }
+  // Simples de 2027 (S1): a condição da ponte, pela data do faturamento e o CRT do emitente
+  // a data na forma AAAA-MM-DD antes da comparação (um `dt_emission` nulo vira o texto 'null', que passaria no >=) — como a ponte e o `dhEmiOf`
+  const simples2027 = /^\d{4}-\d{2}-\d{2}$/.test(header.dtEmission) && header.dtEmission >= IBSCBS_SIMPLES_FROM && emitter.tax?.crt === '1'
+  // só a VENDA lê o que o faturamento congelou; a devolução tira o grupo do XML da origem (D-NE288)
+  if (simples2027 && returnOrigins.length === 0) base.simples = await r.readItemSimples(q, schema, ref)
 
   // devolução: as notas de origem, cada uma com a chave AUTORIZADA, a numeração dos itens dela e o procNFe arquivado conferido contra os itens devolvidos
-  let origins: Map<string, { accessKey: string; numbering: ItemNumbering }> | undefined
+  let origins: Map<string, { accessKey: string; numbering: ItemNumbering; simples?: ReadonlyMap<number, OriginItemSimples> }> | undefined
   const procByOrigin = new Map<string, { xml: string; accessKey: string }>()
   if (returnOrigins.length > 0) {
     origins = new Map()
@@ -75,8 +88,19 @@ export async function readComposedFacts(q: Queryable, env: ComposeEnv, actor: Nf
       const found = env.storage.find(merchandiseFileKey({ cnpj: attempt.accessKey.slice(6, 20), model: '55', serie: attempt.serie, environment: attempt.environment, zone }), procName(attempt.accessKey), [attempt.dhEmission])
       if (found === null) throw documentInvalid('O procNFe arquivado da nota de origem não foi encontrado', [{ field: 'origin', message: `Nota de origem ${o.originInvoiceId}: ${procName(attempt.accessKey)} ausente do arquivo fiscal` }])
       const numbering = numberItems((await r.listItems(q, schema, oRef)).map(i => i.itemId))
-      origins.set(key, { accessKey: attempt.accessKey, numbering })
-      procByOrigin.set(key, { xml: env.storage.read(found), accessKey: attempt.accessKey })
+      const xml = env.storage.read(found)
+      if (simples2027) {
+        // S2: a chave sai do MESMO XML que a conferência usa e tem de ser a da tentativa autorizada; o grupo do Simples da origem também sai dele
+        const accessKey = originKeyOf(xml)
+        if (accessKey !== attempt.accessKey) {
+          throw returnMismatch('A nota de origem da devolução não pode ser conferida', [{ field: 'origin', message: `Nota de origem ${o.originInvoiceId}: a chave do procNFe arquivado não é a da tentativa autorizada da origem` }])
+        }
+        origins.set(key, { accessKey, numbering, simples: readOriginSimples(xml) })
+        procByOrigin.set(key, { xml, accessKey })
+      } else {
+        origins.set(key, { accessKey: attempt.accessKey, numbering })
+        procByOrigin.set(key, { xml, accessKey: attempt.accessKey })
+      }
     }
     base.origins = origins
   }

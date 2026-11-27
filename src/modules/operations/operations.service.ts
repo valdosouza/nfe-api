@@ -95,7 +95,7 @@ export async function listVoidRequests(ctx: AppContext, inst: InstitutionPayload
  */
 export async function requestVoid(ctx: AppContext, inst: InstitutionPayload, body: VoidDto): Promise<ReturnType<typeof voidView> & { incident?: VoidResult['incident'] }> {
   const r = await voidRange(voidDepsOf(ctx), actorOf(inst), { serie: Number(body.serie), year: body.year, from: body.from, to: body.to, reason: body.reason })
-  if (r.incident) reportIncident(ctx, { route: 'void-range', institutionId: inst.institutionId, invoiceId: null, accessKey: null, incident: r.incident })    // D-NE237 (gate da P5: o file-conflict da inutilização também avisa)
+  if (r.incident) reportIncident(ctx, { route: 'void-range', institutionId: inst.institutionId, invoiceId: null, accessKey: `inutilizacao ${r.voidId}`, incident: r.incident })    // D-NE237 (gate da P5: sem chave de nota, o Id da inutilização localiza o pedido e separa o dedup por faixa: o file-conflict da inutilização também avisa)
   const fields = [{ field: 'voidId', message: r.voidId }, { field: 'next', message: 'resend-same-range' }, ...(r.incident ? [{ field: 'incident', message: r.incident }] : [])]
   if (r.state === 'in-flight' && r.refusedCStat) throw new HttpError(503, `O serviço do fisco recusou o pedido (${r.refusedCStat}): a faixa ficou pendente — reenvie a MESMA faixa depois`, [...fields, { field: 'authorityCode', message: r.refusedCStat }], ErrorCodes.FISCAL_AUTHORITY_UNAVAILABLE)
   if (r.state === 'in-flight') throw new HttpError(502, 'O fisco não respondeu à inutilização: a faixa ficou pendente — reenvie a MESMA faixa (o 563 fecha o pedido)', fields, ErrorCodes.FISCAL_AUTHORITY_UNKNOWN_RESPONSE)

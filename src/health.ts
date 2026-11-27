@@ -1,6 +1,7 @@
 import type { RequestHandler } from 'express'
 import type { AppContext } from './context'
 import type { KeyProof } from './key-proof'
+import { logger } from 'fiscal-api'
 
 /**
  * /v1/health (sem autenticação): prova banco, chave-mestra e storage — critério §12.8-1. 200 só com os três; 503 diz qual falhou (nunca
@@ -24,6 +25,6 @@ export function healthHandler(ctx: AppContext, keyProof: KeyProof): RequestHandl
     const serverChain = { loaded: ctx.serverCa.certificates.length > 0, source: ctx.serverCa.source }
     // D-NE54 c: o ÚLTIMO consStatServ de cada autorizador consultado pela passada do rodízio — o health só LÊ o quadro (nunca fala com o fisco); autorizador fora não derruba o health
     res.status(ok ? 200 : 503).json({ status: ok ? 'ok' : 'degraded', db, masterKey, storage, serverChain, authorities: ctx.statusBoard?.list() ?? [] })
-   } catch { res.status(503).json({ status: 'degraded', db: false, masterKey: false, storage: false, serverChain: { loaded: false, source: 'unknown' }, authorities: [] }) }   // NFE.E6.P5 (rodada 2): nada aqui derruba o processo
+   } catch (e) { logger.warn('Health: exceção no handler (respondido 503)', { error: e instanceof Error ? e.name : 'erro' }); res.status(503).json({ status: 'degraded', db: false, masterKey: false, storage: false, serverChain: { loaded: false, source: 'unknown' }, authorities: [] }) }   // NFE.E6.P5 (rodada 2): nada aqui derruba o processo
   }
 }
